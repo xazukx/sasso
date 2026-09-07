@@ -9,7 +9,7 @@ use crate::scanner::Pos;
 use crate::value::{Color, ListSep};
 
 /// A parsed stylesheet: an ordered list of top-level statements.
-pub(crate) struct Stylesheet {
+pub struct Stylesheet {
     pub stmts: Vec<Stmt>,
 }
 
@@ -17,7 +17,7 @@ pub(crate) struct Stylesheet {
 /// (dart `_isTrailingComment`). `file` is an evaluator-interned source id
 /// (0 = unknown, never trailing).
 #[derive(Clone, Copy, Default, PartialEq)]
-pub(crate) struct SrcLines {
+pub struct SrcLines {
     pub file: u32,
     /// A comment's `/*` line; a block's opening-brace line.
     pub start: u32,
@@ -49,7 +49,7 @@ pub(crate) struct SrcLines {
 }
 
 /// A statement, valid at the top level or inside a rule body.
-pub(crate) enum Stmt {
+pub enum Stmt {
     /// `$name: value [!default] [!global];`
     VarDecl(VarDecl),
     /// `selector { ... }`
@@ -238,7 +238,7 @@ pub(crate) enum Stmt {
 
 /// One `$name: value [!default]` entry in a `@use`/`@forward` `with (...)`
 /// configuration clause.
-pub(crate) struct ConfigEntry {
+pub struct ConfigEntry {
     pub name: String,
     pub value: Expr,
     /// `!default` on a `@forward ... with` entry: the override only applies if
@@ -248,7 +248,7 @@ pub(crate) struct ConfigEntry {
 
 /// A member name in a `@forward ... show/hide` clause. Variables keep their
 /// leading `$`; functions/mixins are bare identifiers.
-pub(crate) enum ForwardMember {
+pub enum ForwardMember {
     /// A `$variable` name (stored without the `$`).
     Var(String),
     /// A function or mixin name.
@@ -256,7 +256,7 @@ pub(crate) enum ForwardMember {
 }
 
 /// One entry in an `@import` statement.
-pub(crate) enum ImportArg {
+pub enum ImportArg {
     /// A Sass import: the (unquoted) path of a partial to resolve and inline,
     /// plus the 1-based position and byte length of the quoted URL token (for
     /// the `[import]` deprecation snippet).
@@ -272,7 +272,7 @@ pub(crate) enum ImportArg {
 }
 
 /// One parsed `@import` modifier (dart-sass `tryImportModifiers`).
-pub(crate) enum ImportModifier {
+pub enum ImportModifier {
     /// A run of bare identifiers and unknown functions (`b`, `c(d)`), joined
     /// by single spaces; captured as a template (only `#{…}` resolves).
     Raw(Vec<TplPiece>),
@@ -294,13 +294,13 @@ pub(crate) enum ImportModifier {
 }
 
 /// One arm of an `@if` chain. `cond == None` is the trailing `@else`.
-pub(crate) struct IfBranch {
+pub struct IfBranch {
     pub cond: Option<Expr>,
     pub body: Vec<Stmt>,
 }
 
 /// A `@function` or `@mixin` definition (same shape).
-pub(crate) struct Callable {
+pub struct Callable {
     pub name: String,
     pub params: ParamList,
     pub body: Vec<Stmt>,
@@ -308,13 +308,13 @@ pub(crate) struct Callable {
 
 /// A declared parameter list: positional/defaulted params plus an optional
 /// trailing rest parameter (`$args...`).
-pub(crate) struct ParamList {
+pub struct ParamList {
     pub params: Vec<Param>,
     pub rest: Option<String>,
 }
 
 /// One declared parameter, with an optional default expression.
-pub(crate) struct Param {
+pub struct Param {
     pub name: String,
     pub default: Option<Expr>,
     /// 1-based position where `default`'s text starts ([`Pos::NONE`] when there
@@ -325,7 +325,7 @@ pub(crate) struct Param {
     pub default_pos: Pos,
 }
 
-pub(crate) struct VarDecl {
+pub struct VarDecl {
     pub name: String,
     pub value: Expr,
     pub is_default: bool,
@@ -340,7 +340,7 @@ pub(crate) struct VarDecl {
     pub value_pos: Pos,
 }
 
-pub(crate) struct Rule {
+pub struct Rule {
     pub selector: Vec<TplPiece>,
     pub body: Vec<Stmt>,
     /// 1-based position where the selector text starts, for mapping a
@@ -362,13 +362,13 @@ pub(crate) struct Rule {
 /// verbatim, resolving only `#{...}`) when the property is a plain literal,
 /// or as a SassScript expression when the property contains interpolation —
 /// matching dart-sass's declaration parsing inside these constructs.
-pub(crate) struct CssCustomItem {
+pub struct CssCustomItem {
     pub property: Vec<TplPiece>,
     /// `Err` holds the verbatim value template; `Ok` holds a SassScript value.
     pub value: CssCustomValue,
 }
 
-pub(crate) enum CssCustomValue {
+pub enum CssCustomValue {
     /// Verbatim value template (literal property): whitespace runs collapse to
     /// single spaces and `#{...}` resolves, otherwise emitted exactly.
     Raw(Vec<TplPiece>),
@@ -379,7 +379,7 @@ pub(crate) enum CssCustomValue {
     Set(Vec<(Vec<TplPiece>, Expr)>),
 }
 
-pub(crate) struct Declaration {
+pub struct Declaration {
     pub property: Vec<TplPiece>,
     pub value: Expr,
     pub important: bool,
@@ -398,7 +398,7 @@ pub(crate) struct Declaration {
 /// A custom-property declaration (`--name: value`). The name and the value
 /// are both templates so `#{…}` interpolation resolves at eval time; the value
 /// is otherwise emitted verbatim (no SassScript evaluation).
-pub(crate) struct CustomDecl {
+pub struct CustomDecl {
     pub property: Vec<TplPiece>,
     pub value: Vec<TplPiece>,
     pub pos: Pos,
@@ -416,7 +416,7 @@ pub(crate) struct CustomDecl {
 /// A nested property set: a declaration whose value (which may be empty) is
 /// followed by a `{ … }` block whose children are namespaced with the parent
 /// property name joined by `-`.
-pub(crate) struct PropertySet {
+pub struct PropertySet {
     pub property: Vec<TplPiece>,
     /// The optional leading value (`b: c { … }` keeps `c`; `b: { … }` is
     /// `None`). When present it is emitted as `<property>: <value>;` first.
@@ -428,13 +428,13 @@ pub(crate) struct PropertySet {
 
 /// One piece of an interpolated template: literal text or an embedded
 /// expression (`#{...}`).
-pub(crate) enum TplPiece {
+pub enum TplPiece {
     Lit(String),
     Interp(Expr),
 }
 
 /// A value expression.
-pub(crate) enum Expr {
+pub enum Expr {
     /// Numeric literal: value + unit (`""` for unitless).
     Number(f64, String),
     /// Color literal (hex or named), parsed eagerly.
@@ -528,7 +528,7 @@ pub(crate) enum Expr {
 
 /// One clause of a modern `if()`: an optional condition (absent for the
 /// trailing `else` clause) and its value expression.
-pub(crate) struct IfClause {
+pub struct IfClause {
     /// `None` for the `else` clause; otherwise the parsed condition tree.
     pub condition: Option<IfCond>,
     pub value: Expr,
@@ -538,7 +538,7 @@ pub(crate) struct IfClause {
 /// `sass(<expr>)` or a verbatim "raw" CSS sequence (`css(...)`, `var(...)`,
 /// nested `if(...)`, interpolation, ...); combined with `not`/`and`/`or`
 /// and parentheses.
-pub(crate) enum IfCond {
+pub enum IfCond {
     /// `sass(<expr>)` — evaluated for truthiness.
     Sass(Box<Expr>),
     /// One or more space-separated raw substitution tokens forming a single
@@ -562,7 +562,7 @@ pub(crate) enum IfCond {
 /// A `splat` argument (`$list...`) is expanded at call time: a list spreads
 /// into positional arguments and a map spreads into keyword arguments. A
 /// splat argument never carries a `name`.
-pub(crate) struct CallArg {
+pub struct CallArg {
     pub name: Option<String>,
     pub value: Expr,
     pub splat: bool,
@@ -575,7 +575,7 @@ pub(crate) struct CallArg {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum BinOp {
+pub enum BinOp {
     Add,
     Sub,
     Mul,
@@ -596,7 +596,7 @@ pub(crate) enum BinOp {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum UnOp {
+pub enum UnOp {
     Neg,
     /// Unary `+`: numeric identity (`+5` -> `5`); on any other operand an
     /// unquoted string prefixed with `+` (`+foo` -> `+foo`), matching
@@ -608,13 +608,13 @@ pub(crate) enum UnOp {
 // ---- media queries -----------------------------------------------------
 
 /// A `@media` prelude: a comma-separated list of media queries.
-pub(crate) struct MediaQueryList {
+pub struct MediaQueryList {
     pub queries: Vec<MediaQuery>,
 }
 
 /// One media query: either a media-type form (`[not|only]? <type> [and
 /// <cond>]*`) or a condition-only form (`<cond> [<and|or> <cond>]*`).
-pub(crate) enum MediaQuery {
+pub enum MediaQuery {
     /// `[modifier]? <type> [and <cond>]*`. The modifier (`not`/`only`,
     /// already lowercased) and type may contain interpolation.
     Type {
@@ -631,13 +631,13 @@ pub(crate) enum MediaQuery {
 
 /// `and` / `or`, the conjunction joining media conditions.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Conjunction {
+pub enum Conjunction {
     And,
     Or,
 }
 
 /// A single "media in parens": one operand of a media condition.
-pub(crate) enum MediaInParens {
+pub enum MediaInParens {
     /// `(<feature>)` — serialized wrapped in parentheses. Boxed because a
     /// [`MediaFeature`] is large relative to the other variants.
     Feature(Box<MediaFeature>),
@@ -655,7 +655,7 @@ pub(crate) enum MediaInParens {
 }
 
 /// The interior of a single `(...)` media feature.
-pub(crate) enum MediaFeature {
+pub enum MediaFeature {
     /// `(<name>)` or `(<name>: <value>)`.
     Decl { name: Expr, value: Option<Expr> },
     /// A range feature: `<first> <op1> <second> [<op2> <third>]`.
@@ -672,7 +672,7 @@ pub(crate) enum MediaFeature {
 /// A parsed `@supports` condition (dart-sass `SupportsCondition`). The
 /// condition is re-serialized canonically at eval time: `(a: b)` declaration
 /// spacing, stripped trivia comments, normalized whitespace.
-pub(crate) enum SupportsCondition {
+pub enum SupportsCondition {
     /// `(<name>: <value>)`. `custom` is true when the name is a literal
     /// unquoted identifier starting with `--`; its value is then captured
     /// verbatim (a template) and serialized with no space after the colon.
@@ -703,7 +703,7 @@ pub(crate) enum SupportsCondition {
 }
 
 /// The right-hand side of a `@supports` declaration condition.
-pub(crate) enum SupportsValue {
+pub enum SupportsValue {
     /// A normal SassScript expression value (`(a: 1 + 1)` -> `(a: 2)`).
     Expr(Expr),
     /// A custom-property value captured verbatim as a template (only `#{…}`

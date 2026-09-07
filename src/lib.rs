@@ -34,11 +34,11 @@
 // `#[allow]`. The wasm wrapper (`/wasm`, a separate crate) has its own FFI unsafe.
 mod arena;
 
-mod ast;
+pub mod ast;
 mod builtins;
 mod deprecation;
 mod diag;
-mod emit;
+pub mod emit;
 mod error;
 mod eval;
 mod fxhash;

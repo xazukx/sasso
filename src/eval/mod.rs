@@ -74,7 +74,7 @@ type EvaledArgs = (Vec<Value>, Vec<(String, Value)>, ListSep);
 /// so `@mixin m($p) { pad: $p }` + `@include m(4px)` maps the emitted `4px`
 /// back to the CALL SITE. Source-map only.
 #[derive(Default)]
-pub(crate) struct ArgSpans {
+pub struct ArgSpans {
     positional: Vec<VarSpan>,
     named: Vec<(String, VarSpan)>,
 }
@@ -100,7 +100,7 @@ impl ArgSpans {
 /// One variable scope. Lexical scoping shares frames between the active
 /// chain and callable closures (dart's Environment maps), so a scope is a
 /// shared, interior-mutable map.
-pub(crate) type Scope = std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>;
+pub type Scope = std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>;
 
 fn new_scope() -> Scope {
     std::rc::Rc::new(std::cell::RefCell::new(HashMap::default()))
@@ -119,7 +119,7 @@ fn new_scope() -> Scope {
 /// a built-in module variable or a host-function argument); the source map
 /// drops such entries.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct VarSpan {
+pub struct VarSpan {
     pub file: u32,
     /// 0-based source line.
     pub line: u32,
@@ -137,7 +137,7 @@ type ArgFrame = (HashMap<String, Value>, HashMap<String, VarSpan>);
 /// pushed and popped in lockstep with `_variables`). Shared by `Rc` so a
 /// callable's captured closure sees later writes to the frames it closed over,
 /// exactly like the value chain.
-pub(crate) type SpanScope = std::rc::Rc<std::cell::RefCell<HashMap<String, VarSpan>>>;
+pub type SpanScope = std::rc::Rc<std::cell::RefCell<HashMap<String, VarSpan>>>;
 
 fn new_span_scope() -> SpanScope {
     std::rc::Rc::new(std::cell::RefCell::new(HashMap::default()))
@@ -146,7 +146,7 @@ fn new_span_scope() -> SpanScope {
 /// One function/mixin scope frame, parallel to the variable chain (dart's
 /// `Environment._functions`/`_mixins` are lists of maps pushed and popped in
 /// lockstep with `_variables`).
-pub(crate) type FnScope = std::rc::Rc<std::cell::RefCell<HashMap<String, Rc<UserCallable>>>>;
+pub type FnScope = std::rc::Rc<std::cell::RefCell<HashMap<String, Rc<UserCallable>>>>;
 
 fn new_fn_scope() -> FnScope {
     std::rc::Rc::new(std::cell::RefCell::new(HashMap::default()))
@@ -158,7 +158,7 @@ fn new_fn_scope() -> FnScope {
 /// against ITS file's `@use "sass:list"`, not whatever the caller has bound
 /// (uswds `units()`, quasar `str-fe()`).
 #[derive(Clone)]
-pub(crate) struct EnvModules {
+pub struct EnvModules {
     pub(self) used_modules: HashMap<String, String>,
     pub(self) star_modules: Vec<String>,
     pub(self) used_user_modules: HashMap<String, Rc<Module>>,
@@ -169,7 +169,7 @@ pub(crate) struct EnvModules {
 /// function/mixin scope chains captured at the definition site (shared
 /// frames, dart's `Environment.closure()`). The body runs against these
 /// chains, not the caller's stack.
-pub(crate) struct UserCallable {
+pub struct UserCallable {
     pub def: Rc<Callable>,
     pub env: Vec<Scope>,
     /// The variable-definition-span chain captured alongside `env`, frame for
@@ -189,7 +189,7 @@ pub(crate) struct UserCallable {
 /// `parse_list` round trip — and emit renders it via `Complex::render()`, which
 /// is byte-identical to the strings the engine used to materialize).
 #[derive(Clone)]
-pub(crate) enum RuleSelectors {
+pub enum RuleSelectors {
     /// The already-resolved selector strings (`&`/interpolation substituted).
     /// Untouched by the extend pass — emit writes them verbatim. This is the
     /// zero-parse fast path: an extend-free stylesheet never leaves this form.
@@ -205,7 +205,7 @@ impl RuleSelectors {
     /// strings the extend engine used to produce). Used by emit and by the
     /// pre-extend passes (reparent, plain-CSS at-body lowering) and the
     /// cross-media probe.
-    pub(crate) fn to_strings(&self) -> std::borrow::Cow<'_, [String]> {
+    pub fn to_strings(&self) -> std::borrow::Cow<'_, [String]> {
         match self {
             RuleSelectors::Raw(v) => std::borrow::Cow::Borrowed(v),
             RuleSelectors::Parsed(v) => std::borrow::Cow::Owned(v.iter().map(|c| c.render()).collect()),
@@ -224,7 +224,7 @@ impl RuleSelectors {
 
 /// A flattened output node.
 #[derive(Clone)]
-pub(crate) enum OutNode {
+pub enum OutNode {
     Rule {
         selectors: RuleSelectors,
         /// Per-complex "line break before" flags from the source selector list
@@ -320,7 +320,7 @@ impl OutNode {
     /// `extend_base` `usize::MAX`, so the `@extend` pass always applies the
     /// sequential default. Only `selectors`, `items` and `lines` vary across
     /// the call sites; the rest is shared boilerplate.
-    pub(crate) fn plain_rule(selectors: Vec<String>, items: Vec<OutItem>, lines: SrcLines) -> OutNode {
+    pub fn plain_rule(selectors: Vec<String>, items: Vec<OutItem>, lines: SrcLines) -> OutNode {
         OutNode::Rule {
             selectors: RuleSelectors::Raw(selectors),
             linebreaks: Vec::new(),
@@ -331,7 +331,7 @@ impl OutNode {
     }
 
     /// A childless at-rule (`@name prelude;`) — no body, no block.
-    pub(crate) fn childless_at_rule(name: String, prelude: String, lines: SrcLines) -> OutNode {
+    pub fn childless_at_rule(name: String, prelude: String, lines: SrcLines) -> OutNode {
         OutNode::AtRule {
             name,
             prelude,
@@ -368,7 +368,7 @@ enum MergeResult {
 
 /// An item inside a rule block.
 #[derive(Clone)]
-pub(crate) enum OutItem {
+pub enum OutItem {
     Decl {
         prop: String,
         value: String,
@@ -749,7 +749,7 @@ impl Sink<'_> {
 }
 
 /// Options visible to the evaluator (subset of the public `Options`).
-pub(crate) struct EvalOptions<'a> {
+pub struct EvalOptions<'a> {
     pub style: OutputStyle,
     pub importer: Option<&'a dyn Importer>,
     /// Host-defined custom functions (dart-sass `functions`), matched by name.
@@ -774,7 +774,7 @@ pub(crate) struct EvalOptions<'a> {
     pub source_map: bool,
 }
 
-pub(crate) struct Evaluator<'a> {
+pub struct Evaluator<'a> {
     scopes: Vec<Scope>,
     /// Definition spans for the bindings in `scopes`, one frame per scope
     /// (dart `Environment._variableNodes`). Pushed/popped in lockstep. Purely
@@ -1294,7 +1294,7 @@ struct PendingExtend {
 }
 
 impl<'a> Evaluator<'a> {
-    pub(crate) fn new(options: EvalOptions<'a>) -> Self {
+    pub fn new(options: EvalOptions<'a>) -> Self {
         let url = options.url.to_string();
         let entry_canonical = CanonicalUrl::new(options.url);
         let entry_dir = dirname_of(options.url).unwrap_or_default();
@@ -1396,7 +1396,7 @@ impl<'a> Evaluator<'a> {
     /// assigning one on first use. Interned once per file entry (every
     /// `current_url` assignment resets `current_url_stamp`), so the steady-state
     /// cost is a `u32` check.
-    pub(crate) fn intern_current_file(&mut self) -> u32 {
+    pub fn intern_current_file(&mut self) -> u32 {
         if self.current_url_stamp != 0 {
             return self.current_url_stamp;
         }
@@ -1406,7 +1406,7 @@ impl<'a> Evaluator<'a> {
         id
     }
 
-    pub(crate) fn eval_sheet(&mut self, sheet: &Stylesheet, out: &mut Vec<OutNode>) -> Result<(), Error> {
+    pub fn eval_sheet(&mut self, sheet: &Stylesheet, out: &mut Vec<OutNode>) -> Result<(), Error> {
         {
             let mut sink = Sink::Top(out);
             let r = self.exec(&sheet.stmts, &[], &mut sink);
@@ -1431,7 +1431,7 @@ impl<'a> Evaluator<'a> {
     /// When `include_sources` is set, the parallel `sourcesContent` is built
     /// from the recorded file sources (empty string for a source seen only by
     /// URL, never by text).
-    pub(crate) fn source_table(
+    pub fn source_table(
         &mut self,
         entry_url: &str,
         include_sources: bool,
@@ -3380,7 +3380,7 @@ impl ScopeCtx {
 ///   `@return` / `@warn` / `@debug` / `@error`);
 /// - `@content` outside a `@mixin` declaration;
 /// - `@extend` outside a style rule or mixin.
-pub(crate) fn validate_declarations(sheet: &Stylesheet) -> Result<(), Error> {
+pub fn validate_declarations(sheet: &Stylesheet) -> Result<(), Error> {
     validate_decl_scope(&sheet.stmts, ScopeCtx::root())
 }
 
@@ -5024,7 +5024,7 @@ fn rewrite_nodes_scoped(
 /// re-enters with its own scope and its own plan.
 /// The module-graph context for dart's store-merge ORDER: reverse load
 /// edges (who loads whom) plus each origin's first registration index.
-pub(crate) struct ExtendOrderCtx {
+pub struct ExtendOrderCtx {
     /// loaded module -> loaders (direct downstream modules).
     pub rev_deps: HashMap<String, Vec<String>>,
     /// origin -> smallest extension registration index (first-load rank).
@@ -5797,7 +5797,7 @@ fn split_commas(s: &str) -> Vec<&str> {
 /// selector appearing mid-compound (`[a]b`, `:not(.x)b`) is joined to the
 /// preceding simple with a descendant combinator (`[a] b`), matching
 /// dart-sass's `[adjacent-compounds]` normalization.
-pub(crate) fn normalize_selector(s: &str) -> String {
+pub fn normalize_selector(s: &str) -> String {
     // Fast path: already-canonical selectors skip the two char-vector
     // materializations below. Equivalence was proven by a check build that
     // asserted fast == slow on every call across the full sass-spec suite.

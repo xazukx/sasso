@@ -5,7 +5,7 @@ use crate::eval::{OutItem, OutNode, VarSpan};
 use crate::sourcemap::SmCollector;
 use crate::OutputStyle;
 
-pub(crate) fn emit(nodes: &[OutNode], style: OutputStyle, charset: bool) -> String {
+pub fn emit(nodes: &[OutNode], style: OutputStyle, charset: bool) -> String {
     // The default path collects nothing: `&mut None` makes every `record_*`
     // call inert, so the output is byte-for-byte the historical CSS.
     emit_inner(nodes, style, &mut None, charset).0
@@ -14,7 +14,7 @@ pub(crate) fn emit(nodes: &[OutNode], style: OutputStyle, charset: bool) -> Stri
 /// Like [`emit`], but also records a source map. Returns the final CSS, the
 /// byte length of the `@charset`/BOM prefix that shifts every body offset, and
 /// the populated collector (raw body offsets, not yet resolved to lines).
-pub(crate) fn emit_with_map(
+pub fn emit_with_map(
     nodes: &[OutNode],
     style: OutputStyle,
     charset: bool,
