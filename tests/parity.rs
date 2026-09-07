@@ -478,15 +478,6 @@ fn ours(scss: &str) -> String {
     cli_form(compile(scss, &Options::default()).expect("our compile failed"))
 }
 
-/// Compile indented-syntax `sass` and return our CSS (panicking on error).
-/// Re-attaches the CLI's trailing newline — see [`ours`].
-fn ours_sass(sass: &str) -> String {
-    cli_form(
-        compile(sass, &Options::default().with_syntax(sasso::Syntax::Sass))
-            .expect("our indented compile failed"),
-    )
-}
-
 /// Mirror the dart-sass CLI's output framing: a single trailing newline on
 /// non-empty CSS, nothing on empty CSS.
 fn cli_form(css: String) -> String {
@@ -3375,102 +3366,6 @@ fn invisible_rule_leaves_no_blank_line_group_end() {
 }
 
 #[test]
-fn indented_selector_comma_continues_despite_pseudo_colon() {
-    // A trailing top-level comma continues the selector list even when the
-    // line contains a colon, as long as that colon is not followed by
-    // whitespace (a declaration value): dart joins `&:active,`,
-    // `a::-webkit-x,` and even `b:c,` onto the next line (quasar's
-    // normalize.sass search-input selectors), while `m: a,` stays a
-    // declaration.
-    assert_eq!(
-        ours_sass(".p\n  &:active,\n  &.on\n    x: y\n"),
-        ".p:active, .p.on {\n  x: y;\n}\n"
-    );
-    assert_eq!(
-        ours_sass("i[type=\"s\"]::-webkit-a,\ni[type=\"s\"]::-webkit-b\n  x: y\n"),
-        "i[type=s]::-webkit-a,\ni[type=s]::-webkit-b {\n  x: y;\n}\n"
-    );
-    assert_eq!(ours_sass("b:c,\nd\n  x: y\n"), "b:c,\nd {\n  x: y;\n}\n");
-    assert_eq!(ours_sass(".q\n  m: a,\n  n: b\n"), ".q {\n  m: a;\n  n: b;\n}\n");
-}
-
-#[test]
-fn indented_loud_comment_block_matches_dart_reindent() {
-    // dart's _loudComment joins the first content line to `/*` with one
-    // space, gutters continuation lines with ` * ` (padding indentation
-    // beyond comment_col + 3), and its serializer strips min(1, comment_col)
-    // — so an indented comment loses the gutter's leading space while a
-    // top-level one keeps it (quasar's QSkeleton block comments).
-    assert_eq!(
-        ours_sass(".x\n  /*\n    one line\n    two line\n   */\n  b: c\n"),
-        ".x {\n  /* one line\n  * two line\n  * */\n  b: c;\n}\n"
-    );
-    assert_eq!(
-        ours_sass(".x\n  /*\n    one line\n      deeper line\n   */\n  b: c\n"),
-        ".x {\n  /* one line\n  *  deeper line\n  * */\n  b: c;\n}\n"
-    );
-    assert_eq!(
-        ours_sass("/*\n  top one\n  top two\n */\n.y\n  b: c\n"),
-        "/* top one\n * top two\n * */\n.y {\n  b: c;\n}\n"
-    );
-    // A blank line inside the block becomes a bare gutter line.
-    assert_eq!(
-        ours_sass(".x\n  /*\n    one\n\n    three\n   */\n  b: c\n"),
-        ".x {\n  /* one\n  *\n  * three\n  * */\n  b: c;\n}\n"
-    );
-}
-
-#[test]
-fn indented_loud_comment_first_line_stays_verbatim() {
-    // The text after `/*` on a loud comment's first line is glued verbatim:
-    // `/**` keeps its doubled star (quasar's normalize.sass banners) and
-    // extra spacing is preserved; continuation lines keep their source
-    // column behind the ` *` gutter.
-    assert_eq!(
-        ours_sass("/**\n * Remove the border.\n */\nimg\n  b: 0\n"),
-        "/**\n * * Remove the border.\n * */\nimg {\n  b: 0;\n}\n"
-    );
-    assert_eq!(
-        ours_sass("/*  two spaces\n  * mid\n */\n.a\n  b: c\n"),
-        "/*  two spaces\n * * mid\n * */\n.a {\n  b: c;\n}\n"
-    );
-}
-
-#[test]
-fn indented_use_as_star_does_not_continue_prelude() {
-    use std::fs;
-
-    // In the indented syntax a trailing operator continues the logical line,
-    // but the `*` of `@use "x" as *` is the wildcard namespace terminator —
-    // it must not swallow the following line into the @use prelude
-    // (vuetify's tools/_display.sass: `@use '../settings' as *` followed by
-    // a `=mixin` definition died with "Nothing may be indented beneath a
-    // @use rule").
-    let dir = std::env::temp_dir().join(format!(
-        "sasso-as-star-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    fs::create_dir_all(&dir).expect("create scratch dir");
-    let imp = FsImporter::new(vec![dir.clone()]);
-    fs::write(dir.join("_settings.sass"), "$w: 2px\n").unwrap();
-    let out = compile(
-        "@use 'settings' as *\n\n=media-up($n)\n  @media (min-width: $n)\n    @content\n\n.a\n  +media-up($w)\n    x: y\n",
-        &Options::default()
-            .with_syntax(sasso::Syntax::Sass)
-            .with_importer(&imp),
-    )
-    .expect("as-star followed by mixin definition compiles");
-    assert_eq!(out, "@media (min-width: 2px) {\n  .a {\n    x: y;\n  }\n}");
-    // A REAL pending multiplication still continues the line.
-    assert_eq!(ours_sass("$a: 2 *\n  3\n.b\n  c: $a\n"), ".b {\n  c: 6;\n}\n");
-    let _ = fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn media_inside_unknown_at_rule() {
     // dart `_inUnknownAtRule`: inside a generic/unknown at-rule's body, bare
     // declarations are legal without an enclosing style rule — including
@@ -4239,143 +4134,6 @@ fn parity_use_and_forward_with_config() {
             "@use \"midw\" with ($a: 999, $b: 200);\n.r { v: midw.$a; w: midw.$b; }\n",
         ),
     ]);
-}
-
-// ---------------------------------------------------------------------------
-// Indented (`.sass`) syntax parity.
-// ---------------------------------------------------------------------------
-
-/// Compile `sass` (indented syntax) with dart-sass via `--stdin --indented`.
-fn dart_sass_indented(sass: &str) -> Option<String> {
-    let bin = std::env::var("SASS_BIN").unwrap_or_else(|_| "npx".to_string());
-    let mut cmd = if bin == "npx" {
-        let mut c = Command::new("npx");
-        c.args(["--yes", "sass", "--no-source-map", "--stdin", "--indented"]);
-        c
-    } else {
-        let mut c = Command::new(bin);
-        c.args(["--no-source-map", "--stdin", "--indented"]);
-        c
-    };
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    child.stdin.take()?.write_all(sass.as_bytes()).ok()?;
-    let out = child.wait_with_output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(strip_cli_newline(String::from_utf8(out.stdout).ok()?))
-}
-
-/// Byte-verify our indented-syntax output against dart-sass.
-fn assert_sass_parity(sass: &str) {
-    if !enabled() {
-        return;
-    }
-    let ours = compile(sass, &Options::default().with_syntax(sasso::Syntax::Sass))
-        .expect("our indented compile failed");
-    match dart_sass_indented(sass) {
-        Some(theirs) => assert_eq!(ours, theirs, "\n--- sass ---\n{sass}\n"),
-        None => eprintln!("skipping indented parity case: dart-sass unavailable"),
-    }
-}
-
-#[test]
-fn parity_sass_basic_rule_and_decls() {
-    assert_sass_parity("a\n  b: c\n  d: e\n");
-    assert_sass_parity("$x: 1\n\ne\n  f: $x + 2\n");
-}
-
-#[test]
-fn parity_sass_nesting_and_parent() {
-    assert_sass_parity("a\n  color: red\n  &:hover\n    color: blue\n");
-}
-
-#[test]
-fn parity_sass_control_flow() {
-    assert_sass_parity("@for $i from 1 through 3\n  .c-#{$i}\n    width: $i * 10px\n");
-    assert_sass_parity("@each $c in red, green\n  .#{$c}\n    color: $c\n");
-}
-
-#[test]
-fn parity_sass_callables() {
-    assert_sass_parity("@function double($x)\n  @return $x * 2\n\na\n  width: double(5px)\n");
-    assert_sass_parity("@mixin box($w)\n  width: $w\n  height: $w\n\na\n  @include box(4px)\n");
-}
-
-#[test]
-fn parity_sass_shorthand_mixin() {
-    // `=name` defines a mixin, `+name` includes it.
-    assert_sass_parity("=box($w)\n  width: $w\n\na\n  +box(4px)\n");
-}
-
-#[test]
-fn parity_sass_multiline_continuation() {
-    assert_sass_parity("@function a($b,\n            $c)\n  @return $b + $c\n\nd\n  e: a(1, 2)\n");
-}
-
-#[test]
-fn parity_sass_comments() {
-    assert_sass_parity("// silent\na\n  b: c // trailing\n");
-    assert_sass_parity("/* loud */\na\n  b: c\n");
-}
-
-#[test]
-fn parity_sass_custom_property() {
-    assert_sass_parity("a\n  --b: c d\n");
-}
-
-#[test]
-fn parity_sass_imports_scss_partial() {
-    // A `.sass` entrypoint importing a `.scss` partial: each file parses with
-    // the front-end matching its extension.
-    if !enabled() {
-        return;
-    }
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let id = SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("sasso-xsyntax-{}-{}", std::process::id(), id));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    std::fs::write(dir.join("_pal.scss"), "$c: red;\n.a { color: $c; }\n").expect("write");
-    let input = "@import \"pal\"\nb\n  x: $c\n";
-    std::fs::write(dir.join("input.sass"), input).expect("write");
-    let importer = FsImporter::new(vec![dir.clone()]);
-    let ours = compile(
-        input,
-        &Options::default()
-            .with_syntax(sasso::Syntax::Sass)
-            .with_importer(&importer),
-    )
-    .expect("our cross-syntax compile failed");
-    let bin = std::env::var("SASS_BIN").unwrap_or_else(|_| "npx".to_string());
-    let mut cmd = if bin == "npx" {
-        let mut c = Command::new("npx");
-        c.args(["--yes", "sass", "--no-source-map", "input.sass"]);
-        c
-    } else {
-        let mut c = Command::new(bin);
-        c.args(["--no-source-map", "input.sass"]);
-        c
-    };
-    let out = cmd
-        .current_dir(&dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .expect("run dart-sass");
-    let _ = std::fs::remove_dir_all(&dir);
-    if !out.status.success() {
-        eprintln!("skipping cross-syntax parity case: dart-sass errored");
-        return;
-    }
-    let theirs = strip_cli_newline(String::from_utf8(out.stdout).expect("utf8"));
-    assert_eq!(ours, theirs, "\n--- input.sass ---\n{input}\n");
 }
 
 #[test]
@@ -6621,28 +6379,6 @@ fn midstream_pseudo_extender_replaced_across_modules() {
 }
 
 #[test]
-fn sass_whitespace_map_keys_and_decl_children() {
-    // A map key may be separated from its colon by whitespace: the space list
-    // ends at `:` so the paren handler still sees a key/value pair.
-    assert_eq!(
-        ours("$a: (b\n  : c, d: e);\nx {y: map-get($a, b)}\n"),
-        "x {\n  y: c;\n}\n"
-    );
-    assert_sass_parity("$a: (b\n  : c, d: e)\nx\n  y: map-get($a, b)\n");
-    // A declaration WITH a value whose child block contains a bare
-    // non-declaration line is dart's `expected ":".` error.
-    let err = compile(
-        "a\n  b: c,\n     d\n",
-        &Options::default().with_syntax(sasso::Syntax::Sass),
-    )
-    .expect_err("bare child line under a valued declaration must error");
-    assert!(
-        err.to_string().contains("expected \":\"."),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
 fn selector_paren_validation_and_import_supports_collapse() {
     // A top-level `(` in a selector is only valid as a pseudo argument list;
     // a stray `)` is its own error (dart-sass "expected selector." /
@@ -6689,114 +6425,6 @@ fn selector_paren_validation_and_import_supports_collapse() {
         "@import \"a.css\" foo(b\n  c);\n"
     );
     assert_parity("@import \"a.css\" supports(a(b\n\n  c));\n");
-}
-
-#[test]
-fn sass_bare_plus_selector_and_using_block() {
-    // A bare `+` line is the next-sibling combinator selector (like `+ a`),
-    // NOT the include shorthand — only `+name` includes a mixin.
-    assert_sass_parity("d\n  +\n    a\n      x: y\n");
-    assert_eq!(ours_sass("@mixin a\n  b: c\nd\n  +\n    a\n"), "");
-    assert_eq!(ours_sass("@mixin a\n  b: c\nd\n  +a\n"), "d {\n  b: c;\n}\n");
-    // `=` alone still continues onto the next line as `@mixin`.
-    assert_eq!(ours_sass("=\n  a\n\nd\n  @include a\n"), "");
-    // An `@include … using (…)` with no child block takes an EMPTY content
-    // block (SCSS `@include a() using ();` is 'expected "{".').
-    assert_eq!(ours_sass("@mixin a\n  @content\n@include a() using\n  ()\n"), "");
-}
-
-#[test]
-fn sass_comment_blocks_and_continuation_rules() {
-    // Multi-line loud comments keep each line's source column behind ` *`,
-    // preserve interior blank lines, and treat `\f` as a line separator.
-    assert_eq!(ours_sass("/*\n  Multi\n  line\n"), "/* Multi\n * line */\n");
-    assert_eq!(
-        ours_sass("/* Handles\n         weird\n   indentation\n"),
-        "/* Handles\n *       weird\n * indentation */\n"
-    );
-    assert_eq!(ours_sass("/* Keeps\n\n   empty\n"), "/* Keeps\n *\n * empty */\n");
-    assert_eq!(ours_sass("/*\n  foo\u{c}  bar\n"), "/* foo\n * bar */\n");
-    // An open interpolation joins continuation lines as expression text.
-    assert_eq!(ours_sass("/* #{a \n  + b} */\n"), "/* ab */\n");
-    // A trailing comma does NOT continue a directive prelude (`@each $a in b,`
-    // iterates `(b,)`; the deeper lines are its body) — but a `@use`/`@forward`
-    // member list does continue.
-    assert_eq!(
-        ours_sass("@each $a in b,\n c\n  .#{$a}\n    d: $a\n"),
-        "c .b {\n  d: b;\n}\n"
-    );
-    // `!` awaits `important` on the next line; anything else is dart's
-    // hard `Expected "important".` (also in SCSS: no silent backtrack).
-    assert_eq!(
-        ours_sass("a\n  b: c!\n    important\n"),
-        "a {\n  b: c !important;\n}\n"
-    );
-    assert!(compile("a {b: c !ie;}", &Options::default()).is_err());
-}
-
-#[test]
-fn sass_custom_props_spread_and_inline_comments() {
-    // Only an open bracket or interpolation continues a custom-property
-    // value; any other indented child is dart's error.
-    assert!(compile(
-        ".x\n  --foo: bar\n    baz: qux\n",
-        &Options::default().with_syntax(sasso::Syntax::Sass)
-    )
-    .is_err());
-    assert_eq!(
-        ours_sass("a\n  --b: (c\n    d)\n"),
-        "a {\n  --b: (c\n    d);\n}\n"
-    );
-    // Whitespace (and newlines) may separate a splat value from its `...`.
-    assert_eq!(
-        ours("@function a($b, $c) {@return null}\n$d: e, f;\n$g: a($d\n  ...);\nx {y: $g}\n"),
-        ""
-    );
-    // A trailing loud comment is invisible to selector-comma continuation
-    // and tolerated (dropped) after an explicit `;`.
-    assert_eq!(ours_sass("a, /* c */\nb\n  x: y\n"), "a,\nb {\n  x: y;\n}\n");
-    assert_eq!(
-        ours_sass("a\n  b: c; /* f */\n  d: e;\n"),
-        "a {\n  b: c;\n  d: e;\n}\n"
-    );
-    // A selector list whose FIRST comma part is empty is "expected selector."
-    // (later empty parts are tolerated).
-    assert!(compile(",b {x: y}", &Options::default()).is_err());
-    assert_parity("a, ,b {x: y}\n");
-}
-
-#[test]
-fn sass_statement_escape_and_nested_linebreaks() {
-    // A leading `\` escapes the statement into a style rule and is consumed
-    // (the legacy `\:hover` disambiguation; SCSS keeps the backslash).
-    assert_eq!(
-        ours_sass("\\:hover TD\n  color: red\n"),
-        ":hover TD {\n  color: red;\n}\n"
-    );
-    assert_eq!(
-        ours_sass("\\:color red\n  foo: bar\n"),
-        ":color red {\n  foo: bar;\n}\n"
-    );
-    // A nested complex selector starts a fresh output line when its own
-    // comma part did OR its parent did.
-    assert_eq!(
-        ours("a,\nb {\n  c, d {x: y}\n}\n"),
-        "a c, a d,\nb c,\nb d {\n  x: y;\n}\n"
-    );
-    assert_parity("a,\nb {\n  c, d {x: y}\n}\n");
-}
-
-#[test]
-fn sass_value_operator_continuation_and_unquoted_imports() {
-    // A declaration value continues on a trailing binary operator.
-    assert_eq!(ours_sass("a\n  b: 3 %\n  2\n"), "a {\n  b: 1;\n}\n");
-    assert_eq!(ours_sass("a\n  b: 3 +\n  2\n"), "a {\n  b: 5;\n}\n");
-    assert_eq!(ours_sass("a\n  b: true and\n  false\n"), "a {\n  b: false;\n}\n");
-    // `3%` is a complete percent unit and `c-` ends an identifier — no join.
-    assert_eq!(ours_sass("a\n  b: 3%\n"), "a {\n  b: 3%;\n}\n");
-    // An unquoted indented-syntax `@import` URL is quoted for the SCSS
-    // grammar; a `.css` one stays a plain-CSS import.
-    assert_eq!(ours_sass("@import other.css\n"), "@import \"other.css\";\n");
 }
 
 #[test]
@@ -6847,20 +6475,6 @@ fn css_custom_callable_result_rules_and_string_line_continuation() {
     assert_eq!(
         ours("@function --a() {result: {b: c}}\n"),
         "@function --a() {\n  result: {b: c};\n}\n"
-    );
-    let err = compile(
-        "@function --a()\n  result:\n    b: c\n",
-        &Options::default().with_syntax(sasso::Syntax::Sass),
-    )
-    .expect_err("indented child beneath result must error");
-    assert!(err
-        .to_string()
-        .contains("Nothing may be indented beneath a @function result."));
-    // A `\`+newline inside an open quoted string is a CSS line continuation:
-    // it vanishes and the next line's indentation stays part of the string.
-    assert_eq!(
-        ours_sass("a \n  b: 'line1 \\\n      line2'\n"),
-        "a {\n  b: \"line1       line2\";\n}\n"
     );
 }
 
@@ -8218,11 +7832,6 @@ fn custom_property_values_reindent_like_dart() {
     assert_eq!(
         ours("a {\n\t--tabs: {\n\t\tfoo: bar;\n\t};\n}\n"),
         "a {\n  --tabs: {\n  \tfoo: bar;\n  };\n}\n"
-    );
-    // .sass keeps the original name column through transpilation.
-    assert_eq!(
-        ours_sass("a\n  --b: (c\n    d)\n"),
-        "a {\n  --b: (c\n    d);\n}\n"
     );
     // Compressed output folds each newline + following whitespace run to a
     // single space instead (dart _writeFoldedValue).

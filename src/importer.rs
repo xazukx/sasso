@@ -172,10 +172,9 @@ impl Importer for FsImporter {
 }
 
 /// The syntax a resolved file should be parsed with, from its extension: a
-/// `.sass` file is the indented syntax, anything else (`.scss`) is SCSS.
+/// `.css` file is the CSS syntax, anything else (`.scss`) is SCSS.
 fn syntax_for_path(p: &Path) -> Syntax {
     match p.extension().and_then(|e| e.to_str()) {
-        Some(e) if e.eq_ignore_ascii_case("sass") => Syntax::Sass,
         Some(e) if e.eq_ignore_ascii_case("css") => Syntax::Css,
         _ => Syntax::Scss,
     }

@@ -57,7 +57,6 @@ OPTIONS:
                                         how the map references its sources
                                         (default: relative)
         --stdin                         read SCSS from standard input
-        --indented                      parse the indented .sass syntax
         --no-unicode                    ASCII-only diagnostics (no box glyphs)
         --loop <N>                      recompile in-process N times (throughput)
     -q, --quiet                         suppress CSS on stdout (timing only)
@@ -72,9 +71,6 @@ struct Cli {
     use_stdin: bool,
     style: OutputStyle,
     load_paths: Vec<PathBuf>,
-    /// Force the indented `.sass` syntax (otherwise inferred from the input
-    /// path's extension; `--stdin` defaults to SCSS).
-    indented: bool,
     /// Suppress CSS on stdout (timing-only runs).
     quiet: bool,
     /// Recompile the input in-process this many times and report throughput.
@@ -145,7 +141,6 @@ fn parse_args(args: &[String]) -> Result<Action, String> {
         use_stdin: false,
         style: OutputStyle::Expanded,
         load_paths: Vec::new(),
-        indented: false,
         quiet: false,
         loop_n: None,
         no_unicode: false,
@@ -161,7 +156,6 @@ fn parse_args(args: &[String]) -> Result<Action, String> {
             "-h" | "--help" => return Ok(Action::Help),
             "--version" => return Ok(Action::Version),
             "--stdin" => cli.use_stdin = true,
-            "--indented" => cli.indented = true,
             "--no-unicode" => cli.no_unicode = true,
             "--source-map" => cli.source_map = true,
             "--embed-sources" => cli.embed_sources = true,
@@ -259,7 +253,7 @@ fn run(cli: Cli) -> ExitCode {
     // should appear in stderr diagnostics (`-` for stdin, matching dart-sass).
     let mut units: Vec<(String, Syntax, String)> = Vec::new();
     if cli.use_stdin {
-        let syntax = if cli.indented { Syntax::Sass } else { Syntax::Scss };
+        let syntax = Syntax::Scss;
         match read_stdin() {
             Ok(s) => units.push((s, syntax, "-".to_string())),
             Err(e) => {
@@ -282,15 +276,7 @@ fn run(cli: Cli) -> ExitCode {
             // directory (the evaluator's current_file_dir), like dart — the
             // input's directory is deliberately NOT an implicit load path
             // (a file in a subdirectory must not see the entry's siblings).
-            let ext_is_sass = path
-                .extension()
-                .map(|e| e.eq_ignore_ascii_case("sass"))
-                .unwrap_or(false);
-            let syntax = if cli.indented || ext_is_sass {
-                Syntax::Sass
-            } else {
-                Syntax::Scss
-            };
+            let syntax = Syntax::Scss;
             match std::fs::read_to_string(path) {
                 Ok(s) => units.push((s, syntax, path.to_string_lossy().into_owned())),
                 Err(e) => {

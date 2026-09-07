@@ -47,7 +47,6 @@ mod importer;
 mod musl_math;
 mod parser;
 mod ryu;
-mod sass_parser;
 mod scanner;
 mod selector;
 // Source Map v3 generation: the encoding primitives + JSON model (Phase A),
@@ -89,9 +88,6 @@ pub enum Syntax {
     /// The brace/semicolon SCSS syntax (the default).
     #[default]
     Scss,
-    /// The indented `.sass` syntax: blocks come from indentation, statements
-    /// end at a newline.
-    Sass,
     /// Plain CSS (a `.css` file loaded via `@use`/`@forward`): the brace/semicolon
     /// grammar, but Sass features are rejected, nesting is preserved verbatim,
     /// and values are emitted without SassScript evaluation.
@@ -377,7 +373,6 @@ fn compile_inner_sm(source: &str, options: &Options<'_>) -> Result<CompileResult
     let sheet = match options.syntax {
         Syntax::Scss => parser::parse(source),
         Syntax::Css => parser::parse_plain_css(source),
-        Syntax::Sass => sass_parser::parse(source),
     };
     let sheet = match sheet {
         Ok(s) => s,
@@ -441,7 +436,6 @@ fn compile_inner(source: &str, options: &Options<'_>) -> Result<String, Error> {
     let sheet = match options.syntax {
         Syntax::Scss => parser::parse(source),
         Syntax::Css => parser::parse_plain_css(source),
-        Syntax::Sass => sass_parser::parse(source),
     };
     // A parse error never reached the evaluator, so render its snippet here
     // (single `root stylesheet` frame) when a diagnostic URL is configured.

@@ -59,7 +59,6 @@ fn parse_with_syntax(src: &str, syntax: Syntax) -> Result<crate::ast::Stylesheet
     match syntax {
         Syntax::Scss => crate::parser::parse(src),
         Syntax::Css => crate::parser::parse_plain_css(src),
-        Syntax::Sass => crate::sass_parser::parse(src),
     }
 }
 
