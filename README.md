@@ -113,38 +113,40 @@ assert!(css.contains("a:hover"));
 let min = compile(scss, &Options::default().with_style(OutputStyle::Compressed)).unwrap();
 ```
 
-`@import` resolution is controlled by an [`Importer`] you supply, so file
-access stays on your side of any sandbox:
+All file access goes through an [`Importer`] you supply, so it stays on your
+side of any sandbox. [`MemoryImporter`] is a ready-made virtual filesystem,
+[`FsImporter`] reads from disk for standalone/CLI use, and the two-phase
+`Importer` trait (`canonicalize` then `load`, like dart-sass) lets you route
+loads anywhere you like:
 
 ```rust
-use sasso::{compile, Importer, Options};
+use sasso::{compile, MemoryImporter, Options};
 
-struct MyFs;
-impl Importer for MyFs {
-    fn resolve(&self, path: &str) -> Option<String> {
-        std::fs::read_to_string(format!("scss/_{path}.scss")).ok()
-    }
-}
-let css = compile("@import \"base\";", &Options::default().with_importer(&MyFs)).unwrap();
+let files = MemoryImporter::new().with_file("base/_reset.scss", "html { margin: 0; }");
+let css = compile("@use \"base/reset\";", &Options::default().with_importer(&files)).unwrap();
 ```
-
-A ready-made [`FsImporter`] is provided for standalone/CLI use.
 
 ### Staged compiles: inspect and rewrite the intermediates
 
-`compile` runs parse → evaluate → emit as one closed step. `Compiler` runs the
-same three steps and hands each intermediate back, so tooling can look at it —
-or change it — before the next step runs:
+`compile` takes a source string and runs parse → evaluate → emit as one closed
+step. `Compiler` names an entry **file**, loads it through the importer, and
+hands each intermediate back so tooling can look at it — or change it — before
+the next step runs. Because every source has a name, every diagnostic, span and
+source-map entry is attributed to the file it came from, even when two partials
+in different directories share a basename:
 
 ```rust
-use sasso::{Compiler, Options, OutNode, RuleSelectors};
+use sasso::{Compiler, MemoryImporter, Options, OutNode, RuleSelectors};
 
-let options = Options::default();
-let compiler = Compiler::new("a { color: red; }\nb { color: blue; }", &options);
+let files = MemoryImporter::new()
+    .with_file("main.scss", r#"@use "theme"; a { color: theme.$fg; } b { color: blue; }"#)
+    .with_file("_theme.scss", "$fg: red;");
+let options = Options::default().with_importer(&files);
+let compiler = Compiler::new("main.scss", &options).unwrap();
 
-// 1. Parse -> a mutable `ast::Stylesheet`: drop every rule but the first.
+// 1. Parse -> a mutable `ast::Stylesheet`: drop the trailing rule.
 let mut sheet = compiler.parse().unwrap();
-sheet.stmts.truncate(1);
+sheet.stmts.truncate(2);
 
 // 2. Evaluate -> the flattened `OutNode` tree: scope the resolved selectors.
 let mut run = compiler.evaluate(&sheet).unwrap();
@@ -167,20 +169,32 @@ a rule's selectors can be swapped for) and `value` (`Value` and friends).
 `Options::record_variable_values(true)` additionally records every variable
 declaration's evaluated value as it is visited, keyed by the declaration's
 span — including variables local to a rule, mixin or loop, whose scope is gone
-by the time the compile finishes:
+by the time the compile finishes. `Evaluator::file_url` resolves a span's file
+id back to the canonical URL of the file that declared it:
 
 ```rust
-use sasso::{Compiler, Options};
+use sasso::{Compiler, MemoryImporter, Options};
 
-let options = Options::default().record_variable_values(true);
-let compiler = Compiler::new("a { $inner: 3px; width: $inner; }", &options);
+let files = MemoryImporter::new()
+    .with_file("in.scss", "@use \"lib\"; a { $inner: 3px; width: $inner; }")
+    .with_file("_lib.scss", "$from-lib: 7px;");
+let options = Options::default()
+    .with_importer(&files)
+    .record_variable_values(true);
+let compiler = Compiler::new("in.scss", &options).unwrap();
 let sheet = compiler.parse().unwrap();
 let run = compiler.evaluate(&sheet).unwrap();
 
 for (span, var) in run.evaluator.variable_values() {
-    println!("{}:{}  ${} = {}", span.line + 1, span.col + 1, var.name, var.value.to_css(false));
+    let file = run.evaluator.file_url(span.file).unwrap_or("?");
+    println!("{file} {}:{}  ${} = {}", span.line + 1, span.col + 1, var.name, var.value.to_css(false));
 }
 ```
+
+`examples/virtual_project.rs` (`cargo run --example virtual_project`) puts all
+of it together on a twelve-file virtual project: variable capture grouped by
+file, AST and output-tree rewriting, source maps, and an error blamed on the
+right one of two same-named partials.
 
 ## CLI usage
 
@@ -408,3 +422,4 @@ at your option.
 
 [`Importer`]: https://docs.rs/sasso
 [`FsImporter`]: https://docs.rs/sasso
+[`MemoryImporter`]: https://docs.rs/sasso

@@ -2,8 +2,8 @@ use super::*;
 
 /// The evaluator file-context fields swapped by [`Evaluator::enter_module_file`]
 /// and restored by [`Evaluator::leave_module_file`]:
-/// `(current_url, current_source, current_file_dir, current_canonical)`.
-type SavedModuleFile = (String, Rc<str>, Option<String>, Option<CanonicalUrl>);
+/// `(current_url, current_key, current_source, current_file_dir, current_canonical)`.
+type SavedModuleFile = (String, String, Rc<str>, Option<String>, Option<CanonicalUrl>);
 
 impl<'a> Evaluator<'a> {
     /// Register an `@extend` directive: validate the (interpolation-resolved)
@@ -948,9 +948,11 @@ impl<'a> Evaluator<'a> {
         // snippet/frame that points into this file renders against its text.
         let diag_url = self.module_diag_url(url, &key);
         if self.diag_enabled() {
+            // Keyed by the CANONICAL url: `diag_url` is only the basename and
+            // would let a second `_colors.scss` overwrite the first one's text.
             self.file_sources
                 .borrow_mut()
-                .insert(diag_url.clone(), Rc::from(src.as_str()));
+                .insert(key.clone(), Rc::from(src.as_str()));
         }
         let sheet = match parse_with_syntax(&src, syntax) {
             Ok(sheet) => sheet,
@@ -960,9 +962,11 @@ impl<'a> Evaluator<'a> {
                 // already on the stack), like dart's
                 // `_mod.scss 3:19  @use` + loader chain.
                 let saved_url = std::mem::replace(&mut self.current_url, diag_url.clone());
+                let saved_key = std::mem::replace(&mut self.current_key, key.clone());
                 let saved_source = std::mem::replace(&mut self.current_source, Rc::from(src.as_str()));
                 let e = self.finalize_error(e);
                 self.current_url = saved_url;
+                self.current_key = saved_key;
                 self.current_source = saved_source;
                 return Err(e);
             }
@@ -971,7 +975,7 @@ impl<'a> Evaluator<'a> {
         // it under the same display URL the source map keys on (`@import` is
         // textual and has no distinct source entry, so it carries no override).
         if let Some(smu) = source_map_url {
-            self.file_map_urls.insert(diag_url.clone(), smu);
+            self.file_map_urls.insert(key.clone(), smu);
         }
         let is_css = matches!(syntax, Syntax::Css);
         // A `meta.load-css` first load also records only the copy edge (see
@@ -1084,7 +1088,7 @@ impl<'a> Evaluator<'a> {
     ) -> Result<(Module, Vec<String>), Error> {
         // Save and reset the per-module environment, then restore on the way out.
         // The module's body runs against its own source file for diagnostics.
-        let module_source = self.source_for(diag_url);
+        let module_source = self.source_for(key);
         // Relative URLs inside the module resolve against ITS directory.
         let module_dir = dirname_of(key);
         let saved_dir = std::mem::replace(&mut self.current_file_dir, module_dir);
@@ -1092,6 +1096,7 @@ impl<'a> Evaluator<'a> {
         // relative `@use`/`@import` inside the module resolves against IT.
         let saved_canonical = self.current_canonical.replace(CanonicalUrl::new(key));
         let saved_url = std::mem::replace(&mut self.current_url, diag_url.to_string());
+        let saved_key = std::mem::replace(&mut self.current_key, key.to_string());
         self.current_url_stamp = 0;
         let saved_source = std::mem::replace(&mut self.current_source, module_source);
         // dart does NOT reset `_preModuleComments` for a nested module
@@ -1203,6 +1208,7 @@ impl<'a> Evaluator<'a> {
         self.current_file_dir = saved_dir;
         self.current_canonical = saved_canonical;
         self.current_url = saved_url;
+        self.current_key = saved_key;
         self.current_url_stamp = 0;
         self.current_source = saved_source;
         self.pre_module_comments = saved_pre_comments;
@@ -1583,7 +1589,10 @@ impl<'a> Evaluator<'a> {
         if diag_url.is_empty() {
             return None;
         }
-        let source = self.source_for(diag_url);
+        // A captured origin with no canonical URL (nothing resolved it) falls
+        // back to its display name as its identity, as the entry file does.
+        let key = if canonical.is_empty() { diag_url } else { canonical };
+        let source = self.source_for(key);
         let dir = if file_dir.is_empty() {
             None
         } else {
@@ -1592,6 +1601,7 @@ impl<'a> Evaluator<'a> {
         self.current_url_stamp = 0;
         Some((
             std::mem::replace(&mut self.current_url, diag_url.to_string()),
+            std::mem::replace(&mut self.current_key, key.to_string()),
             std::mem::replace(&mut self.current_source, source),
             std::mem::replace(&mut self.current_file_dir, dir),
             self.current_canonical
@@ -1620,8 +1630,9 @@ impl<'a> Evaluator<'a> {
 
     /// Restore the file swapped out by [`Self::enter_module_file`].
     pub(super) fn leave_module_file(&mut self, saved: Option<SavedModuleFile>) {
-        if let Some((url, source, dir, canonical)) = saved {
+        if let Some((url, key, source, dir, canonical)) = saved {
             self.current_url = url;
+            self.current_key = key;
             self.current_url_stamp = 0;
             self.current_source = source;
             self.current_file_dir = dir;
@@ -1629,10 +1640,25 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// The diagnostic display URL for a `@use`/`@import`ed module: the basename
-    /// of the resolved key (dart-sass shows e.g. `_libchain.scss`), falling back
-    /// to the `@use` url spelling when the key has no useful tail.
+    /// The diagnostic display URL for a `@use`/`@import`ed module.
+    ///
+    /// A RELATIVE canonical key is already a short, unambiguous name — a
+    /// virtual filesystem's `theme/_colors.scss`, say — so it is shown whole,
+    /// which is also what dart-sass prints (a URL relative to the load path).
+    /// An ABSOLUTE key (what [`crate::FsImporter`] produces) would put a full
+    /// path in every stack frame, so it collapses to its basename, e.g.
+    /// `_libchain.scss`; the `@use` url spelling is the last resort for a key
+    /// with no useful tail.
+    ///
+    /// This is DISPLAY only. File identity is the canonical key
+    /// ([`Evaluator::current_key`]), so two `_colors.scss` in different
+    /// directories stay distinct file ids, sources and spans even though both
+    /// print as `_colors.scss`.
     pub(super) fn module_diag_url(&self, url: &str, key: &str) -> String {
+        let path = std::path::Path::new(key);
+        if !key.is_empty() && !path.has_root() && !path.is_absolute() {
+            return key.replace('\\', "/");
+        }
         let base = key.rsplit(['/', '\\']).next().unwrap_or(key);
         if base.is_empty() {
             url.to_string()

@@ -792,9 +792,19 @@ pub struct EvalOptions<'a> {
     /// snippets. Empty when the embedder does not supply it (diagnostics then
     /// fall back to the legacy one-liner).
     pub source: &'a str,
+    /// Whether to render byte-exact diagnostic blocks (header + snippet +
+    /// stack trace) instead of the legacy `Error: <msg> (line:col)` one-liner.
+    /// The file-based entry points set this unconditionally — an entry file
+    /// that happens to be EMPTY must still render an imported file's error
+    /// against that file's text.
+    pub diagnostics: bool,
     /// The entrypoint's file path/URL as it should appear in diagnostics
     /// (e.g. `input.scss`).
     pub url: &'a str,
+    /// The entrypoint's CANONICAL url — the identity the importer resolved it
+    /// to, which is also the base relative `@use`/`@import` URLs inside it
+    /// resolve against. Empty falls back to [`Self::url`].
+    pub entry_key: &'a str,
     /// The glyph set for snippet/gutter decoration (ASCII under `--no-unicode`).
     pub glyphs: crate::diag::GlyphSet,
     /// Diagnostic handler (dart-sass `logger`). When set, `@warn`/`@debug`/
@@ -1040,14 +1050,26 @@ pub struct Evaluator<'a> {
     /// recording the call site and the *caller's* member name. dart-sass
     /// `_stack`. Used to render byte-exact stack traces under errors/warnings.
     call_stack: Vec<DiagFrame>,
-    /// The file path/URL the statements currently being evaluated came from
-    /// (the entrypoint URL, or an imported/used partial's path).
+    /// The DISPLAY name of the file whose statements are being evaluated — what
+    /// a diagnostic frame prints (the entrypoint URL, or an imported/`@use`d
+    /// file's basename). Purely cosmetic and NOT unique: two partials named
+    /// `_colors.scss` in different directories share it. File *identity* is
+    /// [`Self::current_key`].
     current_url: String,
-    /// The source text of [`Self::current_url`], for rendering snippets that
+    /// The IDENTITY of the file whose statements are being evaluated: the
+    /// importer's canonical URL (the entry's own canonical URL at the root).
+    ///
+    /// Unique per file, so it — never [`Self::current_url`] — is what keys the
+    /// interned file ids, the per-file source table and the source-map sources.
+    /// Swapped in lockstep with `current_url`/`current_source` at every file
+    /// boundary (`@import` enter, `eval_module`, `enter_file_context`).
+    current_key: String,
+    /// The source text of [`Self::current_key`], for rendering snippets that
     /// point into the currently-executing file.
     current_source: Rc<str>,
-    /// Sources of every file seen so far, keyed by URL, so a stack trace can
-    /// render a snippet that points into a file other than the current one.
+    /// Sources of every file seen so far, keyed by canonical URL, so a stack
+    /// trace can render a snippet that points into a file other than the
+    /// current one.
     file_sources: Rc<RefCell<HashMap<String, Rc<str>>>>,
     /// Per-id count of deprecation warnings already *printed* (capped at 5 each,
     /// dart-sass). Keyed by the deprecation `[id]`.
@@ -1058,10 +1080,12 @@ pub struct Evaluator<'a> {
     /// Per-location dedup: a `(id, url, line, col)` already warned about is not
     /// warned about again (dart-sass collapses identical repeated warnings).
     deprecations_seen: std::collections::HashSet<(&'static str, String, usize, usize)>,
-    /// Small interned ids for source URLs, stamped into [`SrcLines`] so the
-    /// serializer's trailing-comment rule can require same-file adjacency.
+    /// Small interned ids for source files, keyed by CANONICAL url (never the
+    /// display name, which collides across directories), stamped into
+    /// [`SrcLines`] so the serializer's trailing-comment rule can require
+    /// same-file adjacency.
     file_ids: HashMap<String, u32>,
-    /// Source-map URL OVERRIDES: a loaded file's display URL -> the URL an
+    /// Source-map URL OVERRIDES: a loaded file's canonical URL -> the URL an
     /// importer asked the source map to record for it (`ImporterResult
     /// .source_map_url`). Empty for the filesystem importer / entry file, so the
     /// generated source map is byte-identical unless a custom importer sets it.
@@ -1072,7 +1096,10 @@ pub struct Evaluator<'a> {
 /// position) and the name of the member that contained that call.
 #[derive(Clone)]
 struct DiagFrame {
+    /// The display name printed for this frame.
     url: String,
+    /// The frame file's canonical URL, to look its source text up with.
+    key: String,
     pos: Pos,
     /// The member name to print for this frame (`root stylesheet` or `name()`).
     member: String,
@@ -1340,15 +1367,24 @@ struct PendingExtend {
 impl<'a> Evaluator<'a> {
     pub fn new(options: EvalOptions<'a>) -> Self {
         let url = options.url.to_string();
-        let entry_canonical = CanonicalUrl::new(options.url);
-        let entry_dir = dirname_of(options.url).unwrap_or_default();
+        // The entry's IDENTITY. A file-based compile hands the importer's
+        // canonical URL in; the source-string path has none, so its display url
+        // doubles as its identity (there is only ever one such file).
+        let key = if options.entry_key.is_empty() {
+            url.clone()
+        } else {
+            options.entry_key.to_string()
+        };
+        let entry_canonical = CanonicalUrl::new(key.clone());
+        let entry_dir = dirname_of(&key).unwrap_or_default();
         let source: Rc<str> = Rc::from(options.source);
         let file_sources: HashMap<String, Rc<str>> =
-            [(url.clone(), Rc::clone(&source))].into_iter().collect();
+            [(key.clone(), Rc::clone(&source))].into_iter().collect();
         Evaluator {
             member: "root stylesheet".to_string(),
             call_stack: Vec::new(),
             current_url: url,
+            current_key: key,
             current_source: source,
             file_sources: Rc::new(RefCell::new(file_sources)),
             deprecations_shown: HashMap::default(),
@@ -1446,13 +1482,16 @@ impl<'a> Evaluator<'a> {
             return self.current_url_stamp;
         }
         let next = self.file_ids.len() as u32 + 1;
-        let id = *self.file_ids.entry(self.current_url.clone()).or_insert(next);
+        let id = *self.file_ids.entry(self.current_key.clone()).or_insert(next);
         self.current_url_stamp = id;
         id
     }
 
-    /// The URL an interned file id (as in [`VarSpan::file`] or [`SrcLines::file`])
-    /// stands for; `None` for the "unknown" id `0` or an id never interned.
+    /// The CANONICAL url an interned file id (as in [`VarSpan::file`] or
+    /// [`SrcLines::file`]) stands for — the importer key, so a variable
+    /// captured from `theme/_colors.scss` is distinguishable from one captured
+    /// from `base/_colors.scss`. `None` for the "unknown" id `0` or an id never
+    /// interned.
     pub fn file_url(&self, id: u32) -> Option<&str> {
         self.file_ids
             .iter()
@@ -1564,13 +1603,13 @@ impl<'a> Evaluator<'a> {
     /// URL, never by text).
     pub fn source_table(
         &mut self,
-        entry_url: &str,
+        entry_key: &str,
         include_sources: bool,
     ) -> (Vec<String>, Option<Vec<String>>) {
         // Guarantee the entry url occupies id 1 (index 0) even if nothing was
         // stamped during evaluation.
         if self.file_ids.is_empty() {
-            self.file_ids.insert(entry_url.to_string(), 1);
+            self.file_ids.insert(entry_key.to_string(), 1);
         }
         let mut by_id: Vec<(u32, &str)> = self
             .file_ids
@@ -1605,9 +1644,10 @@ impl<'a> Evaluator<'a> {
 
     // ---- diagnostic rendering -------------------------------------------
 
-    /// Whether the entrypoint supplied source text (so snippets can render).
+    /// Whether byte-exact diagnostic blocks are rendered (vs the legacy
+    /// one-liner).
     fn diag_enabled(&self) -> bool {
-        !self.options.source.is_empty()
+        self.options.diagnostics
     }
 
     /// Build the diagnostic stack-frame list (innermost first) for a primary
@@ -1618,6 +1658,7 @@ impl<'a> Evaluator<'a> {
         let mut frames = Vec::with_capacity(self.call_stack.len() + 1);
         frames.push(DiagFrame {
             url: self.current_url.clone(),
+            key: self.current_key.clone(),
             pos,
             member: self.member.clone(),
             length: 0,
@@ -1653,14 +1694,15 @@ impl<'a> Evaluator<'a> {
         out
     }
 
-    /// Look up the source text for `url`, defaulting to the current file's.
-    fn source_for(&self, url: &str) -> Rc<str> {
-        if url == self.current_url {
+    /// Look up the source text for a file's CANONICAL url, defaulting to the
+    /// current file's.
+    fn source_for(&self, key: &str) -> Rc<str> {
+        if key == self.current_key {
             return Rc::clone(&self.current_source);
         }
         self.file_sources
             .borrow()
-            .get(url)
+            .get(key)
             .map(Rc::clone)
             .unwrap_or_else(|| Rc::clone(&self.current_source))
     }
@@ -1708,7 +1750,7 @@ impl<'a> Evaluator<'a> {
                     };
                     let mut e = Error::at(MSG, pos);
                     if self.diag_enabled() {
-                        let source = self.source_for(&self.current_url.clone());
+                        let source = self.source_for(&self.current_key.clone());
                         let frames = self.frames_for(pos);
                         let mut rendered = format!("Error: {MSG}\n");
                         rendered.push_str(&crate::diag::render_interp_error_snippet(
@@ -1763,7 +1805,7 @@ impl<'a> Evaluator<'a> {
     /// the 2-space-indented frame trace.
     fn render_error_with_frames(&self, e: &Error, frames: &[DiagFrame]) -> String {
         let primary = &frames[0];
-        let source = self.source_for(&primary.url);
+        let source = self.source_for(&primary.key);
         // Prefer the primary frame's own span length (set for `@error`'s call
         // site); otherwise the error's recorded length.
         let length = if primary.length > 0 {
@@ -1800,7 +1842,7 @@ impl<'a> Evaluator<'a> {
         }
         // Per-location dedup: an identical (id, file, line, col) warning fires
         // only once.
-        let key = (dep.id, self.current_url.clone(), pos.line, pos.col);
+        let key = (dep.id, self.current_key.clone(), pos.line, pos.col);
         if !self.deprecations_seen.insert(key) {
             return;
         }
@@ -1817,7 +1859,7 @@ impl<'a> Evaluator<'a> {
             col: pos.col,
             length: len,
         };
-        let source = self.source_for(&self.current_url.clone());
+        let source = self.source_for(&self.current_key.clone());
         let mut block = dep.render_header();
         block.push_str(&crate::diag::render_snippet(
             &source,
@@ -1868,6 +1910,7 @@ impl<'a> Evaluator<'a> {
     fn enter_call(&mut self, call_pos: Pos, call_len: usize, new_member: &str) -> String {
         self.call_stack.push(DiagFrame {
             url: self.current_url.clone(),
+            key: self.current_key.clone(),
             pos: call_pos,
             member: self.member.clone(),
             length: call_len,
@@ -1959,6 +2002,7 @@ impl<'a> Evaluator<'a> {
         let frames: Vec<DiagFrame> = if self.call_stack.is_empty() {
             vec![DiagFrame {
                 url: self.current_url.clone(),
+                key: self.current_key.clone(),
                 pos,
                 member: self.member.clone(),
                 length,
@@ -2727,12 +2771,17 @@ impl<'a> Evaluator<'a> {
                                             let diag = self.module_diag_url(path, &resolved_key);
                                             let saved_member = self.enter_call(*pos, *length, "@import");
                                             let saved_url = std::mem::replace(&mut self.current_url, diag);
+                                            let saved_key = std::mem::replace(
+                                                &mut self.current_key,
+                                                resolved_key.clone(),
+                                            );
                                             let saved_source = std::mem::replace(
                                                 &mut self.current_source,
                                                 Rc::from(src.as_str()),
                                             );
                                             let err = self.finalize_error(err);
                                             self.current_url = saved_url;
+                                            self.current_key = saved_key;
                                             self.current_source = saved_source;
                                             self.leave_call(saved_member);
                                             return Err(err);
@@ -2771,10 +2820,19 @@ impl<'a> Evaluator<'a> {
                             if self.diag_enabled() && !resolved_key.is_empty() {
                                 self.file_sources
                                     .borrow_mut()
-                                    .entry(import_diag.clone())
+                                    .entry(resolved_key.clone())
                                     .or_insert_with(|| Rc::clone(&entry.3));
                             }
                             let saved_import_url = std::mem::replace(&mut self.current_url, import_diag);
+                            // Identity follows the display name in lockstep, so
+                            // spans stamped inside the imported file intern to
+                            // ITS id even when its basename collides with
+                            // another directory's partial.
+                            let saved_import_key = if resolved_key.is_empty() {
+                                self.current_key.clone()
+                            } else {
+                                std::mem::replace(&mut self.current_key, resolved_key.clone())
+                            };
                             let saved_import_source =
                                 std::mem::replace(&mut self.current_source, Rc::clone(&entry.3));
                             self.current_url_stamp = 0;
@@ -2787,6 +2845,7 @@ impl<'a> Evaluator<'a> {
                                     .map_err(|e| self.finalize_error(e));
                                 self.loading.pop();
                                 self.current_url = saved_import_url;
+                                self.current_key = saved_import_key;
                                 self.current_source = saved_import_source;
                                 self.current_url_stamp = 0;
                                 self.leave_call(saved_member);
@@ -2901,6 +2960,7 @@ impl<'a> Evaluator<'a> {
                                 .map_err(|e| self.finalize_error(e));
                             self.leave_call(saved_member);
                             self.current_url = saved_import_url;
+                            self.current_key = saved_import_key;
                             self.current_source = saved_import_source;
                             self.current_url_stamp = 0;
                             self.current_file_dir = saved_dir;

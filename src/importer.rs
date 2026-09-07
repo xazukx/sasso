@@ -87,6 +87,195 @@ pub trait Importer {
     fn load(&self, canonical: &CanonicalUrl) -> Result<Option<ImporterResult>, ImporterError>;
 }
 
+/// An in-memory [`Importer`]: a virtual filesystem of `name -> source`, with no
+/// disk access at all.
+///
+/// This is the importer the staged [`crate::Compiler`] is built around — it
+/// gives every stylesheet a *name*, so diagnostics, [`crate::VarSpan`]s and
+/// source-map entries are attributed to the file each construct actually came
+/// from. Two same-named partials in different directories
+/// (`theme/_colors.scss`, `base/_colors.scss`) are distinct
+/// [`CanonicalUrl`]s and stay distinct all the way through.
+///
+/// ```
+/// use sasso::{Compiler, MemoryImporter, Options};
+///
+/// let files = MemoryImporter::new()
+///     .with_file("main.scss", r#"@use "ui/button";"#)
+///     .with_file("ui/_button.scss", ".btn { color: red; }");
+/// let options = Options::default().with_importer(&files);
+/// let css = Compiler::new("main.scss", &options).unwrap().compile().unwrap();
+/// assert_eq!(css, ".btn {\n  color: red;\n}");
+/// ```
+///
+/// # Resolution
+///
+/// A URL is resolved lexically (there is no directory tree, only exact names)
+/// against the containing file's directory first, then against the virtual
+/// root — the root acts as an implicit load path. Within each base, the
+/// dart-sass candidate order applies: the import-only file (`@import` only),
+/// then the partial and the plain file, then the index file. Extensions tried
+/// are `.scss` and `.css`, plus the name exactly as written. The syntax of a
+/// resolved file comes from its extension (`.css` is plain CSS, anything else
+/// is SCSS) unless [`with_file_syntax`](Self::with_file_syntax) overrode it.
+///
+/// The first candidate that exists wins; unlike dart-sass, an ambiguous pair is
+/// not reported as an error.
+#[derive(Clone, Debug, Default)]
+pub struct MemoryImporter {
+    files: std::collections::HashMap<String, (String, Option<Syntax>)>,
+}
+
+impl MemoryImporter {
+    /// An empty virtual filesystem.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Builder: add `name` with `contents`, its syntax taken from the name's
+    /// extension.
+    #[must_use]
+    pub fn with_file(mut self, name: impl Into<String>, contents: impl Into<String>) -> Self {
+        self.insert(name, contents);
+        self
+    }
+
+    /// Builder: add `name` with `contents`, parsed as `syntax` regardless of
+    /// the name's extension.
+    #[must_use]
+    pub fn with_file_syntax(
+        mut self,
+        name: impl Into<String>,
+        contents: impl Into<String>,
+        syntax: Syntax,
+    ) -> Self {
+        self.files
+            .insert(normalize_url(&name.into()), (contents.into(), Some(syntax)));
+        self
+    }
+
+    /// Add or replace `name`, its syntax taken from the name's extension.
+    pub fn insert(&mut self, name: impl Into<String>, contents: impl Into<String>) {
+        self.files
+            .insert(normalize_url(&name.into()), (contents.into(), None));
+    }
+
+    /// Remove `name`, returning its contents if it was present.
+    pub fn remove(&mut self, name: &str) -> Option<String> {
+        self.files.remove(&normalize_url(name)).map(|(c, _)| c)
+    }
+
+    /// Whether `name` exists verbatim (no partial/index resolution).
+    pub fn contains(&self, name: &str) -> bool {
+        self.files.contains_key(&normalize_url(name))
+    }
+
+    /// Every file name in the virtual filesystem, in no particular order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.files.keys().map(String::as_str)
+    }
+
+    /// The candidate names for `url` under `base`, in dart-sass precedence
+    /// order. `base` is `""` (the virtual root) or a directory with no trailing
+    /// slash.
+    fn candidates(base: &str, url: &str, from_import: bool) -> Vec<String> {
+        let joined = if base.is_empty() {
+            normalize_url(url)
+        } else {
+            normalize_url(&format!("{base}/{url}"))
+        };
+        let (dir, file) = match joined.rsplit_once('/') {
+            Some((d, f)) => (format!("{d}/"), f.to_string()),
+            None => (String::new(), joined.clone()),
+        };
+        let mut out = Vec::with_capacity(10);
+        // 1. Import-only override, for `@import` only.
+        if from_import {
+            out.push(format!("{dir}_{file}.import.scss"));
+            out.push(format!("{dir}{file}.import.scss"));
+        }
+        // 2. Partial, then plain, per extension; then the name exactly as
+        //    written (so `@use "ui/button.scss"` and an entry named
+        //    `main.scss` both resolve).
+        for ext in ["scss", "css"] {
+            out.push(format!("{dir}_{file}.{ext}"));
+            out.push(format!("{dir}{file}.{ext}"));
+        }
+        out.push(joined.clone());
+        // 3. Index files, in a directory named after the URL.
+        if from_import {
+            out.push(format!("{joined}/_index.import.scss"));
+            out.push(format!("{joined}/index.import.scss"));
+        }
+        for ext in ["scss", "css"] {
+            out.push(format!("{joined}/_index.{ext}"));
+            out.push(format!("{joined}/index.{ext}"));
+        }
+        out
+    }
+}
+
+impl Importer for MemoryImporter {
+    fn canonicalize(
+        &self,
+        url: &str,
+        ctx: &CanonicalizeContext<'_>,
+    ) -> Result<Option<CanonicalUrl>, ImporterError> {
+        // The containing file's directory first, then the virtual root (an
+        // implicit load path), mirroring `FsImporter`'s base ordering.
+        let containing_dir = ctx
+            .containing_url
+            .and_then(|c| c.as_str().rsplit_once('/'))
+            .map(|(d, _)| d.to_string())
+            .unwrap_or_default();
+        let mut bases = vec![containing_dir.clone()];
+        if !containing_dir.is_empty() {
+            bases.push(String::new());
+        }
+        for base in bases {
+            for cand in Self::candidates(&base, url, ctx.from_import) {
+                if self.files.contains_key(&cand) {
+                    return Ok(Some(CanonicalUrl::new(cand)));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn load(&self, canonical: &CanonicalUrl) -> Result<Option<ImporterResult>, ImporterError> {
+        Ok(self
+            .files
+            .get(canonical.as_str())
+            .map(|(contents, syntax)| ImporterResult {
+                contents: contents.clone(),
+                syntax: syntax.unwrap_or_else(|| syntax_for_name(canonical.as_str())),
+                source_map_url: None,
+            }))
+    }
+}
+
+/// Normalize a virtual file name to the form [`MemoryImporter`] keys on:
+/// backslashes become `/`, and `.` / `..` segments are resolved lexically, so
+/// `ui/../main.scss` and `./main.scss` name the same file as `main.scss`.
+fn normalize_url(name: &str) -> String {
+    let slashed = name.replace('\\', "/");
+    let normalized = lexical_normalize(&slashed);
+    if normalized == "." {
+        String::new()
+    } else {
+        normalized
+    }
+}
+
+/// The syntax a virtual file name implies, from its extension — the in-memory
+/// twin of [`syntax_for_path`].
+fn syntax_for_name(name: &str) -> Syntax {
+    match name.rsplit_once('.') {
+        Some((_, ext)) if ext.eq_ignore_ascii_case("css") => Syntax::Css,
+        _ => Syntax::Scss,
+    }
+}
+
 /// A filesystem [`Importer`] resolving Sass partials (`_name.scss`,
 /// `name/_index.scss`) against a list of load paths.
 ///

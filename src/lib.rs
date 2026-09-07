@@ -65,7 +65,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub use arena::{set_arena_bytes, ScopedAlloc};
 pub use error::Error;
 pub use host_fn::{host_value_op, HostFunction};
-pub use importer::{CanonicalUrl, CanonicalizeContext, FsImporter, Importer, ImporterError, ImporterResult};
+pub use importer::{
+    CanonicalUrl, CanonicalizeContext, FsImporter, Importer, ImporterError, ImporterResult, MemoryImporter,
+};
 pub use sourcemap::SourceMap;
 
 // The intermediate representations the staged [`Compiler`] API hands out, at
@@ -297,10 +299,13 @@ impl<'a> Options<'a> {
     /// staged [`Compiler`] API:
     ///
     /// ```
-    /// use sasso::{Compiler, Options};
+    /// use sasso::{Compiler, MemoryImporter, Options};
     ///
-    /// let options = Options::default().record_variable_values(true);
-    /// let compiler = Compiler::new("a { $inner: 3px; width: $inner; }", &options);
+    /// let files = MemoryImporter::new().with_file("in.scss", "a { $inner: 3px; width: $inner; }");
+    /// let options = Options::default()
+    ///     .record_variable_values(true)
+    ///     .with_importer(&files);
+    /// let compiler = Compiler::new("in.scss", &options).unwrap();
     /// let sheet = compiler.parse().unwrap();
     /// let run = compiler.evaluate(&sheet).unwrap();
     /// let names: Vec<&str> = run
@@ -424,10 +429,13 @@ fn basename(url: &str) -> &str {
     url.rsplit('/').next().unwrap_or(url)
 }
 
-/// A staged compile, exposing every intermediate form of the pipeline.
+/// A staged compile of one **entry file**, exposing every intermediate form of
+/// the pipeline.
 ///
-/// [`compile`] runs parse → evaluate → emit as one closed step. `Compiler` runs
-/// the same three steps, but hands each intermediate back so it can be
+/// [`compile`] takes a source string and runs parse → evaluate → emit as one
+/// closed step. `Compiler` instead names an entry *file*, loads it through
+/// [`Options::importer`] — the same virtual filesystem `@use`/`@forward`/
+/// `@import` resolve against — and hands each intermediate back so it can be
 /// inspected and *modified* before feeding the next one:
 ///
 /// - [`parse`](Self::parse) yields an [`ast::Stylesheet`] — the statement tree,
@@ -442,15 +450,26 @@ fn basename(url: &str) -> &str {
 /// repeated: one node tree can be emitted twice under different styles, and one
 /// stylesheet can be evaluated more than once.
 ///
+/// Because every source has a name, every diagnostic, every [`VarSpan`] and
+/// every source-map entry is attributed to the file it actually came from —
+/// including two same-named partials in different directories, which are
+/// distinct [`CanonicalUrl`]s and therefore distinct interned file ids.
+///
 /// ```
-/// use sasso::{Compiler, Options, OutNode, RuleSelectors};
+/// use sasso::{Compiler, MemoryImporter, Options, OutNode, RuleSelectors};
 ///
-/// let options = Options::default();
-/// let compiler = Compiler::new("a { color: red; }\nb { color: blue; }", &options);
+/// let files = MemoryImporter::new()
+///     .with_file(
+///         "main.scss",
+///         r#"@use "theme"; a { color: theme.$fg; } b { color: blue; }"#,
+///     )
+///     .with_file("_theme.scss", "$fg: red;");
+/// let options = Options::default().with_importer(&files);
+/// let compiler = Compiler::new("main.scss", &options).unwrap();
 ///
-/// // Parse, then drop every rule but the first.
+/// // Parse, then drop every rule but the `@use` and the first rule.
 /// let mut sheet = compiler.parse().unwrap();
-/// sheet.stmts.truncate(1);
+/// sheet.stmts.truncate(2);
 ///
 /// // Evaluate, then rewrite the resolved selectors.
 /// let mut run = compiler.evaluate(&sheet).unwrap();
@@ -470,9 +489,34 @@ fn basename(url: &str) -> &str {
 /// (its intermediates outlive any one step), so every allocation goes to the
 /// global allocator even when [`ScopedAlloc`] is installed.
 pub struct Compiler<'a> {
-    source: &'a str,
+    /// The entry file's source text, as the importer loaded it (owned: the
+    /// importer hands back a `String` that must outlive every stage).
+    source: String,
+    /// The entry's canonical URL — its identity for the module cache, for
+    /// interned file ids, and the base relative loads inside it resolve
+    /// against.
+    entry: CanonicalUrl,
+    /// The entry's DISPLAY name in diagnostics: the name passed to
+    /// [`new`](Self::new), or [`Options::url`] when set.
+    url: String,
+    /// The syntax the importer reported for the entry file.
+    syntax: Syntax,
     options: &'a Options<'a>,
     source_map: bool,
+}
+
+/// Names the entry file and how it will be compiled; the source text and the
+/// options are elided (`Options` holds caller callbacks and is not `Debug`).
+impl std::fmt::Debug for Compiler<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Compiler")
+            .field("entry", &self.entry.as_str())
+            .field("url", &self.url)
+            .field("syntax", &self.syntax)
+            .field("source_len", &self.source.len())
+            .field("source_map", &self.source_map)
+            .finish()
+    }
 }
 
 /// The result of [`Compiler::evaluate`]: the output tree plus the evaluator
@@ -488,13 +532,87 @@ pub struct Evaluation<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    /// A staged compile of `source` under `options`.
-    pub fn new(source: &'a str, options: &'a Options<'a>) -> Self {
+    /// A staged compile of the entry file named `entry`, loaded through
+    /// [`Options::importer`].
+    ///
+    /// `entry` is resolved exactly like a `@use` URL with no containing file:
+    /// [`Importer::canonicalize`] maps it to a [`CanonicalUrl`], then
+    /// [`Importer::load`] fetches its source and syntax. That canonical URL is
+    /// the entry's identity — relative `@use`/`@forward`/`@import` URLs inside
+    /// it resolve against it, and spans stamped in it intern under it.
+    ///
+    /// The name shown in diagnostics is `entry` itself, unless
+    /// [`Options::url`] overrides it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when no importer is configured, when the importer
+    /// cannot resolve or load `entry`, or when the importer itself fails.
+    pub fn new(entry: &str, options: &'a Options<'a>) -> Result<Self, Error> {
+        let importer = options.importer.ok_or_else(|| {
+            Error::unpositioned(
+                "No importer configured: the staged compiler loads its entry file through Options::with_importer.",
+            )
+        })?;
+        let ctx = CanonicalizeContext {
+            from_import: false,
+            containing_url: None,
+        };
+        let canonical = importer
+            .canonicalize(entry, &ctx)
+            .map_err(|e| Error::unpositioned(e.message))?
+            .ok_or_else(|| Error::unpositioned(format!("Can't find stylesheet {entry:?}.")))?;
+        let loaded = importer
+            .load(&canonical)
+            .map_err(|e| Error::unpositioned(e.message))?
+            .ok_or_else(|| Error::unpositioned(format!("Can't load stylesheet {:?}.", canonical.as_str())))?;
+        Ok(Compiler {
+            source: loaded.contents,
+            entry: canonical,
+            url: options.url.unwrap_or(entry).to_string(),
+            syntax: loaded.syntax,
+            options,
+            source_map: false,
+        })
+    }
+
+    /// A staged compile of a bare source string with no entry file — what the
+    /// one-shot [`compile`] / [`compile_with_source_map`] run internally.
+    ///
+    /// Kept private: the public staged API is file-based so that every source
+    /// it touches has a name to attribute spans and diagnostics to.
+    pub(crate) fn from_source(source: &'a str, options: &'a Options<'a>) -> Self {
         Compiler {
-            source,
+            source: source.to_string(),
+            // No importer resolved this, so its identity is its display name
+            // (`""` when none was configured) — there is only ever one such
+            // file, so it cannot collide.
+            entry: CanonicalUrl::new(options.url.unwrap_or_default()),
+            url: options.url.unwrap_or_default().to_string(),
+            syntax: options.syntax,
             options,
             source_map: false,
         }
+    }
+
+    /// The entry file's canonical URL, as the importer resolved it.
+    pub fn entry(&self) -> &CanonicalUrl {
+        &self.entry
+    }
+
+    /// The name the entry file appears under in diagnostics.
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// The entry file's source text, as the importer loaded it.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// The syntax the importer reported for the entry file.
+    pub fn syntax(&self) -> Syntax {
+        self.syntax
     }
 
     /// Enable the evaluator's source-map bookkeeping (definition spans for
@@ -512,30 +630,28 @@ impl<'a> Compiler<'a> {
     /// # Errors
     ///
     /// Returns [`Error`] on a syntax error, carrying a rendered diagnostic
-    /// snippet when [`Options::url`] is set.
+    /// snippet naming the entry file.
     pub fn parse(&self) -> Result<ast::Stylesheet, Error> {
-        let sheet = match self.options.syntax {
-            Syntax::Scss => parser::parse(self.source),
-            Syntax::Css => parser::parse_plain_css(self.source),
+        let sheet = match self.syntax {
+            Syntax::Scss => parser::parse(&self.source),
+            Syntax::Css => parser::parse_plain_css(&self.source),
         };
         // A parse error never reached the evaluator, so render its snippet here
-        // (single `root stylesheet` frame) when a diagnostic URL is configured.
+        // (single `root stylesheet` frame) when a diagnostic URL is known.
         sheet.map_err(|mut e| {
-            if let Some(url) = self.options.url {
-                if e.rendered.is_none() && e.has_position() {
-                    let span = diag::Span {
-                        line: e.line,
-                        col: e.col,
-                        length: e.length,
-                    };
-                    e.rendered = Some(diag::render_error(
-                        &e.message,
-                        self.source,
-                        url,
-                        span,
-                        self.glyphs(),
-                    ));
-                }
+            if !self.url.is_empty() && e.rendered.is_none() && e.has_position() {
+                let span = diag::Span {
+                    line: e.line,
+                    col: e.col,
+                    length: e.length,
+                };
+                e.rendered = Some(diag::render_error(
+                    &e.message,
+                    &self.source,
+                    &self.url,
+                    span,
+                    self.glyphs(),
+                ));
             }
             e
         })
@@ -544,24 +660,26 @@ impl<'a> Compiler<'a> {
     /// A fresh evaluator configured from these options — the same one
     /// [`evaluate`](Self::evaluate) builds. Use it directly to drive
     /// [`Evaluator::eval_sheet`] yourself.
-    pub fn evaluator(&self) -> Evaluator<'a> {
-        // Diagnostics are enabled only when the caller supplies a display URL;
-        // then the evaluator renders byte-exact `Error:`/`WARNING:` blocks
-        // against the source. Without a URL it falls back to the legacy
-        // one-liner. The source-map path always passes the real source (so
-        // `sourcesContent` works even without a diagnostic URL) and labels an
-        // unnamed entry `stdin`.
-        let (source, url) = match (self.source_map, self.options.url) {
-            (true, url) => (self.source, url.unwrap_or("stdin")),
-            (false, Some(url)) => (self.source, url),
-            (false, None) => ("", ""),
+    pub fn evaluator(&self) -> Evaluator<'_> {
+        // A file-based compile always has a name for every source, so it always
+        // renders byte-exact `Error:`/`WARNING:` blocks. The nameless
+        // `from_source` path keeps the old rule: diagnostics only when the
+        // caller supplied a display URL, and the source-map run labels an
+        // unnamed entry `stdin` (so `sourcesContent` still works).
+        let named = !self.url.is_empty();
+        let (source, url) = match (self.source_map, named) {
+            (true, true) | (false, true) => (self.source.as_str(), self.url.as_str()),
+            (true, false) => (self.source.as_str(), "stdin"),
+            (false, false) => ("", ""),
         };
         Evaluator::new(eval::EvalOptions {
             style: self.options.style,
             importer: self.options.importer,
             functions: &self.options.functions,
             source,
+            diagnostics: named,
             url,
+            entry_key: self.entry.as_str(),
             glyphs: self.glyphs(),
             warn: self.options.warn.as_ref(),
             source_map: self.source_map,
@@ -578,7 +696,7 @@ impl<'a> Compiler<'a> {
     /// Returns [`Error`] on a declaration-placement violation (an `@function` /
     /// `@mixin` in a control directive, `@content` outside a mixin, …) or any
     /// evaluation failure.
-    pub fn evaluate(&self, sheet: &ast::Stylesheet) -> Result<Evaluation<'a>, Error> {
+    pub fn evaluate(&self, sheet: &ast::Stylesheet) -> Result<Evaluation<'_>, Error> {
         // Reject `@function`/`@mixin` declarations in control directives or
         // function/mixin bodies (a compile-time restriction, checked before
         // eval) — checked here rather than in `parse` so a caller-modified tree
@@ -606,7 +724,11 @@ impl<'a> Compiler<'a> {
         // The entry name labels the entry source in the map
         // (`file`/`sources[0]`); it is also the evaluator's `current_url`, so
         // every entry-file node is stamped with a non-zero file id.
-        let entry_name = self.options.url.unwrap_or("stdin");
+        let entry_name = if self.entry.as_str().is_empty() {
+            "stdin"
+        } else {
+            self.entry.as_str()
+        };
         let (css, body_off, collector) = emit::emit_with_map(nodes, self.options.style, self.options.charset);
         let mappings = collector.finalize(&css, body_off).encode();
         let (sources, sources_content) =
@@ -650,7 +772,7 @@ impl<'a> Compiler<'a> {
 /// [`compile_inner`], then emit with the source-map collector and assemble the
 /// [`SourceMap`].
 fn compile_inner_sm(source: &str, options: &Options<'_>) -> Result<CompileResult, Error> {
-    let compiler = Compiler::new(source, options).with_source_map(true);
+    let compiler = Compiler::from_source(source, options).with_source_map(true);
     let sheet = compiler.parse()?;
     let mut run = compiler.evaluate(&sheet)?;
     Ok(compiler.emit_with_source_map(&run.nodes, &mut run.evaluator))
@@ -660,5 +782,5 @@ fn compile_inner_sm(source: &str, options: &Options<'_>) -> Result<CompileResult
 /// [`compile`]; all of its allocations may be arena-resident, so its result is
 /// copied out by the wrapper before the arena is reset.
 fn compile_inner(source: &str, options: &Options<'_>) -> Result<String, Error> {
-    Compiler::new(source, options).compile()
+    Compiler::from_source(source, options).compile()
 }

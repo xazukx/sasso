@@ -137,6 +137,36 @@ makes a coordinated break cheap. `FsImporter` implements the new trait
 syntax from the extension); the gem / PHP ext are updated to the two-phase trait
 in the same change.
 
+## Built-in importers, and what `CanonicalUrl` is actually used for
+
+Two importers ship with the crate:
+
+- **`FsImporter`** — the filesystem, for CLI/standalone use. Its canonical URL
+  is the *absolute* path (`std::fs::canonicalize`).
+- **`MemoryImporter`** — a virtual filesystem (`name -> source`), with the same
+  partial / index / import-only candidate order and per-file syntax inference,
+  and no disk access at all. Its canonical URL is the (lexically normalized)
+  virtual name. It is what the staged `Compiler` API is built around: a compile
+  driven from memory still gives every stylesheet a name.
+
+The RFC called `CanonicalUrl` "the module-cache / dedup key". As shipped it is
+strictly more than that — it is the compiler's **file identity**, and three
+things key on it:
+
+1. the module cache and the `@import` cache (the original purpose),
+2. the interned file ids stamped into every `SrcLines` / `VarSpan`, and the
+   per-file source table those ids resolve against, and
+3. the source map's `sources` (plus `sourcesContent`), with
+   `ImporterResult::source_map_url` applied as a display override.
+
+That last pair used to key on the *display* name a diagnostic frame prints —
+the basename of the resolved key — which is not unique: `theme/_colors.scss`
+and `base/_colors.scss` both abbreviate to `_colors.scss` and collapsed into a
+single file. Identity and display are now separate, so an importer is free to
+return whatever readable names it likes without two of them merging. The one
+rule an importer must honour is the one the RFC already states: **two URLs that
+canonicalize to the same `CanonicalUrl` are the same file.**
+
 ## Migration (each step independently shippable, parity-gated)
 
 1. ✅ **Core — shipped (0.6.0 / PR #7).** Added the trait + `ImporterResult` +

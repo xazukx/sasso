@@ -14,15 +14,23 @@ Conformance is tracked separately as a ratchet against the official
 ### Added
 
 - **A staged compile API — `Compiler`** — that opens up the pipeline
-  `compile()` runs as one closed step. `Compiler::parse` returns the
-  `ast::Stylesheet`, `Compiler::evaluate` returns an `Evaluation` (the
-  flattened `OutNode` tree plus the `Evaluator` that produced it), and
-  `Compiler::emit` serializes a node slice. Every intermediate can be
-  inspected and *modified* in between — drop or rewrite statements before
-  evaluation, rewrite resolved selectors or declarations before emit, emit one
-  tree under several output styles. `Compiler::compile()` runs all three and
-  is byte-for-byte what `compile()` returns; `compile`/`compile_with_source_map`
-  are now thin wrappers over the same steps.
+  `compile()` runs as one closed step. `Compiler::new(entry, &options)` names an
+  entry **file** and loads it through `Options::importer` — the same virtual
+  filesystem `@use`/`@forward`/`@import` resolve against — so every source in a
+  compile has a name. `Compiler::parse` returns the `ast::Stylesheet`,
+  `Compiler::evaluate` returns an `Evaluation` (the flattened `OutNode` tree
+  plus the `Evaluator` that produced it), and `Compiler::emit` serializes a node
+  slice. Every intermediate can be inspected and *modified* in between — drop or
+  rewrite statements before evaluation, rewrite resolved selectors or
+  declarations before emit, emit one tree under several output styles.
+  `Compiler::compile()` runs all three and is byte-for-byte what `compile()`
+  returns. `Compiler::entry()`, `url()`, `source()` and `syntax()` report what
+  the importer resolved. The string-based `compile`/`compile_with_source_map`
+  entry points are unchanged.
+- **`MemoryImporter`** — a virtual filesystem `Importer`: `name -> source`, no
+  disk access, with dart-sass's partial / index / import-only candidate order
+  and per-file syntax from the extension. It is the ergonomic way to drive the
+  staged API, and what the new `examples/virtual_project.rs` is built on.
 - **The compiler's data model is public**: the `ast`, `eval`, `selector` and
   `value` modules, with `Stylesheet`, `Stmt`, `Expr`, `OutNode`, `OutItem`,
   `RuleSelectors`, `Complex`/`Compound`/`Simple`, `Value` and friends
@@ -40,6 +48,22 @@ Conformance is tracked separately as a ratchet against the official
   Intended for tooling (symbol collection, language servers); off by default,
   and it changes no CSS byte. Values come back as live `Value`s, and
   `Evaluator::file_url()` resolves a span's interned file id back to a URL.
+
+### Fixed
+
+- **File identity is now the importer's canonical URL, not a display name.**
+  Diagnostics abbreviate a loaded file to its basename, and that abbreviation
+  used to be what interned file ids, per-file source texts and source-map
+  `sources` were keyed on — so two partials with the same basename in different
+  directories (`theme/_colors.scss`, `base/_colors.scss`) collapsed into one
+  file. Captured variables at the same line/column in both silently overwrote
+  each other, a snippet could render against the wrong file's text, and a source
+  map listed one entry for two files. Identity and display are now separate:
+  spans, sources and `Evaluator::file_url()` use the canonical URL, while stack
+  frames keep printing the short name.
+- **A relative canonical URL is shown in full in diagnostics.** A frame for
+  `theme/_colors.scss` now prints that, not `_colors.scss`, matching dart-sass;
+  absolute paths (what `FsImporter` produces) still collapse to a basename.
 
 ## [0.9.1] - 2026-09-01
 
