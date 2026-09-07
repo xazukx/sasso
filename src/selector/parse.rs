@@ -10,7 +10,7 @@ use super::*;
 /// Parse a selector-list string (already `&`/interpolation-resolved) into
 /// complex selectors. Returns `None` if anything is unparseable (the caller
 /// then falls back to leaving the selector untouched).
-pub(crate) fn parse_list(sel: &str) -> Option<Vec<Complex>> {
+pub fn parse_list(sel: &str) -> Option<Vec<Complex>> {
     let mut out = Vec::new();
     for part in split_top(sel, ',') {
         let part = part.trim();
@@ -181,7 +181,7 @@ fn read_type_after_ns(chars: &[char], i: &mut usize) -> Option<Simple> {
 /// Decode a CSS identifier's `\` escapes to their literal characters, then
 /// re-serialize it in dart-sass's canonical escape form (its `_writeIdentifier`).
 /// A plain ASCII identifier with no escapes round-trips unchanged.
-pub(crate) fn canonicalize_ident(raw: &str) -> String {
+pub fn canonicalize_ident(raw: &str) -> String {
     if !raw.contains('\\') {
         return raw.to_string();
     }
@@ -304,7 +304,7 @@ fn read_ident(chars: &[char], i: &mut usize) -> Option<String> {
 /// quoted value that is a plain identifier loses its quotes
 /// (`[a="b"]` -> `[a=b]`). Anything that doesn't fit the simple
 /// `[name op value modifier?]` grammar is returned verbatim.
-pub(crate) fn normalize_attribute(text: &str) -> String {
+pub fn normalize_attribute(text: &str) -> String {
     let inner = match text.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
         Some(i) => i.trim(),
         None => return text.to_string(),
@@ -546,6 +546,6 @@ pub(super) fn split_top(s: &str, sep: char) -> Vec<String> {
 
 /// Parse a single complex selector (one comma-free selector). Returns `None`
 /// on any parse failure.
-pub(crate) fn parse_complex_one(s: &str) -> Option<Complex> {
+pub fn parse_complex_one(s: &str) -> Option<Complex> {
     parse_complex(s.trim())
 }

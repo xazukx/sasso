@@ -40,19 +40,19 @@ mod deprecation;
 mod diag;
 pub mod emit;
 mod error;
-mod eval;
-mod fxhash;
+pub mod eval;
+pub mod fxhash;
 mod host_fn;
 mod importer;
 mod musl_math;
 mod parser;
 mod ryu;
 mod scanner;
-mod selector;
+pub mod selector;
 // Source Map v3 generation: the encoding primitives + JSON model (Phase A),
 // wired into emit (Phase B/C) and surfaced through `compile_with_source_map`.
 mod sourcemap;
-mod value;
+pub mod value;
 
 /// This compiler's version, as in `Cargo.toml`.
 ///
@@ -67,6 +67,14 @@ pub use error::Error;
 pub use host_fn::{host_value_op, HostFunction};
 pub use importer::{CanonicalUrl, CanonicalizeContext, FsImporter, Importer, ImporterError, ImporterResult};
 pub use sourcemap::SourceMap;
+
+// The intermediate representations the staged [`Compiler`] API hands out, at
+// the crate root so an embedder that inspects or rewrites them does not have to
+// know which module they live in.
+pub use ast::Stylesheet;
+pub use eval::{EvalOptions, Evaluator, OutItem, OutNode, RuleSelectors, VarSpan, VariableValue};
+pub use scanner::Pos;
+pub use value::Value;
 
 /// Output formatting style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -126,6 +134,10 @@ pub struct Options<'a> {
     /// when the output contains non-ASCII (dart-sass `charset`, default `true`).
     /// `false` suppresses it.
     pub charset: bool,
+    /// Record the evaluated value of every variable declaration as it is
+    /// visited, keyed by the declaration's span. See
+    /// [`Options::record_variable_values`]. Default `false`.
+    pub record_variable_values: bool,
 }
 
 /// The kind of a diagnostic delivered to a [`WarnHandler`].
@@ -173,6 +185,7 @@ impl Default for Options<'_> {
             functions: Vec::new(),
             warn: None,
             charset: true,
+            record_variable_values: false,
         }
     }
 }
@@ -265,6 +278,56 @@ impl<'a> Options<'a> {
     pub fn with_charset(mut self, charset: bool) -> Self {
         self.charset = charset;
         self
+    }
+
+    /// Record the evaluated value of every variable declaration as it is
+    /// visited, keyed by the declaration's span.
+    ///
+    /// Variables declared inside a nested rule are scoped to that rule and no
+    /// longer exist in the environment once evaluation finishes, so looking them
+    /// up afterwards with [`crate::Evaluator::env`] reports them as undefined.
+    /// When this flag is set, each declaration's name and evaluated value are
+    /// captured at the moment they are computed — while still in scope — and
+    /// retained in [`crate::Evaluator::variable_values`] for inspection after
+    /// compilation. This is intended for tooling (symbol collection, language
+    /// servers, etc.) rather than normal compilation.
+    ///
+    /// The record lives on the [`Evaluator`], which the one-shot [`compile`] /
+    /// [`compile_with_source_map`] entry points drop; reach it through the
+    /// staged [`Compiler`] API:
+    ///
+    /// ```
+    /// use sasso::{Compiler, Options};
+    ///
+    /// let options = Options::default().record_variable_values(true);
+    /// let compiler = Compiler::new("a { $inner: 3px; width: $inner; }", &options);
+    /// let sheet = compiler.parse().unwrap();
+    /// let run = compiler.evaluate(&sheet).unwrap();
+    /// let names: Vec<&str> = run
+    ///     .evaluator
+    ///     .variable_values()
+    ///     .values()
+    ///     .map(|v| v.name.as_str())
+    ///     .collect();
+    /// assert_eq!(names, ["inner"]);
+    /// // …and the rule-scoped `$inner` is not in the environment any more.
+    /// assert!(run.evaluator.variable("inner").is_none());
+    /// ```
+    ///
+    /// By default this is `false` and no values are recorded.
+    #[must_use]
+    #[inline]
+    pub const fn record_variable_values(mut self, record: bool) -> Self {
+        self.record_variable_values = record;
+        self
+    }
+
+    /// Builder alias for [`Options::record_variable_values`], for callers that
+    /// prefer the crate's `with_*` builder spelling.
+    #[must_use]
+    #[inline]
+    pub const fn with_record_variable_values(self, record: bool) -> Self {
+        self.record_variable_values(record)
     }
 }
 
@@ -361,126 +424,241 @@ fn basename(url: &str) -> &str {
     url.rsplit('/').next().unwrap_or(url)
 }
 
-/// The source-map compile pipeline: parse + evaluate exactly like
-/// [`compile_inner`], then emit with the source-map collector and assemble the
-/// [`SourceMap`].
-fn compile_inner_sm(source: &str, options: &Options<'_>) -> Result<CompileResult, Error> {
-    let glyphs = if options.unicode {
-        diag::GlyphSet::Unicode
-    } else {
-        diag::GlyphSet::Ascii
-    };
-    let sheet = match options.syntax {
-        Syntax::Scss => parser::parse(source),
-        Syntax::Css => parser::parse_plain_css(source),
-    };
-    let sheet = match sheet {
-        Ok(s) => s,
-        Err(mut e) => {
-            if let Some(url) = options.url {
+/// A staged compile, exposing every intermediate form of the pipeline.
+///
+/// [`compile`] runs parse → evaluate → emit as one closed step. `Compiler` runs
+/// the same three steps, but hands each intermediate back so it can be
+/// inspected and *modified* before feeding the next one:
+///
+/// - [`parse`](Self::parse) yields an [`ast::Stylesheet`] — the statement tree,
+///   with every node and its selector templates public and mutable.
+/// - [`evaluate`](Self::evaluate) yields an [`Evaluation`]: the flattened
+///   [`OutNode`] tree (resolved selectors, declarations, at-rules) plus the
+///   [`Evaluator`] that produced it, for its environment and — with
+///   [`Options::record_variable_values`] — its recorded variable values.
+/// - [`emit`](Self::emit) serializes a (possibly rewritten) node slice to CSS.
+///
+/// Each step is a plain function of its input, so a step can also be skipped or
+/// repeated: one node tree can be emitted twice under different styles, and one
+/// stylesheet can be evaluated more than once.
+///
+/// ```
+/// use sasso::{Compiler, Options, OutNode, RuleSelectors};
+///
+/// let options = Options::default();
+/// let compiler = Compiler::new("a { color: red; }\nb { color: blue; }", &options);
+///
+/// // Parse, then drop every rule but the first.
+/// let mut sheet = compiler.parse().unwrap();
+/// sheet.stmts.truncate(1);
+///
+/// // Evaluate, then rewrite the resolved selectors.
+/// let mut run = compiler.evaluate(&sheet).unwrap();
+/// for node in &mut run.nodes {
+///     if let OutNode::Rule { selectors, .. } = node {
+///         let scoped = selectors.to_strings().iter().map(|s| format!(".theme {s}")).collect();
+///         *selectors = RuleSelectors::Raw(scoped);
+///     }
+/// }
+///
+/// assert_eq!(compiler.emit(&run.nodes), ".theme a {\n  color: red;\n}");
+/// ```
+///
+/// # Allocator scope
+///
+/// Unlike [`compile`], the staged API does not run inside the bump-arena scope
+/// (its intermediates outlive any one step), so every allocation goes to the
+/// global allocator even when [`ScopedAlloc`] is installed.
+pub struct Compiler<'a> {
+    source: &'a str,
+    options: &'a Options<'a>,
+    source_map: bool,
+}
+
+/// The result of [`Compiler::evaluate`]: the output tree plus the evaluator
+/// that produced it.
+pub struct Evaluation<'a> {
+    /// The flattened output tree, after `@extend` resolution — the same nodes
+    /// [`compile`] would serialize. Mutate freely before [`Compiler::emit`].
+    pub nodes: Vec<OutNode>,
+    /// The evaluator, kept alive past `eval_sheet` so its post-compile state is
+    /// reachable: [`Evaluator::variable_values`], [`Evaluator::env`],
+    /// [`Evaluator::file_url`], [`Evaluator::source_table`].
+    pub evaluator: Evaluator<'a>,
+}
+
+impl<'a> Compiler<'a> {
+    /// A staged compile of `source` under `options`.
+    pub fn new(source: &'a str, options: &'a Options<'a>) -> Self {
+        Compiler {
+            source,
+            options,
+            source_map: false,
+        }
+    }
+
+    /// Enable the evaluator's source-map bookkeeping (definition spans for
+    /// variables, value spans on declarations), required by
+    /// [`emit_with_source_map`](Self::emit_with_source_map). Off by default,
+    /// exactly like [`compile`].
+    #[must_use]
+    pub fn with_source_map(mut self, source_map: bool) -> Self {
+        self.source_map = source_map;
+        self
+    }
+
+    /// Parse the source into a stylesheet, without evaluating it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] on a syntax error, carrying a rendered diagnostic
+    /// snippet when [`Options::url`] is set.
+    pub fn parse(&self) -> Result<ast::Stylesheet, Error> {
+        let sheet = match self.options.syntax {
+            Syntax::Scss => parser::parse(self.source),
+            Syntax::Css => parser::parse_plain_css(self.source),
+        };
+        // A parse error never reached the evaluator, so render its snippet here
+        // (single `root stylesheet` frame) when a diagnostic URL is configured.
+        sheet.map_err(|mut e| {
+            if let Some(url) = self.options.url {
                 if e.rendered.is_none() && e.has_position() {
                     let span = diag::Span {
                         line: e.line,
                         col: e.col,
                         length: e.length,
                     };
-                    e.rendered = Some(diag::render_error(&e.message, source, url, span, glyphs));
+                    e.rendered = Some(diag::render_error(
+                        &e.message,
+                        self.source,
+                        url,
+                        span,
+                        self.glyphs(),
+                    ));
                 }
             }
-            return Err(e);
+            e
+        })
+    }
+
+    /// A fresh evaluator configured from these options — the same one
+    /// [`evaluate`](Self::evaluate) builds. Use it directly to drive
+    /// [`Evaluator::eval_sheet`] yourself.
+    pub fn evaluator(&self) -> Evaluator<'a> {
+        // Diagnostics are enabled only when the caller supplies a display URL;
+        // then the evaluator renders byte-exact `Error:`/`WARNING:` blocks
+        // against the source. Without a URL it falls back to the legacy
+        // one-liner. The source-map path always passes the real source (so
+        // `sourcesContent` works even without a diagnostic URL) and labels an
+        // unnamed entry `stdin`.
+        let (source, url) = match (self.source_map, self.options.url) {
+            (true, url) => (self.source, url.unwrap_or("stdin")),
+            (false, Some(url)) => (self.source, url),
+            (false, None) => ("", ""),
+        };
+        Evaluator::new(eval::EvalOptions {
+            style: self.options.style,
+            importer: self.options.importer,
+            functions: &self.options.functions,
+            source,
+            url,
+            glyphs: self.glyphs(),
+            warn: self.options.warn.as_ref(),
+            source_map: self.source_map,
+            record_variable_values: self.options.record_variable_values,
+        })
+    }
+
+    /// Evaluate a stylesheet — the one [`parse`](Self::parse) returned, or one
+    /// modified since — into the output tree, and hand back the evaluator with
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] on a declaration-placement violation (an `@function` /
+    /// `@mixin` in a control directive, `@content` outside a mixin, …) or any
+    /// evaluation failure.
+    pub fn evaluate(&self, sheet: &ast::Stylesheet) -> Result<Evaluation<'a>, Error> {
+        // Reject `@function`/`@mixin` declarations in control directives or
+        // function/mixin bodies (a compile-time restriction, checked before
+        // eval) — checked here rather than in `parse` so a caller-modified tree
+        // is validated too.
+        eval::validate_declarations(sheet)?;
+        let mut evaluator = self.evaluator();
+        let mut nodes = Vec::new();
+        evaluator.eval_sheet(sheet, &mut nodes)?;
+        Ok(Evaluation { nodes, evaluator })
+    }
+
+    /// Serialize an output tree to CSS, honouring [`Options::style`] and
+    /// [`Options::charset`].
+    pub fn emit(&self, nodes: &[OutNode]) -> String {
+        emit::emit(nodes, self.options.style, self.options.charset)
+    }
+
+    /// Serialize an output tree to CSS *and* a [Source Map v3](SourceMap).
+    ///
+    /// `evaluator` must be the one that produced `nodes` — its interned file
+    /// table becomes the map's `sources`. Build it from a [`Compiler`] with
+    /// [`with_source_map(true)`](Self::with_source_map); without that flag the
+    /// evaluator records no spans and the map has no mappings.
+    pub fn emit_with_source_map(&self, nodes: &[OutNode], evaluator: &mut Evaluator<'_>) -> CompileResult {
+        // The entry name labels the entry source in the map
+        // (`file`/`sources[0]`); it is also the evaluator's `current_url`, so
+        // every entry-file node is stamped with a non-zero file id.
+        let entry_name = self.options.url.unwrap_or("stdin");
+        let (css, body_off, collector) = emit::emit_with_map(nodes, self.options.style, self.options.charset);
+        let mappings = collector.finalize(&css, body_off).encode();
+        let (sources, sources_content) =
+            evaluator.source_table(entry_name, self.options.source_map_include_sources);
+        CompileResult {
+            css,
+            source_map: SourceMap {
+                file: Some(basename(entry_name).to_string()),
+                sources,
+                sources_content,
+                mappings,
+            },
         }
-    };
-    eval::validate_declarations(&sheet)?;
-    // The entry name labels the entry source in the map (`file`/`sources[0]`).
-    // It is also the evaluator's `current_url`, so every entry-file node is
-    // stamped with a non-zero file id; its source text is kept for
-    // `sourcesContent`. The source-map path always passes the real source (so
-    // `sourcesContent` works even without a diagnostic URL); this only enriches
-    // the *error* path with snippets — the CSS/map success path is unaffected.
-    let entry_name = options.url.unwrap_or("stdin");
-    let mut ev = eval::Evaluator::new(eval::EvalOptions {
-        style: options.style,
-        importer: options.importer,
-        functions: &options.functions,
-        source,
-        url: entry_name,
-        glyphs,
-        warn: options.warn.as_ref(),
-        source_map: true,
-    });
-    let mut out = Vec::new();
-    ev.eval_sheet(&sheet, &mut out)?;
-    let (css, body_off, collector) = emit::emit_with_map(&out, options.style, options.charset);
-    let mappings = collector.finalize(&css, body_off).encode();
-    let (sources, sources_content) = ev.source_table(entry_name, options.source_map_include_sources);
-    let source_map = SourceMap {
-        file: Some(basename(entry_name).to_string()),
-        sources,
-        sources_content,
-        mappings,
-    };
-    Ok(CompileResult { css, source_map })
+    }
+
+    /// Run the whole pipeline: parse, evaluate, emit.
+    ///
+    /// Byte-for-byte what [`compile`] returns for the same source and options
+    /// (the free function additionally brackets the run in an arena scope).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] on a parse or evaluation failure.
+    pub fn compile(&self) -> Result<String, Error> {
+        let sheet = self.parse()?;
+        let run = self.evaluate(&sheet)?;
+        Ok(self.emit(&run.nodes))
+    }
+
+    /// The glyph set for diagnostic snippets (ASCII under `--no-unicode`).
+    fn glyphs(&self) -> diag::GlyphSet {
+        if self.options.unicode {
+            diag::GlyphSet::Unicode
+        } else {
+            diag::GlyphSet::Ascii
+        }
+    }
+}
+
+/// The source-map compile pipeline: parse + evaluate exactly like
+/// [`compile_inner`], then emit with the source-map collector and assemble the
+/// [`SourceMap`].
+fn compile_inner_sm(source: &str, options: &Options<'_>) -> Result<CompileResult, Error> {
+    let compiler = Compiler::new(source, options).with_source_map(true);
+    let sheet = compiler.parse()?;
+    let mut run = compiler.evaluate(&sheet)?;
+    Ok(compiler.emit_with_source_map(&run.nodes, &mut run.evaluator))
 }
 
 /// The actual compile pipeline. Runs inside the arena scope established by
 /// [`compile`]; all of its allocations may be arena-resident, so its result is
 /// copied out by the wrapper before the arena is reset.
 fn compile_inner(source: &str, options: &Options<'_>) -> Result<String, Error> {
-    let glyphs_for = || {
-        if options.unicode {
-            diag::GlyphSet::Unicode
-        } else {
-            diag::GlyphSet::Ascii
-        }
-    };
-    let sheet = match options.syntax {
-        Syntax::Scss => parser::parse(source),
-        Syntax::Css => parser::parse_plain_css(source),
-    };
-    // A parse error never reached the evaluator, so render its snippet here
-    // (single `root stylesheet` frame) when a diagnostic URL is configured.
-    let sheet = match sheet {
-        Ok(s) => s,
-        Err(mut e) => {
-            if let Some(url) = options.url {
-                if e.rendered.is_none() && e.has_position() {
-                    let span = diag::Span {
-                        line: e.line,
-                        col: e.col,
-                        length: e.length,
-                    };
-                    e.rendered = Some(diag::render_error(&e.message, source, url, span, glyphs_for()));
-                }
-            }
-            return Err(e);
-        }
-    };
-    // Reject `@function`/`@mixin` declarations in control directives or
-    // function/mixin bodies (a compile-time restriction, checked before eval).
-    eval::validate_declarations(&sheet)?;
-    // Diagnostics are enabled only when the caller supplies a display URL; then
-    // the evaluator renders byte-exact `Error:`/`WARNING:` blocks against the
-    // source. Without a URL it falls back to the legacy one-liner.
-    let (diag_source, diag_url) = match options.url {
-        Some(url) => (source, url),
-        None => ("", ""),
-    };
-    let glyphs = if options.unicode {
-        diag::GlyphSet::Unicode
-    } else {
-        diag::GlyphSet::Ascii
-    };
-    let mut ev = eval::Evaluator::new(eval::EvalOptions {
-        style: options.style,
-        importer: options.importer,
-        functions: &options.functions,
-        source: diag_source,
-        url: diag_url,
-        glyphs,
-        warn: options.warn.as_ref(),
-        source_map: false,
-    });
-    let mut out = Vec::new();
-    ev.eval_sheet(&sheet, &mut out)?;
-    Ok(emit::emit(&out, options.style, options.charset))
+    Compiler::new(source, options).compile()
 }

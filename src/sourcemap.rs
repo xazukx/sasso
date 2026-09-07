@@ -42,7 +42,7 @@ fn vlq_encode(value: i64, out: &mut String) {
 // Reserved for the CLI/wasm `--embed-source-map` data-URI surface (a later
 // phase); already covered by unit tests in this module.
 #[allow(dead_code)]
-pub(crate) fn base64_bytes(data: &[u8]) -> String {
+pub fn base64_bytes(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -69,7 +69,7 @@ pub(crate) fn base64_bytes(data: &[u8]) -> String {
 /// column on the generated line `gen_line`. Names are not used for CSS, so there
 /// is no name index (dart-sass emits 4-field segments for stylesheets).
 #[derive(Clone, Copy)]
-pub(crate) struct Segment {
+pub struct Segment {
     pub gen_col: u32,
     pub src_id: u32,
     pub src_line: u32,
@@ -79,19 +79,19 @@ pub(crate) struct Segment {
 /// Accumulates mapping segments grouped by generated line, then renders the
 /// delta-encoded `mappings` string.
 #[derive(Default)]
-pub(crate) struct Mappings {
+pub struct Mappings {
     /// `lines[g]` holds the segments on generated line `g`, in column order.
     lines: Vec<Vec<Segment>>,
 }
 
 impl Mappings {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Mappings::default()
     }
 
     /// Record a mapping at generated `(gen_line, gen_col)` back to source
     /// `(src_id, src_line, src_col)`. Callers add segments in generated order.
-    pub(crate) fn add(&mut self, gen_line: u32, gen_col: u32, src_id: u32, src_line: u32, src_col: u32) {
+    pub fn add(&mut self, gen_line: u32, gen_col: u32, src_id: u32, src_line: u32, src_col: u32) {
         let g = gen_line as usize;
         if self.lines.len() <= g {
             self.lines.resize_with(g + 1, Vec::new);
@@ -107,7 +107,7 @@ impl Mappings {
     /// Render the standard `mappings` field: generated lines separated by `;`,
     /// segments by `,`. `gen_col` resets to absolute at each line; `src_id`/
     /// `src_line`/`src_col` are deltas that persist across lines.
-    pub(crate) fn encode(&self) -> String {
+    pub fn encode(&self) -> String {
         let mut out = String::new();
         let (mut p_id, mut p_line, mut p_col) = (0i64, 0i64, 0i64);
         for (i, line) in self.lines.iter().enumerate() {
@@ -139,7 +139,7 @@ impl Mappings {
 /// gen_col_utf16)` pair by [`SmCollector::finalize`] once the whole body — and
 /// thus the prefix — is known.
 #[derive(Clone, Copy)]
-pub(crate) struct RawEntry {
+pub struct RawEntry {
     /// Byte offset into the CSS body where the mapped token begins.
     pub byte_off: u32,
     /// Evaluator-interned source file id (1-based; 0 = unknown, dropped).
@@ -154,7 +154,7 @@ pub(crate) struct RawEntry {
 /// `Option`: `None` (the default `compile` path) records nothing and reads only
 /// `out.len()`, so the CSS bytes are untouched.
 #[derive(Default)]
-pub(crate) struct SmCollector {
+pub struct SmCollector {
     entries: Vec<RawEntry>,
     /// Whether the output is compressed — i.e. whether every token lands on
     /// generated line 0. See [`SmCollector::record`]: this is what decides
@@ -174,7 +174,7 @@ pub(crate) struct SmCollector {
 }
 
 impl SmCollector {
-    pub(crate) fn new(compressed: bool) -> Self {
+    pub fn new(compressed: bool) -> Self {
         SmCollector {
             compressed,
             ..SmCollector::default()
@@ -207,7 +207,7 @@ impl SmCollector {
     /// its value.
     /// `body` is the output written so far; only the slice appended since the
     /// previous call is scanned (for newlines), so the whole emit stays linear.
-    pub(crate) fn record(&mut self, body: &str, file_id: u32, src_line: u32, src_col: u32) {
+    pub fn record(&mut self, body: &str, file_id: u32, src_line: u32, src_col: u32) {
         let byte_off = body.len();
         // A token with no known source file carries no usable mapping.
         if file_id == 0 {
@@ -246,7 +246,7 @@ impl SmCollector {
     /// recorded body offset. Generated lines are counted by `\n`; the generated
     /// column is in UTF-16 code units (not bytes). A `file_id` is mapped to its
     /// `sources[]` index by `id - 1` (ids are assigned 1,2,3,…).
-    pub(crate) fn finalize(mut self, output: &str, body_off: usize) -> Mappings {
+    pub fn finalize(mut self, output: &str, body_off: usize) -> Mappings {
         let mut m = Mappings::new();
         if self.entries.is_empty() {
             return m;

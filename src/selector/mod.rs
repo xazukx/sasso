@@ -2,8 +2,8 @@
 //!
 //! Selectors are parsed from their already-resolved string form (after `&`
 //! and interpolation have been substituted by the evaluator) into a small
-//! tree — [`ComplexSelector`] → [`ComplexComponent`] → [`CompoundSelector`]
-//! → [`SimpleSelector`] — that mirrors dart-sass's model closely enough to
+//! tree — [`Complex`] → [`ComplexComponent`] → [`Compound`]
+//! → [`Simple`] — that mirrors dart-sass's model closely enough to
 //! port its `@extend` algorithm (extension, unification, transitive chains,
 //! and placeholder-rule dropping).
 
@@ -54,14 +54,14 @@ impl<T: Eq> Eq for Hashed<T> {}
 
 /// A combinator joining two compound selectors.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum Combinator {
+pub enum Combinator {
     Child,            // >
     NextSibling,      // +
     FollowingSibling, // ~
 }
 
 impl Combinator {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Combinator::Child => ">",
             Combinator::NextSibling => "+",
@@ -72,7 +72,7 @@ impl Combinator {
 
 /// One simple selector: the atoms of a compound selector.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum Simple {
+pub enum Simple {
     /// `*` or `ns|*`. Stores the optional namespace prefix verbatim.
     Universal { ns: Option<String> },
     /// A type/element selector, e.g. `div`, `svg|rect`. Stored verbatim.
@@ -91,7 +91,7 @@ pub(crate) enum Simple {
 }
 
 impl Simple {
-    pub(crate) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         match self {
             Simple::Universal { ns: None } => "*".to_string(),
             Simple::Universal { ns: Some(n) } => format!("{n}|*"),
@@ -121,7 +121,7 @@ impl Simple {
 /// `:dir`, custom `:--foo`, unknown `:foo`) takes an opaque argument and is left
 /// untouched. The input is already interpolation-resolved, so this matches dart
 /// validating the resolved text.
-pub(crate) fn validate_pseudo_args(sel: &str) -> Result<(), &'static str> {
+pub fn validate_pseudo_args(sel: &str) -> Result<(), &'static str> {
     let chars: Vec<char> = sel.chars().collect();
     validate_pseudo_args_inner(&chars)
 }
@@ -294,7 +294,7 @@ fn skip_attribute(chars: &[char], start: usize) -> usize {
 /// pseudos are normalized (dart-sass keeps any other pseudo — including an
 /// uppercased name or `:nth-of-type` — verbatim). Returns `None` when the text
 /// is not such a pseudo, leaving it unchanged.
-pub(crate) fn normalize_nth(text: &str) -> Option<String> {
+pub fn normalize_nth(text: &str) -> Option<String> {
     let open = text.find('(')?;
     if !text.ends_with(')') {
         return None;
@@ -339,7 +339,7 @@ pub(crate) fn normalize_nth(text: &str) -> Option<String> {
 ///         * nothing more (a pure integer — requires at least one digit).
 ///   After the An+B, an optional ` of <selector>` tail (whitespace-introduced)
 ///   is allowed; any other trailing content is rejected.
-pub(crate) fn validate_nth(arg: &str) -> Result<(), &'static str> {
+pub fn validate_nth(arg: &str) -> Result<(), &'static str> {
     let chars: Vec<char> = arg.chars().collect();
     let mut i = 0usize;
     let skip_ws = |i: &mut usize| {
@@ -535,12 +535,12 @@ fn find_of_keyword(lower: &str) -> Option<usize> {
 /// A compound selector: a non-empty run of simple selectors with no
 /// combinator between them, e.g. `.foo.bar:hover`.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct Compound {
+pub struct Compound {
     pub simples: Vec<Simple>,
 }
 
 impl Compound {
-    pub(crate) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         self.simples.iter().map(Simple::render).collect()
     }
 
@@ -554,7 +554,7 @@ impl Compound {
 /// A run of more than one combinator (`c > > d`) or a leading run (`~ ~ c`) is a
 /// "bogus" but parseable selector dart-sass preserves.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct ComplexComponent {
+pub struct ComplexComponent {
     pub combinators: Vec<Combinator>,
     pub compound: Compound,
 }
@@ -562,7 +562,7 @@ pub(crate) struct ComplexComponent {
 impl ComplexComponent {
     /// The leading combinator when there is exactly one (the common case);
     /// `None` for a descendant join or a multi-combinator run.
-    pub(crate) fn combinator(&self) -> Option<Combinator> {
+    pub fn combinator(&self) -> Option<Combinator> {
         match self.combinators.as_slice() {
             [c] => Some(*c),
             _ => None,
@@ -575,13 +575,13 @@ impl ComplexComponent {
 /// "bogus" trailing combinator run (`c >`, `c + >`) — or, when `components` is
 /// empty, a combinator-only selector (`>`) — that dart-sass preserves.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
-pub(crate) struct Complex {
+pub struct Complex {
     pub components: Vec<ComplexComponent>,
     pub trailing: Vec<Combinator>,
 }
 
 impl Complex {
-    pub(crate) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         let mut out = String::new();
         for (i, comp) in self.components.iter().enumerate() {
             if i > 0 {
@@ -610,7 +610,7 @@ impl Complex {
 /// Whether a complex selector still contains a placeholder simple (`%foo`).
 /// Lets the extend pass test a `Parsed` rule's placeholder fast-path condition
 /// on the typed model, with no render.
-pub(crate) fn complex_has_placeholder(c: &Complex) -> bool {
+pub fn complex_has_placeholder(c: &Complex) -> bool {
     c.has_placeholder()
 }
 
@@ -629,7 +629,7 @@ pub(crate) fn complex_has_placeholder(c: &Complex) -> bool {
 /// never to fire across the full sass-spec suite in a debug build (see the
 /// `selector_render_injective` parity test).
 #[cfg(debug_assertions)]
-pub(crate) fn assert_render_injective(c: &Complex) {
+pub fn assert_render_injective(c: &Complex) {
     thread_local! {
         static SEEN: std::cell::RefCell<FxHashMap<String, Complex>> =
             std::cell::RefCell::new(FxHashMap::default());
@@ -653,7 +653,7 @@ pub(crate) fn assert_render_injective(c: &Complex) {
 /// As [`assert_render_injective`], for `Simple` keys (the `by_extender` map
 /// keys simple selectors by `render()`).
 #[cfg(debug_assertions)]
-pub(crate) fn assert_simple_render_injective(s: &Simple) {
+pub fn assert_simple_render_injective(s: &Simple) {
     thread_local! {
         static SEEN: std::cell::RefCell<FxHashMap<String, Simple>> =
             std::cell::RefCell::new(FxHashMap::default());
@@ -676,14 +676,14 @@ pub(crate) fn assert_simple_render_injective(s: &Simple) {
 
 #[cfg(not(debug_assertions))]
 #[inline(always)]
-pub(crate) fn assert_render_injective(_c: &Complex) {}
+pub fn assert_render_injective(_c: &Complex) {}
 
 #[cfg(not(debug_assertions))]
 #[inline(always)]
-pub(crate) fn assert_simple_render_injective(_s: &Simple) {}
+pub fn assert_simple_render_injective(_s: &Simple) {}
 
 mod parse;
-pub(crate) use parse::{canonicalize_ident, normalize_attribute, parse_complex_one, parse_list};
+pub use parse::{canonicalize_ident, normalize_attribute, parse_complex_one, parse_list};
 use parse::{parse_complex, parse_compound, skip_ws, split_top};
 
 // ---- the extend engine -------------------------------------------------
@@ -693,7 +693,7 @@ use parse::{parse_complex, parse_compound, skip_ws, split_top};
 /// extend target couldn't be parsed as a single simple selector (it then never
 /// matches, but still records "not found" for the !optional check).
 #[derive(Clone)]
-pub(crate) struct Extension {
+pub struct Extension {
     pub target: Option<Simple>,
     /// The extending selector list (the rule body containing `@extend`).
     pub extenders: Vec<Complex>,
@@ -729,7 +729,7 @@ pub(crate) struct Extension {
 }
 
 /// Whether any compound in any complex selector of `list` contains `target`.
-pub(crate) fn list_contains_simple(list: &[Complex], target: &Simple) -> bool {
+pub fn list_contains_simple(list: &[Complex], target: &Simple) -> bool {
     list.iter().any(|c| {
         c.components
             .iter()
@@ -738,7 +738,7 @@ pub(crate) fn list_contains_simple(list: &[Complex], target: &Simple) -> bool {
 }
 
 /// How an `@extend` target string classifies.
-pub(crate) enum TargetClass {
+pub enum TargetClass {
     /// A valid single-simple-selector target.
     Simple(Simple),
     /// `@extend a b` — complex selectors may not be extended.
@@ -751,7 +751,7 @@ pub(crate) enum TargetClass {
 }
 
 /// Classify an `@extend` target string (already interpolation-resolved).
-pub(crate) fn classify_target(s: &str) -> TargetClass {
+pub fn classify_target(s: &str) -> TargetClass {
     let s = s.trim();
     if s.is_empty() {
         return TargetClass::Invalid;
@@ -770,7 +770,7 @@ pub(crate) fn classify_target(s: &str) -> TargetClass {
 }
 
 /// The result of running the extend engine on a selector list.
-pub(crate) struct ExtendResult {
+pub struct ExtendResult {
     /// The rewritten selector list, typed. The caller (`OutNode::Rule`) carries
     /// these `Complex` values through to emit, which renders them via
     /// `Complex::render()` — byte-identical to rendering them here (Phase 1d:
@@ -793,7 +793,7 @@ pub(crate) struct ExtendResult {
 /// reproduce that by computing this plan ONCE per scope (in `rewrite_nodes`) and
 /// reusing it across every rule, instead of re-deriving the closure per rule
 /// (the old O(rules × extensions) blow-up).
-pub(crate) struct ExtendPlan {
+pub struct ExtendPlan {
     /// dart `newExtensionsByTarget` per registration — the per-`@extend` batches
     /// applied by the registration-order fold.
     batches: Vec<Vec<Extension>>,
@@ -837,14 +837,14 @@ pub(crate) struct ExtendPlan {
 impl ExtendPlan {
     /// True when no extensions are visible in this scope (the caller's fast
     /// path: a rule with no `@extend` and no placeholder is untouched).
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.n_extensions == 0
     }
 }
 
 /// Build the scope-fixed [`ExtendPlan`] for one module `scope` and its fixed
 /// `extensions` list. Call ONCE per scope; reuse across every rule.
-pub(crate) fn build_extend_plan(
+pub fn build_extend_plan(
     extensions: &[Extension],
     scope: &str,
     origin_rank: std::collections::HashMap<String, usize>,
@@ -914,7 +914,7 @@ pub(crate) fn build_extend_plan(
 /// extended selector list (original selectors first, then generated ones, in
 /// dart-sass order). Placeholder-only complex selectors are dropped from the
 /// output.
-pub(crate) fn extend_selectors(
+pub fn extend_selectors(
     original: &[Complex],
     original_breaks: &[bool],
     plan: &ExtendPlan,
@@ -1582,7 +1582,7 @@ fn is_supercombinator(c1: Option<Combinator>, c2: Option<Combinator>) -> bool {
 /// Canonicalize the selector argument of a `:not`/`:is`/`:where`/`:matches`/
 /// `:any`/`:has` pseudo by re-parsing and re-rendering it (recursively
 /// normalizing nested attributes and pseudos). `None` leaves it verbatim.
-pub(crate) fn normalize_pseudo_arg(text: &str) -> Option<String> {
+pub fn normalize_pseudo_arg(text: &str) -> Option<String> {
     let open = text.find('(')?;
     if !text.ends_with(')') {
         return None;
@@ -4410,7 +4410,7 @@ fn is_pseudo_element(s: &Simple) -> bool {
 
 /// Whether selector list `sup` is a superselector of `sub`: every complex in
 /// `sub` must be matched by some complex in `sup` (dart-sass `listIsSuperselector`).
-pub(crate) fn list_is_superselector(sup: &[Complex], sub: &[Complex]) -> bool {
+pub fn list_is_superselector(sup: &[Complex], sub: &[Complex]) -> bool {
     sub.iter()
         .all(|c2| sup.iter().any(|c1| complex_is_superselector(c1, c2)))
 }
@@ -4418,7 +4418,7 @@ pub(crate) fn list_is_superselector(sup: &[Complex], sub: &[Complex]) -> bool {
 /// Unify two complex selectors into the (possibly several) complex selectors
 /// they jointly match, or `None` if they can't unify (dart-sass `unifyComplex`
 /// for the two-selector case).
-pub(crate) fn unify_complex(c1: &Complex, c2: &Complex) -> Option<Vec<Complex>> {
+pub fn unify_complex(c1: &Complex, c2: &Complex) -> Option<Vec<Complex>> {
     let unified = unify_complex_list(&[to_dart(c1), to_dart(c2)])?;
     let mut out = Vec::new();
     let mut seen = FxHashSet::default();
@@ -4522,7 +4522,7 @@ fn unify_complex_list(complexes: &[DComplex]) -> Option<Vec<DComplex>> {
 /// Unify two selector lists: the cartesian product of `unify_complex` over each
 /// pair of complex selectors, dropping pairs that don't unify (dart-sass
 /// `SelectorList.unify`). Returns `None` if nothing unifies.
-pub(crate) fn unify_lists(list1: &[Complex], list2: &[Complex]) -> Option<Vec<Complex>> {
+pub fn unify_lists(list1: &[Complex], list2: &[Complex]) -> Option<Vec<Complex>> {
     let mut out = Vec::new();
     let mut seen = FxHashSet::default();
     for c1 in list1 {
@@ -4545,7 +4545,7 @@ pub(crate) fn unify_lists(list1: &[Complex], list2: &[Complex]) -> Option<Vec<Co
 /// Render a complex selector as the items of a Sass space-separated list:
 /// compound strings interleaved with combinator strings (`>`/`+`/`~`), matching
 /// dart-sass's `ComplexSelector.asSassList`.
-pub(crate) fn complex_to_list_parts(c: &Complex) -> Vec<String> {
+pub fn complex_to_list_parts(c: &Complex) -> Vec<String> {
     let mut parts = Vec::new();
     for comp in &c.components {
         for comb in &comp.combinators {
@@ -4562,7 +4562,7 @@ pub(crate) fn complex_to_list_parts(c: &Complex) -> Vec<String> {
 /// Parse a single compound selector (no combinators, no commas). Returns the
 /// list of simple-selector strings, or `None` if the text isn't a single valid
 /// compound (dart-sass `simple-selectors` parses a `CompoundSelector`).
-pub(crate) fn parse_compound_simples(s: &str) -> Option<Vec<String>> {
+pub fn parse_compound_simples(s: &str) -> Option<Vec<String>> {
     let chars: Vec<char> = s.trim().chars().collect();
     let mut i = 0;
     let compound = parse_compound(&chars, &mut i)?;
@@ -4583,7 +4583,7 @@ pub(crate) fn parse_compound_simples(s: &str) -> Option<Vec<String>> {
 /// `_extendCompound`: every target is applied simultaneously, and freshly
 /// produced selectors are re-extended to a fixpoint so a selector matching two
 /// targets collapses correctly (e.g. extending `c.d` by `c, .d` with `.e`).
-pub(crate) fn extend_compound_target(
+pub fn extend_compound_target(
     selectors: &[Complex],
     targets: &[Compound],
     extenders: &[Complex],
@@ -4885,7 +4885,7 @@ fn extend_component_compound(
 /// Whether any compound in `s` contains `target` as one of its simple
 /// selectors (used to satisfy `@extend` target lookup against rules whose
 /// bogus combinators omitted them from the CSS).
-pub(crate) fn selector_contains_simple(s: &str, target: &Simple) -> bool {
+pub fn selector_contains_simple(s: &str, target: &Simple) -> bool {
     for part in split_top(s, ',') {
         if let Some(complex) = parse_complex(part.trim()) {
             for comp in &complex.components {
@@ -4953,7 +4953,7 @@ fn compound_specificity(c: &Compound) -> u64 {
 }
 
 /// dart `ComplexSelector.specificity`: the sum of its compounds'.
-pub(crate) fn complex_specificity(c: &Complex) -> u64 {
+pub fn complex_specificity(c: &Complex) -> u64 {
     c.components
         .iter()
         .map(|comp| compound_specificity(&comp.compound))
@@ -4983,7 +4983,7 @@ fn all_simples_of(complex: &Complex, out: &mut Vec<Simple>) {
 
 /// Build dart's `_sourceSpecificity` map: every simple selector of every
 /// extender records (first write wins) its complex's specificity.
-pub(crate) fn source_specificity_map(extensions: &[Extension]) -> FxHashMap<Simple, u64> {
+pub fn source_specificity_map(extensions: &[Extension]) -> FxHashMap<Simple, u64> {
     let mut map: FxHashMap<Simple, u64> = FxHashMap::default();
     for ext in extensions {
         for complex in &ext.extenders {

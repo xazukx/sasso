@@ -11,6 +11,36 @@ Conformance is tracked separately as a ratchet against the official
 
 ## [Unreleased]
 
+### Added
+
+- **A staged compile API — `Compiler`** — that opens up the pipeline
+  `compile()` runs as one closed step. `Compiler::parse` returns the
+  `ast::Stylesheet`, `Compiler::evaluate` returns an `Evaluation` (the
+  flattened `OutNode` tree plus the `Evaluator` that produced it), and
+  `Compiler::emit` serializes a node slice. Every intermediate can be
+  inspected and *modified* in between — drop or rewrite statements before
+  evaluation, rewrite resolved selectors or declarations before emit, emit one
+  tree under several output styles. `Compiler::compile()` runs all three and
+  is byte-for-byte what `compile()` returns; `compile`/`compile_with_source_map`
+  are now thin wrappers over the same steps.
+- **The compiler's data model is public**: the `ast`, `eval`, `selector` and
+  `value` modules, with `Stylesheet`, `Stmt`, `Expr`, `OutNode`, `OutItem`,
+  `RuleSelectors`, `Complex`/`Compound`/`Simple`, `Value` and friends
+  re-exported at the crate root. AST nodes now derive `Debug` and `Clone`, and
+  the output-tree types derive `Debug`, so tooling can dump and duplicate them.
+  A rule's selectors can be handed back either as raw strings
+  (`RuleSelectors::Raw`) or as the typed model the `@extend` engine uses
+  (`RuleSelectors::Parsed`), which `selector::parse_list` also produces.
+- **`Options::record_variable_values`** records every variable declaration's
+  evaluated value as it is visited, keyed by the declaration's span, into
+  `Evaluator::variable_values()`. Because the capture happens while the
+  declaration is still in scope, variables local to a rule, mixin or loop —
+  which no longer exist in the environment once the compile finishes, and which
+  `Evaluator::env()` therefore cannot see — are still observable afterwards.
+  Intended for tooling (symbol collection, language servers); off by default,
+  and it changes no CSS byte. Values come back as live `Value`s, and
+  `Evaluator::file_url()` resolves a span's interned file id back to a URL.
+
 ## [0.9.1] - 2026-09-01
 
 _C-ABI release fixes — no compiler changes. Ships musl c-api tarballs for

@@ -130,6 +130,58 @@ let css = compile("@import \"base\";", &Options::default().with_importer(&MyFs))
 
 A ready-made [`FsImporter`] is provided for standalone/CLI use.
 
+### Staged compiles: inspect and rewrite the intermediates
+
+`compile` runs parse → evaluate → emit as one closed step. `Compiler` runs the
+same three steps and hands each intermediate back, so tooling can look at it —
+or change it — before the next step runs:
+
+```rust
+use sasso::{Compiler, Options, OutNode, RuleSelectors};
+
+let options = Options::default();
+let compiler = Compiler::new("a { color: red; }\nb { color: blue; }", &options);
+
+// 1. Parse -> a mutable `ast::Stylesheet`: drop every rule but the first.
+let mut sheet = compiler.parse().unwrap();
+sheet.stmts.truncate(1);
+
+// 2. Evaluate -> the flattened `OutNode` tree: scope the resolved selectors.
+let mut run = compiler.evaluate(&sheet).unwrap();
+for node in &mut run.nodes {
+    if let OutNode::Rule { selectors, .. } = node {
+        let scoped = selectors.to_strings().iter().map(|s| format!(".theme {s}")).collect();
+        *selectors = RuleSelectors::Raw(scoped);
+    }
+}
+
+// 3. Emit.
+assert_eq!(compiler.emit(&run.nodes), ".theme a {\n  color: red;\n}");
+```
+
+The whole data model is public: `ast` (statements, expressions, interpolation
+templates), `eval` (`OutNode`, `OutItem`, `RuleSelectors`), `selector` (the
+typed `Complex`/`Compound`/`Simple` model the `@extend` engine works on, which
+a rule's selectors can be swapped for) and `value` (`Value` and friends).
+
+`Options::record_variable_values(true)` additionally records every variable
+declaration's evaluated value as it is visited, keyed by the declaration's
+span — including variables local to a rule, mixin or loop, whose scope is gone
+by the time the compile finishes:
+
+```rust
+use sasso::{Compiler, Options};
+
+let options = Options::default().record_variable_values(true);
+let compiler = Compiler::new("a { $inner: 3px; width: $inner; }", &options);
+let sheet = compiler.parse().unwrap();
+let run = compiler.evaluate(&sheet).unwrap();
+
+for (span, var) in run.evaluator.variable_values() {
+    println!("{}:{}  ${} = {}", span.line + 1, span.col + 1, var.name, var.value.to_css(false));
+}
+```
+
 ## CLI usage
 
 ```console

@@ -17,10 +17,10 @@ pub struct Pos {
 impl Pos {
     /// The "no position" sentinel. `line == 0` can never be a real 1-based
     /// line, so it reads unambiguously as "unknown" (the source map drops it).
-    pub(crate) const NONE: Pos = Pos { line: 0, col: 0 };
+    pub const NONE: Pos = Pos { line: 0, col: 0 };
 
     /// Whether this is a real recorded position rather than [`Pos::NONE`].
-    pub(crate) fn is_known(self) -> bool {
+    pub fn is_known(self) -> bool {
         self.line != 0
     }
 }

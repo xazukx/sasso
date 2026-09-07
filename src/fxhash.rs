@@ -19,16 +19,16 @@ use std::hash::{BuildHasherDefault, Hasher};
 const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
 
 /// A `HashMap` using [`FxHasher`] instead of the default SipHash.
-pub(crate) type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+pub type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
 /// A `HashSet` using [`FxHasher`] instead of the default SipHash.
-pub(crate) type FxHashSet<K> = HashSet<K, BuildHasherDefault<FxHasher>>;
+pub type FxHashSet<K> = HashSet<K, BuildHasherDefault<FxHasher>>;
 
 /// FxHash: fold each machine word of the input into the running hash with a
 /// rotate-xor-multiply step. Fast for short keys; not collision-resistant
 /// against adversarial input (which the compiler never hashes).
 #[derive(Default)]
-pub(crate) struct FxHasher {
+pub struct FxHasher {
     hash: u64,
 }
 

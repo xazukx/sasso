@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 /// A fully-evaluated Sass value.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Value {
+pub enum Value {
     /// A number with an optional unit.
     Number(Number),
     /// An sRGB color with an alpha channel.
@@ -63,7 +63,7 @@ const _: () = assert!(std::mem::size_of::<Value>() <= 64);
 /// `Callable` lives in `ast`, which cannot be referenced from this module
 /// without a dependency cycle); the evaluator downcasts it when invoking.
 #[derive(Clone)]
-pub(crate) struct SassFunction {
+pub struct SassFunction {
     /// The function's name (for `inspect` and error messages).
     pub name: String,
     /// Whether this is a plain-CSS reference (`$css: true`), which is preserved
@@ -98,7 +98,7 @@ impl PartialEq for SassFunction {
 
 impl SassFunction {
     /// The `inspect()` / debug form, `get-function("name")` (dart-sass).
-    pub(crate) fn inspect(&self) -> String {
+    pub fn inspect(&self) -> String {
         format!("get-function(\"{}\")", self.name)
     }
 }
@@ -111,7 +111,7 @@ impl SassFunction {
 /// be referenced from this module without a dependency cycle); the evaluator
 /// downcasts it when invoking.
 #[derive(Clone)]
-pub(crate) struct SassMixin {
+pub struct SassMixin {
     /// The mixin's name (for `inspect` and error messages).
     pub name: String,
     /// The captured user `@mixin` definition, or `None` for a built-in
@@ -132,10 +132,10 @@ pub(crate) struct SassMixin {
 }
 
 /// The defining-file context captured with a same-module first-class mixin —
-/// the fields [`crate::eval::Evaluator::enter_module_file`] would otherwise pull
+/// the fields `Evaluator::enter_module_file` would otherwise pull
 /// from a `Module`, so a `meta.apply`'d body resolves relative loads correctly.
 #[derive(Clone)]
-pub(crate) struct MixinOrigin {
+pub struct MixinOrigin {
     /// The diagnostic display URL of the defining file (e.g. `_mod.scss`).
     pub diag_url: String,
     /// The defining file's directory (the legacy `@import` resolution base);
@@ -168,7 +168,7 @@ impl PartialEq for SassMixin {
 
 impl SassMixin {
     /// The `inspect()` / debug form, `get-mixin("name")` (dart-sass).
-    pub(crate) fn inspect(&self) -> String {
+    pub fn inspect(&self) -> String {
         format!("get-mixin(\"{}\")", self.name)
     }
 }
@@ -177,7 +177,7 @@ impl SassMixin {
 /// evaluation; everything else (variables, interpolations, percentages with
 /// incompatible neighbours) is preserved for canonical serialization.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum CalcNode {
+pub enum CalcNode {
     /// A resolved number operand.
     Number(Number),
     /// An opaque operand: `var(--x)`, an interpolation result, a nested
@@ -197,7 +197,7 @@ pub(crate) enum CalcNode {
 
 /// A `calc()` binary operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CalcOp {
+pub enum CalcOp {
     Add,
     Sub,
     Mul,
@@ -227,7 +227,7 @@ impl CalcNode {
     /// Serialize this node's interior (without the enclosing `calc(`...`)`),
     /// adding parentheses only where operator precedence/associativity
     /// requires them, matching dart-sass's canonical form.
-    pub(crate) fn to_calc_css(&self, compressed: bool) -> String {
+    pub fn to_calc_css(&self, compressed: bool) -> String {
         match self {
             CalcNode::Number(n) => calc_number_css(n, compressed),
             CalcNode::Str(s) => s.clone(),
@@ -263,7 +263,7 @@ impl CalcNode {
     /// Serialize as the top-level `Value::Calc` holding this node would: a
     /// calculation-function node renders bare as `name(args)`, while any other
     /// node is wrapped in `calc(...)`.
-    pub(crate) fn to_calc_value_css(&self, compressed: bool) -> String {
+    pub fn to_calc_value_css(&self, compressed: bool) -> String {
         match self {
             CalcNode::Func { .. } => self.to_calc_css(compressed),
             _ => format!("calc({})", self.to_calc_css(compressed)),
@@ -342,7 +342,7 @@ fn calc_number_css(n: &Number, compressed: bool) -> String {
 /// allocation-identical to a plain `String` field; multi-unit numbers
 /// (`px*px`, `px/s`) box their unit lists.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Number {
+pub struct Number {
     pub value: f64,
     units: Units,
 }
@@ -364,7 +364,7 @@ struct ComplexUnits {
 }
 
 impl Number {
-    pub(crate) fn unitless(value: f64) -> Number {
+    pub fn unitless(value: f64) -> Number {
         Number {
             value,
             units: Units::None,
@@ -372,7 +372,7 @@ impl Number {
     }
 
     /// A number with zero or one numerator unit (`""` means unitless).
-    pub(crate) fn with_unit(value: f64, unit: impl Into<String>) -> Number {
+    pub fn with_unit(value: f64, unit: impl Into<String>) -> Number {
         let unit = unit.into();
         Number {
             value,
@@ -388,7 +388,7 @@ impl Number {
     /// compact representation when possible. No unit cancellation happens
     /// here — callers cancel before constructing (dart-sass keeps whatever
     /// lists arithmetic produces).
-    pub(crate) fn with_units(value: f64, mut numer: Vec<String>, denom: Vec<String>) -> Number {
+    pub fn with_units(value: f64, mut numer: Vec<String>, denom: Vec<String>) -> Number {
         let units = if denom.is_empty() && numer.len() <= 1 {
             match numer.pop() {
                 None => Units::None,
@@ -402,14 +402,14 @@ impl Number {
 
     /// A new number carrying this number's units (the common "derive a result
     /// from an operand" pattern; preserves multi-unit lists).
-    pub(crate) fn copy_units(&self, value: f64) -> Number {
+    pub fn copy_units(&self, value: f64) -> Number {
         Number {
             value,
             units: self.units.clone(),
         }
     }
 
-    pub(crate) fn is_unitless(&self) -> bool {
+    pub fn is_unitless(&self) -> bool {
         matches!(self.units, Units::None)
     }
 
@@ -417,7 +417,7 @@ impl Number {
     /// single-numerator number, or the FIRST numerator unit of a multi-unit
     /// number (callers that can meet multi-unit numbers must check
     /// [`Number::has_complex_units`] first).
-    pub(crate) fn unit(&self) -> &str {
+    pub fn unit(&self) -> &str {
         match &self.units {
             Units::None => "",
             Units::Single(u) => u,
@@ -425,11 +425,11 @@ impl Number {
         }
     }
 
-    pub(crate) fn has_complex_units(&self) -> bool {
+    pub fn has_complex_units(&self) -> bool {
         matches!(self.units, Units::Complex(_))
     }
 
-    pub(crate) fn numer_units(&self) -> &[String] {
+    pub fn numer_units(&self) -> &[String] {
         match &self.units {
             Units::None => &[],
             Units::Single(u) => std::slice::from_ref(u),
@@ -437,7 +437,7 @@ impl Number {
         }
     }
 
-    pub(crate) fn denom_units(&self) -> &[String] {
+    pub fn denom_units(&self) -> &[String] {
         match &self.units {
             Units::None | Units::Single(_) => &[],
             Units::Complex(c) => &c.denom,
@@ -452,7 +452,7 @@ impl Number {
 /// the text. Strings are immutable Sass values, so the sharing is invisible:
 /// any "mutating" string builtin builds a fresh `Rc<str>`.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SassStr {
+pub struct SassStr {
     pub text: Rc<str>,
     pub quoted: bool,
 }
@@ -460,7 +460,7 @@ pub(crate) struct SassStr {
 /// A private-use code point per dart-sass `isPrivateUseCharacter`: the BMP
 /// private-use area plus the whole of planes 15 and 16 (so `\e000`, `\f0000`,
 /// `\10fffd` escape, while a non-character like `\fdd0` or `\f900` stays raw).
-pub(crate) fn is_private_use(cp: u32) -> bool {
+pub fn is_private_use(cp: u32) -> bool {
     (0xE000..=0xF8FF).contains(&cp) || (0xF0000..=0x10FFFF).contains(&cp)
 }
 
@@ -470,7 +470,7 @@ pub(crate) fn is_private_use(cp: u32) -> bool {
 /// characters (everything `0x00..=0x1F` except tab, plus `0x7F`), and
 /// private-use characters. Double quotes are preferred; a string that contains
 /// `"` but no `'` is wrapped in `'`.
-pub(crate) fn serialize_quoted(text: &str) -> String {
+pub fn serialize_quoted(text: &str) -> String {
     let has_double = text.contains('"');
     let has_single = text.contains('\'');
     // Use single quotes only when the text has a `"` and no `'`.
@@ -523,7 +523,7 @@ pub(crate) fn serialize_quoted(text: &str) -> String {
 /// space; a private-use character is escaped as `\<hex>` (control characters,
 /// unlike in a quoted string, are written verbatim here); every other code
 /// point is written verbatim.
-pub(crate) fn serialize_unquoted(text: &str) -> String {
+pub fn serialize_unquoted(text: &str) -> String {
     // Fast path: nothing to rewrite unless a newline or private-use char is
     // present. Scan without allocating; only collect into a `Vec<char>` (needed
     // for the escape look-ahead) on the rare slow path.
@@ -575,7 +575,7 @@ pub(crate) fn serialize_unquoted(text: &str) -> String {
 /// builds a fresh `Vec<Value>` and re-wraps it in a new `Rc`, so the sharing is
 /// invisible.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct List {
+pub struct List {
     pub items: Rc<[Value]>,
     pub sep: ListSep,
     /// Whether the list was written with square brackets (`[a b]`); such
@@ -591,7 +591,7 @@ pub(crate) struct List {
 
 impl List {
     /// An ordinary (non-argument) list.
-    pub(crate) fn new(items: impl Into<Rc<[Value]>>, sep: ListSep, bracketed: bool) -> Self {
+    pub fn new(items: impl Into<Rc<[Value]>>, sep: ListSep, bracketed: bool) -> Self {
         List {
             items: items.into(),
             sep,
@@ -612,20 +612,20 @@ impl List {
 /// (`Rc::make_mut` on a uniquely-owned `Rc`, or build a fresh `Vec`), so the
 /// sharing never lets one binding observe another's mutation.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Map {
+pub struct Map {
     pub entries: Rc<Vec<(Value, Value)>>,
 }
 
 impl Map {
     /// Construct a map from an owned entry vector.
-    pub(crate) fn new(entries: Vec<(Value, Value)>) -> Self {
+    pub fn new(entries: Vec<(Value, Value)>) -> Self {
         Map {
             entries: Rc::new(entries),
         }
     }
 
     /// Look up a value by key (Sass `==`), or `None` when absent.
-    pub(crate) fn get(&self, key: &Value) -> Option<&Value> {
+    pub fn get(&self, key: &Value) -> Option<&Value> {
         self.entries.iter().find(|(k, _)| k.sass_eq(key)).map(|(_, v)| v)
     }
 
@@ -633,7 +633,7 @@ impl Map {
     /// key (matching dart-sass map ordering). Copy-on-write: if the entry
     /// vector is shared, `Rc::make_mut` clones it first so no other `Map`
     /// observes the change.
-    pub(crate) fn insert(&mut self, key: Value, value: Value) {
+    pub fn insert(&mut self, key: Value, value: Value) {
         let entries = Rc::make_mut(&mut self.entries);
         if let Some(slot) = entries.iter_mut().find(|(k, _)| k.sass_eq(&key)) {
             slot.1 = value;
@@ -644,7 +644,7 @@ impl Map {
 
     /// Serialize the map for CSS / error messages: `(k1: v1, k2: v2)`, with
     /// the empty map rendered as `()`.
-    pub(crate) fn to_css(&self, compressed: bool) -> String {
+    pub fn to_css(&self, compressed: bool) -> String {
         self.to_map_css(compressed)
     }
 
@@ -691,7 +691,7 @@ fn map_val_css(v: &Value) -> String {
 
 /// List separator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ListSep {
+pub enum ListSep {
     /// Space-separated (`1px 2px`).
     Space,
     /// Comma-separated (`1px, 2px`).
@@ -716,7 +716,7 @@ pub(crate) enum ListSep {
 /// `r`/`g`/`b`/`a` fields still hold an sRGB-byte approximation so the large
 /// body of legacy color builtins keep working unchanged.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Color {
+pub struct Color {
     pub r: f64,
     pub g: f64,
     pub b: f64,
@@ -734,7 +734,7 @@ pub(crate) struct Color {
 
 /// A CSS Color 4 color space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ColorSpace {
+pub enum ColorSpace {
     Rgb,
     Hsl,
     Hwb,
@@ -754,7 +754,7 @@ pub(crate) enum ColorSpace {
 }
 
 impl ColorSpace {
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             ColorSpace::Rgb => "rgb",
             ColorSpace::Hsl => "hsl",
@@ -775,7 +775,7 @@ impl ColorSpace {
         }
     }
 
-    pub(crate) fn from_name(s: &str) -> Option<ColorSpace> {
+    pub fn from_name(s: &str) -> Option<ColorSpace> {
         // Color-space names are ASCII case-insensitive (`sRGB`, `Display-P3`,
         // `XYZ` all resolve); callers keep the original spelling for errors and
         // serialization always uses the canonical lower-case `name()`.
@@ -801,12 +801,12 @@ impl ColorSpace {
     }
 
     /// Whether this is a legacy space (`rgb`/`hsl`/`hwb`).
-    pub(crate) fn is_legacy(self) -> bool {
+    pub fn is_legacy(self) -> bool {
         matches!(self, ColorSpace::Rgb | ColorSpace::Hsl | ColorSpace::Hwb)
     }
 
     /// The three channel names for this space (in storage order).
-    pub(crate) fn channel_names(self) -> [&'static str; 3] {
+    pub fn channel_names(self) -> [&'static str; 3] {
         match self {
             ColorSpace::Rgb
             | ColorSpace::Srgb
@@ -829,7 +829,7 @@ impl ColorSpace {
 /// units (e.g. lab lightness `0..=100`, oklab lightness `0..=1`, hues in
 /// degrees, rgb channels `0..=1`). A `None` channel is a missing channel.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ModernColor {
+pub struct ModernColor {
     pub space: ColorSpace,
     pub channels: [Option<f64>; 3],
     pub alpha: Option<f64>,
@@ -837,7 +837,7 @@ pub(crate) struct ModernColor {
 
 impl Value {
     /// Serialize as it would appear in a CSS declaration value.
-    pub(crate) fn to_css(&self, compressed: bool) -> String {
+    pub fn to_css(&self, compressed: bool) -> String {
         match self {
             Value::Number(n) => n.to_css(compressed),
             Value::Color(c) => c.to_css(compressed),
@@ -863,7 +863,7 @@ impl Value {
 
     /// Serialize as it would appear inside `#{...}` interpolation, where
     /// strings lose their quotes.
-    pub(crate) fn to_interp(&self) -> String {
+    pub fn to_interp(&self) -> String {
         match self {
             // A directly interpolated string contributes its RAW text (dart
             // `_performInterpolation` takes `result.text` verbatim); only a
@@ -883,7 +883,7 @@ impl Value {
     /// **unquoted**, every other value (including strings nested in a list) is
     /// shown with the dart-sass `inspect()` serialization (`"a" "b"`, `a b c`,
     /// `(k: v)`). Matches dart-sass's `value.toString()`.
-    pub(crate) fn to_message(&self) -> String {
+    pub fn to_message(&self) -> String {
         match self {
             Value::Str(s) => s.text.to_string(),
             other => crate::builtins::inspect_value(other),
@@ -893,11 +893,11 @@ impl Value {
     /// The message text for `@error`: the dart-sass `inspect()` serialization
     /// of the argument, additionally wrapping an unbracketed multi-element list
     /// in parentheses (`(a b c)`, `(a, b)`). A string keeps its quotes.
-    pub(crate) fn to_error_message(&self) -> String {
+    pub fn to_error_message(&self) -> String {
         crate::builtins::inspect_element(self, ListSep::Space)
     }
 
-    pub(crate) fn type_name(&self) -> &'static str {
+    pub fn type_name(&self) -> &'static str {
         match self {
             Value::Number(_) => "number",
             Value::Color(_) => "color",
@@ -918,7 +918,7 @@ impl Value {
     /// Collapse a top-level slash-division value to its plain `number`,
     /// matching dart-sass's `withoutSlash`. Numbers nested inside lists keep
     /// their slash spelling, so lists are returned unchanged.
-    pub(crate) fn without_slash(self) -> Value {
+    pub fn without_slash(self) -> Value {
         match self {
             Value::Slash(n, _) => Value::Number(n),
             other => other,
@@ -926,13 +926,13 @@ impl Value {
     }
 
     /// Sass truthiness: everything except `false` and `null` is truthy.
-    pub(crate) fn is_truthy(&self) -> bool {
+    pub fn is_truthy(&self) -> bool {
         !matches!(self, Value::Bool(false) | Value::Null)
     }
 
     /// Sass `==` equality. Numbers compare by value and unit; strings by
     /// text (quotedness is ignored); colors by channel; lists structurally.
-    pub(crate) fn sass_eq(&self, other: &Value) -> bool {
+    pub fn sass_eq(&self, other: &Value) -> bool {
         // A slash-division value compares as the plain number it wraps. Unwrap
         // only the slash operand(s) — the non-slash side is compared by
         // reference (no clone of a potentially large list/map).
@@ -1088,7 +1088,7 @@ fn push_unit_escaped(out: &mut String, unit: &str) {
 }
 
 impl Number {
-    pub(crate) fn to_css(&self, compressed: bool) -> String {
+    pub fn to_css(&self, compressed: bool) -> String {
         // A non-finite number serializes as a `calc()` constant, matching
         // dart-sass: a unitless `infinity`/`-infinity`/`NaN` prints as
         // `calc(infinity)` etc., and a unit-bearing one as `calc(infinity * 1px)`.
@@ -1110,7 +1110,7 @@ impl Number {
     /// dart-sass `unitString`: the human-readable unit list — `px`, `px*em`,
     /// `px/em`, `px*em/(rad*s)`, `px^-1`, `(px*em)^-1`, or `""` for unitless.
     /// Used by `math.unit()`.
-    pub(crate) fn unit_string(&self) -> String {
+    pub fn unit_string(&self) -> String {
         let numer = self.numer_units();
         let denom = self.denom_units();
         match (numer.is_empty(), denom.is_empty()) {
@@ -1135,7 +1135,7 @@ impl Number {
     /// Multiply by `other` with dart-sass `multiplyUnits` cancellation: each
     /// numerator cancels the first convertible denominator on the other side
     /// (scaling the value by the conversion), leftovers concatenate.
-    pub(crate) fn mul(&self, other: &Number) -> Number {
+    pub fn mul(&self, other: &Number) -> Number {
         // Fast path: a unitless operand has nothing to cancel or concatenate,
         // so the result carries the other side's units verbatim — no unit-list
         // materialization (the general path builds four Vec<String>s).
@@ -1155,7 +1155,7 @@ impl Number {
     }
 
     /// Divide by `other` (multiplication with `other`'s units inverted).
-    pub(crate) fn div(&self, other: &Number) -> Number {
+    pub fn div(&self, other: &Number) -> Number {
         // Fast paths mirroring `mul`: a unitless divisor leaves the units
         // untouched, and same-named single units cancel exactly (`px/px`).
         if matches!(other.units, Units::None) {
@@ -1191,7 +1191,7 @@ fn cancel_factor(numerator: &str, denominator: &str) -> Option<f64> {
 /// distinct convertible `to` numerator (any order), and likewise for the
 /// denominators (a denominator's factor divides). Mirrors dart-sass's
 /// `coerce`/`convertValue` for multi-unit numbers.
-pub(crate) fn unit_lists_factor(from: (&[String], &[String]), to: (&[String], &[String])) -> Option<f64> {
+pub fn unit_lists_factor(from: (&[String], &[String]), to: (&[String], &[String])) -> Option<f64> {
     fn match_lists(from: &[String], to: &[String]) -> Option<f64> {
         if from.len() != to.len() {
             return None;
@@ -1261,7 +1261,7 @@ fn multiply_units(
 /// convertible in arithmetic (`1khz + 500hz` is an error), so frequency is
 /// deliberately omitted here to match its behaviour byte-for-byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Dim {
+pub enum Dim {
     Length,
     Angle,
     Time,
@@ -1274,7 +1274,7 @@ pub(crate) enum Dim {
 /// unit names case-SENSITIVELY (`1in + 1q` converts but `1in + 1Q` errors,
 /// `PX` never converts to `px`), even though calc-class *classification* is
 /// case-insensitive (see `known_calc_class`).
-pub(crate) fn unit_dimension(unit: &str) -> Option<Dim> {
+pub fn unit_dimension(unit: &str) -> Option<Dim> {
     match unit {
         "px" | "in" | "cm" | "mm" | "q" | "pt" | "pc" => Some(Dim::Length),
         "deg" | "grad" | "rad" | "turn" => Some(Dim::Angle),
@@ -1325,7 +1325,7 @@ fn canonical_factor(unit: &str) -> Option<f64> {
 /// The multiplier to convert a value in `from` units to `to` units
 /// (`value_in_to = value_in_from * convert_factor(from, to)`). Returns
 /// `None` when the two units are not in the same convertible group.
-pub(crate) fn convert_factor(from: &str, to: &str) -> Option<f64> {
+pub fn convert_factor(from: &str, to: &str) -> Option<f64> {
     if !units_compatible(from, to) {
         return None;
     }
@@ -1339,7 +1339,7 @@ pub(crate) fn convert_factor(from: &str, to: &str) -> Option<f64> {
 /// compatible; otherwise both must share a convertible dimension group. An
 /// empty unit (unitless) is handled by the caller, not here — this is the
 /// strict "two real units" test, mirroring dart-sass's `isComparableTo`.
-pub(crate) fn units_compatible(a: &str, b: &str) -> bool {
+pub fn units_compatible(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }
@@ -1431,7 +1431,7 @@ fn known_calc_class(unit: &str) -> Option<u8> {
 /// `calc(1px + 1hz)`); when either unit is relative/unknown
 /// (`calc(1px + 1vw)`, `calc(100% - 10px)`) or they share a class but are
 /// not convertible (`calc(1khz + 1hz)`), the expression is kept verbatim.
-pub(crate) fn calc_units_incompatible(a: &str, b: &str) -> bool {
+pub fn calc_units_incompatible(a: &str, b: &str) -> bool {
     match (known_calc_class(a), known_calc_class(b)) {
         (Some(ca), Some(cb)) => ca != cb,
         _ => false,
@@ -1505,7 +1505,7 @@ impl List {
 }
 
 impl Color {
-    pub(crate) fn rgb(r: f64, g: f64, b: f64, a: f64) -> Self {
+    pub fn rgb(r: f64, g: f64, b: f64, a: f64) -> Self {
         Color {
             r,
             g,
@@ -1518,7 +1518,7 @@ impl Color {
 
     /// Parse the hex digits following a `#` (3/4/6/8 long). Returns `None`
     /// on an invalid length or digit.
-    pub(crate) fn from_hex(digits: &str) -> Option<Color> {
+    pub fn from_hex(digits: &str) -> Option<Color> {
         let parse = |s: &str| u8::from_str_radix(s, 16).ok().map(|v| v as f64);
         let (r, g, b, a) = match digits.len() {
             3 => {
@@ -1586,7 +1586,7 @@ impl Color {
 
     /// Convert to HSL: hue in degrees `[0,360)`, saturation/lightness in
     /// `[0,1]`.
-    pub(crate) fn to_hsl(&self) -> (f64, f64, f64) {
+    pub fn to_hsl(&self) -> (f64, f64, f64) {
         let r = self.r / 255.0;
         let g = self.g / 255.0;
         let b = self.b / 255.0;
@@ -1612,7 +1612,7 @@ impl Color {
     }
 
     /// Build a color from HSL (hue degrees, sat/light `[0,1]`) + alpha.
-    pub(crate) fn from_hsl(h: f64, s: f64, l: f64, a: f64) -> Color {
+    pub fn from_hsl(h: f64, s: f64, l: f64, a: f64) -> Color {
         let h = h.rem_euclid(360.0);
         let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
         let x = c * (1.0 - (((h / 60.0) % 2.0) - 1.0).abs());
@@ -1638,7 +1638,7 @@ impl Color {
         int(self.r) && int(self.g) && int(self.b)
     }
 
-    pub(crate) fn to_css(&self, compressed: bool) -> String {
+    pub fn to_css(&self, compressed: bool) -> String {
         if let Some(m) = &self.modern {
             return m.to_css(compressed);
         }
@@ -1731,7 +1731,7 @@ impl Color {
     /// 30%)` inspects as itself but writes as `hsl(200, 55.5555555556%, 45%)`.
     /// Delegates to `ModernColor::inspect_css` when the color is space-aware;
     /// a plain legacy sRGB color serializes identically either way.
-    pub(crate) fn inspect_css(&self) -> String {
+    pub fn inspect_css(&self) -> String {
         match &self.modern {
             Some(m) => m.inspect_css(),
             None => self.to_css(false),
@@ -1741,7 +1741,7 @@ impl Color {
 
 /// The CSS named-color spelling for an exact, fully-opaque integer RGB
 /// triple (dart-sass canonical names). `None` if the triple has no name.
-pub(crate) fn rgb_name(r: f64, g: f64, b: f64) -> Option<&'static str> {
+pub fn rgb_name(r: f64, g: f64, b: f64) -> Option<&'static str> {
     let int = |v: f64| {
         let r = v.round();
         // Range-check the ROUNDED value: a converted channel may sit a few
@@ -2010,7 +2010,7 @@ impl ModernColor {
         }
     }
 
-    pub(crate) fn to_css(&self, compressed: bool) -> String {
+    pub fn to_css(&self, compressed: bool) -> String {
         use ColorSpace::*;
         let sp = if compressed { "" } else { " " };
         // Legacy spaces with no missing channel use the comma legacy form.
@@ -2127,7 +2127,7 @@ impl ModernColor {
     /// out-of-gamut legacy rgb skips the hsl reroute, falling to the plain
     /// `rgb(...)` comma form (named/hex only apply in-gamut). Everything
     /// else serializes exactly like CSS output.
-    pub(crate) fn inspect_css(&self) -> String {
+    pub fn inspect_css(&self) -> String {
         if self.space.is_legacy() && !self.has_missing() {
             let a = self.alpha.unwrap_or(0.0);
             let opaque = (a - 1.0).abs() < 1e-11;
@@ -2424,7 +2424,7 @@ fn rgb_channel_text(r: f64, g: f64, b: f64, compressed: bool) -> (String, String
 
 /// Format a number the way dart-sass does: round to 10 decimal places,
 /// trim trailing zeros, and (when compressed) drop a leading `0`.
-pub(crate) fn fmt_num(n: f64, compressed: bool) -> String {
+pub fn fmt_num(n: f64, compressed: bool) -> String {
     if n.is_nan() {
         return "NaN".to_string();
     }
@@ -2646,7 +2646,7 @@ fn trim_fraction(mut s: String) -> String {
 
 /// Look up a CSS named color. Covers the complete set of 148 CSS Color 4
 /// named colors plus `transparent`; unknown identifiers stay unquoted strings.
-pub(crate) fn named_color(name: &str) -> Option<Color> {
+pub fn named_color(name: &str) -> Option<Color> {
     let (r, g, b, a) = match name.to_ascii_lowercase().as_str() {
         "transparent" => (0, 0, 0, 0.0),
         "aliceblue" => (240, 248, 255, 1.0),

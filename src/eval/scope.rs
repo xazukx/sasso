@@ -310,6 +310,9 @@ impl<'a> Evaluator<'a> {
                 // a `@forward ... with ($x !default)` only applies if the module
                 // hasn't already defined the variable.
                 if !(matches!(cfg_val, Value::Null) || cfg_is_default && already_set) {
+                    // The configured value is what this declaration resolves
+                    // to, even though its own RHS never ran.
+                    self.record_variable_value(v, &cfg_val, false);
                     if let Some(g) = self.scopes.first_mut() {
                         g.borrow_mut().insert(v.name.clone(), cfg_val);
                     }
@@ -336,24 +339,33 @@ impl<'a> Evaluator<'a> {
         if v.is_default {
             if let Some(existing) = self.lookup(&v.name) {
                 if !matches!(existing, Value::Null) {
+                    // Guarded and already set: the existing value is the one
+                    // this declaration resolves to.
+                    self.record_variable_value(v, &existing, false);
                     return Ok(());
                 }
             }
             // Same guard for a name owned by exactly one `@use … as *` module.
             if (self.scopes.len() == 1 || v.is_global) && !is_private_member(&v.name) {
+                let mut resolved = None;
                 if let Some(g) = self.scopes.first() {
                     if !g.borrow().contains_key(&v.name) {
                         let mut targets = self.star_user_modules.iter().filter_map(|m| m.var(&v.name));
                         if let Some(existing) = targets.next() {
                             if targets.next().is_none() && !matches!(existing, Value::Null) {
-                                return Ok(());
+                                resolved = Some(existing);
                             }
                         }
                     }
                 }
+                if let Some(existing) = resolved {
+                    self.record_variable_value(v, &existing, false);
+                    return Ok(());
+                }
             }
         }
         let val = self.eval_expr(&v.value)?;
+        self.record_variable_value(v, &val, true);
         // dart `visitVariableDeclaration` stores `_expressionNode(node
         // .expression)` as the binding's node (evaluate.dart:2721): a bare
         // `$a: $b` inherits `$b`'s ORIGIN, so a chain `$a: red; $b: $a; c: $b`
@@ -431,10 +443,17 @@ impl<'a> Evaluator<'a> {
         }
         // Short-circuit a `!default` no-op before evaluating the RHS, so an
         // unused guarded expression can't raise an error (matches dart-sass).
-        if v.is_default && existing.is_some_and(|x| !matches!(x, Value::Null)) {
-            return Ok(());
+        if v.is_default {
+            if let Some(x) = &existing {
+                if !matches!(x, Value::Null) {
+                    let x = x.clone();
+                    self.record_variable_value(v, &x, false);
+                    return Ok(());
+                }
+            }
         }
         let val = self.eval_expr(&v.value)?.without_slash();
+        self.record_variable_value(v, &val, true);
         let span = self.expression_node(&v.value, v.value_pos);
         target.vars.borrow_mut().insert(name.clone(), val);
         if self.options.source_map {

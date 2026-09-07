@@ -664,7 +664,6 @@ unsafe fn compile_inner(
 fn syntax_from_i32(v: i32) -> Option<Syntax> {
     match v {
         SASSO_SYNTAX_SCSS => Some(Syntax::Scss),
-        SASSO_SYNTAX_SASS => Some(Syntax::Sass),
         SASSO_SYNTAX_CSS => Some(Syntax::Css),
         _ => None,
     }

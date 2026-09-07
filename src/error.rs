@@ -12,7 +12,7 @@ use crate::scanner::Pos;
 ///
 /// For byte-exact dart-sass diagnostics the evaluator attaches a span
 /// `length` (in source bytes) and a [`rendered`](Error::rendered) snippet
-/// block at the AST-node boundary. When `rendered` is present, [`Display`]
+/// block at the AST-node boundary. When `rendered` is present, [`Display`](std::fmt::Display)
 /// emits it verbatim (the full `Error: …` + source-span snippet + stack
 /// trace); otherwise it falls back to the legacy `Error: <msg> (line:col)`
 /// one-liner.
@@ -26,15 +26,16 @@ pub struct Error {
     pub col: usize,
     /// Length of the offending span, in **bytes** of the source. `0` when the
     /// span length is unknown (the renderer still draws a single caret).
-    pub(crate) length: usize,
+    pub length: usize,
     /// The fully rendered diagnostic block (header + snippet + frames), set by
     /// the evaluator once the source/url/glyph context is known. `None` until
-    /// then; [`Display`] falls back to the legacy one-liner.
-    pub(crate) rendered: Option<String>,
+    /// then; [`Display`](std::fmt::Display) falls back to the legacy one-liner.
+    pub rendered: Option<String>,
 }
 
 impl Error {
-    pub(crate) fn at(message: impl Into<String>, pos: Pos) -> Self {
+    /// A positioned error: `message` blamed on the 1-based source position `pos`.
+    pub fn at(message: impl Into<String>, pos: Pos) -> Self {
         Error {
             message: message.into(),
             line: pos.line,
@@ -44,7 +45,8 @@ impl Error {
         }
     }
 
-    pub(crate) fn unpositioned(message: impl Into<String>) -> Self {
+    /// An error with no source position (rendered as the bare `Error: <msg>`).
+    pub fn unpositioned(message: impl Into<String>) -> Self {
         Error {
             message: message.into(),
             line: 0,
@@ -56,7 +58,7 @@ impl Error {
 
     /// Attach a span length (in source bytes) if one is not already set. Used at
     /// AST-node boundaries to size the caret underline.
-    pub(crate) fn with_length(mut self, length: usize) -> Self {
+    pub fn with_length(mut self, length: usize) -> Self {
         if self.length == 0 {
             self.length = length;
         }
@@ -64,7 +66,7 @@ impl Error {
     }
 
     /// Whether a primary `line`/`col` position has been recorded.
-    pub(crate) fn has_position(&self) -> bool {
+    pub fn has_position(&self) -> bool {
         self.line > 0
     }
 }

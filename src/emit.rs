@@ -14,11 +14,7 @@ pub fn emit(nodes: &[OutNode], style: OutputStyle, charset: bool) -> String {
 /// Like [`emit`], but also records a source map. Returns the final CSS, the
 /// byte length of the `@charset`/BOM prefix that shifts every body offset, and
 /// the populated collector (raw body offsets, not yet resolved to lines).
-pub fn emit_with_map(
-    nodes: &[OutNode],
-    style: OutputStyle,
-    charset: bool,
-) -> (String, usize, SmCollector) {
+pub fn emit_with_map(nodes: &[OutNode], style: OutputStyle, charset: bool) -> (String, usize, SmCollector) {
     let mut collector = Some(SmCollector::new(matches!(style, OutputStyle::Compressed)));
     let (css, body_off) = emit_inner(nodes, style, &mut collector, charset);
     (css, body_off, collector.expect("collector present"))

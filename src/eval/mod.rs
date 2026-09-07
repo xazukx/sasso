@@ -66,7 +66,7 @@ fn parse_with_syntax(src: &str, syntax: Syntax) -> Result<crate::ast::Stylesheet
 /// `(name, value)` keyword pairs (after splat expansion), plus the rest-
 /// argument list separator (a splatted list's separator survives into the
 /// callee's arglist; comma otherwise).
-type EvaledArgs = (Vec<Value>, Vec<(String, Value)>, ListSep);
+pub type EvaledArgs = (Vec<Value>, Vec<(String, Value)>, ListSep);
 
 /// Definition spans for the values in an [`EvaledArgs`], parallel to its
 /// positional and keyword vectors (dart `ArgumentResults.positionalNodes` /
@@ -118,13 +118,47 @@ fn new_scope() -> Scope {
 /// `file == 0` means "unknown" (a synthesized binding with no source text, e.g.
 /// a built-in module variable or a host-function argument); the source map
 /// drops such entries.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+///
+/// Ordered `(file, line, col)`, so a `BTreeMap` keyed by a span — e.g.
+/// [`Evaluator::variable_values`] — iterates in source order.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 pub struct VarSpan {
     pub file: u32,
     /// 0-based source line.
     pub line: u32,
     /// 0-based source column.
     pub col: u32,
+}
+
+/// One recorded variable declaration, captured by
+/// [`Options::record_variable_values`](crate::Options::record_variable_values).
+///
+/// The value is the one the declaration actually bound *at the moment it was
+/// visited* — while its scope was still alive — so a variable declared inside a
+/// nested rule, a mixin body or a loop is still observable after the compile
+/// has finished and its scope is gone. A guarded (`!default`) declaration that
+/// was short-circuited records the value already in effect, which is what that
+/// declaration resolves to.
+#[derive(Clone, Debug)]
+pub struct VariableValue {
+    /// The variable's name, without the leading `$`, in canonical form: Sass
+    /// treats `-` and `_` interchangeably, so every `_` is already a `-`.
+    pub name: String,
+    /// The evaluated value bound by this declaration.
+    pub value: Value,
+    /// Where the declaration starts: interned file id plus 0-based line/column.
+    /// Resolve `file` to a URL with [`Evaluator::file_url`].
+    pub span: VarSpan,
+    /// Whether the declaration carried `!default`.
+    pub is_default: bool,
+    /// Whether the declaration carried `!global`.
+    pub is_global: bool,
+    /// `Some(ns)` for a namespaced assignment (`ns.$name: …`).
+    pub namespace: Option<String>,
+    /// Whether the declaration's own right-hand side was evaluated (`true`), or
+    /// short-circuited as a `!default` over an existing value / a `@use … with`
+    /// configuration override (`false`, and `value` is the value in effect).
+    pub evaluated: bool,
 }
 
 /// A callable's argument frame: the bound values plus the definition span of
@@ -188,7 +222,7 @@ pub struct UserCallable {
 /// (Phase 1d: the engine works on the typed model directly — no `join(", ")` +
 /// `parse_list` round trip — and emit renders it via `Complex::render()`, which
 /// is byte-identical to the strings the engine used to materialize).
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum RuleSelectors {
     /// The already-resolved selector strings (`&`/interpolation substituted).
     /// Untouched by the extend pass — emit writes them verbatim. This is the
@@ -223,7 +257,7 @@ impl RuleSelectors {
 }
 
 /// A flattened output node.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum OutNode {
     Rule {
         selectors: RuleSelectors,
@@ -367,7 +401,7 @@ enum MergeResult {
 }
 
 /// An item inside a rule block.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum OutItem {
     Decl {
         prop: String,
@@ -772,10 +806,20 @@ pub struct EvalOptions<'a> {
     /// span lookup short-circuits to "unknown", so the plain [`crate::compile`]
     /// path pays nothing for it.
     pub source_map: bool,
+    /// Whether to record every variable declaration's evaluated value into
+    /// [`Evaluator::variable_values`] as it is visited
+    /// (see [`crate::Options::record_variable_values`]). Off by default: when
+    /// false nothing is recorded and the map stays empty.
+    pub record_variable_values: bool,
 }
 
 pub struct Evaluator<'a> {
     scopes: Vec<Scope>,
+    /// Every variable declaration's evaluated value, keyed by the
+    /// declaration's span — populated only when
+    /// [`EvalOptions::record_variable_values`] is set. A `BTreeMap` so
+    /// iteration is in source order (file id, then line, then column).
+    variable_values: std::collections::BTreeMap<VarSpan, VariableValue>,
     /// Definition spans for the bindings in `scopes`, one frame per scope
     /// (dart `Environment._variableNodes`). Pushed/popped in lockstep. Purely
     /// additive: nothing here can change a CSS byte.
@@ -1313,6 +1357,7 @@ impl<'a> Evaluator<'a> {
             file_ids: HashMap::default(),
             file_map_urls: HashMap::default(),
             scopes: vec![new_scope()],
+            variable_values: std::collections::BTreeMap::new(),
             // Empty (not one empty frame) when spans aren't tracked: every
             // push/insert/lookup site is guarded, so an empty chain makes the
             // whole bookkeeping a no-op. See `EvalOptions::source_map`.
@@ -1404,6 +1449,92 @@ impl<'a> Evaluator<'a> {
         let id = *self.file_ids.entry(self.current_url.clone()).or_insert(next);
         self.current_url_stamp = id;
         id
+    }
+
+    /// The URL an interned file id (as in [`VarSpan::file`] or [`SrcLines::file`])
+    /// stands for; `None` for the "unknown" id `0` or an id never interned.
+    pub fn file_url(&self, id: u32) -> Option<&str> {
+        self.file_ids
+            .iter()
+            .find(|&(_, &v)| v == id)
+            .map(|(url, _)| url.as_str())
+    }
+
+    /// Every variable declaration's evaluated value, keyed by the declaration's
+    /// span, in source order.
+    ///
+    /// Empty unless [`crate::Options::record_variable_values`] was set. Because
+    /// the values are captured as each declaration is visited, this includes
+    /// variables whose scope (a nested rule, a mixin body, a loop) no longer
+    /// exists once evaluation finishes and which [`Self::env`] therefore cannot
+    /// see. A declaration that runs more than once (a loop body, a mixin
+    /// included twice) keeps the value from its LAST visit.
+    pub fn variable_values(&self) -> &std::collections::BTreeMap<VarSpan, VariableValue> {
+        &self.variable_values
+    }
+
+    /// Take the recorded variable values, leaving the map empty. Avoids cloning
+    /// when the caller owns the evaluator and only wants the record.
+    pub fn take_variable_values(&mut self) -> std::collections::BTreeMap<VarSpan, VariableValue> {
+        std::mem::take(&mut self.variable_values)
+    }
+
+    /// The variables visible in the CURRENT scope chain, innermost binding
+    /// winning — after a completed compile that is the global scope.
+    ///
+    /// Variables scoped to a rule, mixin or loop are gone by then; use
+    /// [`Self::variable_values`] to see those.
+    pub fn env(&self) -> std::collections::BTreeMap<String, Value> {
+        let mut out = std::collections::BTreeMap::new();
+        for scope in &self.scopes {
+            for (k, v) in scope.borrow().iter() {
+                out.insert(k.clone(), v.clone());
+            }
+        }
+        out
+    }
+
+    /// Look one variable up in the current scope chain (innermost first), the
+    /// same way a `$name` reference in the stylesheet would resolve it.
+    pub fn variable(&self, name: &str) -> Option<Value> {
+        self.lookup(&normalize_var_name(name))
+    }
+
+    /// Record `value` as the value bound by the variable declaration `v`, keyed
+    /// by the declaration's own span. A no-op unless
+    /// [`EvalOptions::record_variable_values`] is set.
+    ///
+    /// `evaluated` is false when `v`'s right-hand side was short-circuited (a
+    /// `!default` over an existing value, or a `@use … with` override) and
+    /// `value` is therefore the value already in effect rather than one this
+    /// declaration computed.
+    fn record_variable_value(&mut self, v: &VarDecl, value: &Value, evaluated: bool) {
+        if !self.options.record_variable_values {
+            return;
+        }
+        // Unlike `span_at`, this does not depend on `source_map`: the record is
+        // a tooling feature of its own, and its key must be real either way.
+        let span = if v.pos.is_known() {
+            VarSpan {
+                file: self.intern_current_file(),
+                line: v.pos.line as u32 - 1,
+                col: v.pos.col as u32 - 1,
+            }
+        } else {
+            VarSpan::default()
+        };
+        self.variable_values.insert(
+            span,
+            VariableValue {
+                name: v.name.clone(),
+                value: value.clone(),
+                span,
+                is_default: v.is_default,
+                is_global: v.is_global,
+                namespace: v.namespace.clone(),
+                evaluated,
+            },
+        );
     }
 
     pub fn eval_sheet(&mut self, sheet: &Stylesheet, out: &mut Vec<OutNode>) -> Result<(), Error> {
@@ -5019,7 +5150,7 @@ fn rewrite_nodes_scoped(
     rewrite_with_scopes(nodes, &plan, scope, all, origins, closures, order);
 }
 
-/// The walk shared by [`rewrite_nodes_scoped`]: rules use the current scope's
+/// The walk shared by `rewrite_nodes_scoped`: rules use the current scope's
 /// `plan` (the prebuilt extend closure); a nested [`OutNode::ModuleScope`]
 /// re-enters with its own scope and its own plan.
 /// The module-graph context for dart's store-merge ORDER: reverse load

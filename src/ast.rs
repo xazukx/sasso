@@ -9,6 +9,7 @@ use crate::scanner::Pos;
 use crate::value::{Color, ListSep};
 
 /// A parsed stylesheet: an ordered list of top-level statements.
+#[derive(Debug, Clone)]
 pub struct Stylesheet {
     pub stmts: Vec<Stmt>,
 }
@@ -16,7 +17,7 @@ pub struct Stylesheet {
 /// 1-based source-line metadata for the serializer's trailing-comment rule
 /// (dart `_isTrailingComment`). `file` is an evaluator-interned source id
 /// (0 = unknown, never trailing).
-#[derive(Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SrcLines {
     pub file: u32,
     /// A comment's `/*` line; a block's opening-brace line.
@@ -49,6 +50,7 @@ pub struct SrcLines {
 }
 
 /// A statement, valid at the top level or inside a rule body.
+#[derive(Debug, Clone)]
 pub enum Stmt {
     /// `$name: value [!default] [!global];`
     VarDecl(VarDecl),
@@ -238,6 +240,7 @@ pub enum Stmt {
 
 /// One `$name: value [!default]` entry in a `@use`/`@forward` `with (...)`
 /// configuration clause.
+#[derive(Debug, Clone)]
 pub struct ConfigEntry {
     pub name: String,
     pub value: Expr,
@@ -248,6 +251,7 @@ pub struct ConfigEntry {
 
 /// A member name in a `@forward ... show/hide` clause. Variables keep their
 /// leading `$`; functions/mixins are bare identifiers.
+#[derive(Debug, Clone)]
 pub enum ForwardMember {
     /// A `$variable` name (stored without the `$`).
     Var(String),
@@ -256,6 +260,7 @@ pub enum ForwardMember {
 }
 
 /// One entry in an `@import` statement.
+#[derive(Debug, Clone)]
 pub enum ImportArg {
     /// A Sass import: the (unquoted) path of a partial to resolve and inline,
     /// plus the 1-based position and byte length of the quoted URL token (for
@@ -272,6 +277,7 @@ pub enum ImportArg {
 }
 
 /// One parsed `@import` modifier (dart-sass `tryImportModifiers`).
+#[derive(Debug, Clone)]
 pub enum ImportModifier {
     /// A run of bare identifiers and unknown functions (`b`, `c(d)`), joined
     /// by single spaces; captured as a template (only `#{…}` resolves).
@@ -294,12 +300,14 @@ pub enum ImportModifier {
 }
 
 /// One arm of an `@if` chain. `cond == None` is the trailing `@else`.
+#[derive(Debug, Clone)]
 pub struct IfBranch {
     pub cond: Option<Expr>,
     pub body: Vec<Stmt>,
 }
 
 /// A `@function` or `@mixin` definition (same shape).
+#[derive(Debug, Clone)]
 pub struct Callable {
     pub name: String,
     pub params: ParamList,
@@ -308,12 +316,14 @@ pub struct Callable {
 
 /// A declared parameter list: positional/defaulted params plus an optional
 /// trailing rest parameter (`$args...`).
+#[derive(Debug, Clone)]
 pub struct ParamList {
     pub params: Vec<Param>,
     pub rest: Option<String>,
 }
 
 /// One declared parameter, with an optional default expression.
+#[derive(Debug, Clone)]
 pub struct Param {
     pub name: String,
     pub default: Option<Expr>,
@@ -325,6 +335,7 @@ pub struct Param {
     pub default_pos: Pos,
 }
 
+#[derive(Debug, Clone)]
 pub struct VarDecl {
     pub name: String,
     pub value: Expr,
@@ -338,8 +349,14 @@ pub struct VarDecl {
     /// bare `$name` reference in a declaration maps back here (dart
     /// `Environment._variableNodes`, environment.dart:93).
     pub value_pos: Pos,
+    /// 1-based position where the declaration itself starts (the `$`, or the
+    /// namespace for `ns.$name: …`). Unused by compilation; it is the key
+    /// [`crate::Options::record_variable_values`] records evaluated values
+    /// under, so tooling can match a value back to the exact declaration.
+    pub pos: Pos,
 }
 
+#[derive(Debug, Clone)]
 pub struct Rule {
     pub selector: Vec<TplPiece>,
     pub body: Vec<Stmt>,
@@ -362,12 +379,14 @@ pub struct Rule {
 /// verbatim, resolving only `#{...}`) when the property is a plain literal,
 /// or as a SassScript expression when the property contains interpolation —
 /// matching dart-sass's declaration parsing inside these constructs.
+#[derive(Debug, Clone)]
 pub struct CssCustomItem {
     pub property: Vec<TplPiece>,
     /// `Err` holds the verbatim value template; `Ok` holds a SassScript value.
     pub value: CssCustomValue,
 }
 
+#[derive(Debug, Clone)]
 pub enum CssCustomValue {
     /// Verbatim value template (literal property): whitespace runs collapse to
     /// single spaces and `#{...}` resolves, otherwise emitted exactly.
@@ -379,6 +398,7 @@ pub enum CssCustomValue {
     Set(Vec<(Vec<TplPiece>, Expr)>),
 }
 
+#[derive(Debug, Clone)]
 pub struct Declaration {
     pub property: Vec<TplPiece>,
     pub value: Expr,
@@ -398,6 +418,7 @@ pub struct Declaration {
 /// A custom-property declaration (`--name: value`). The name and the value
 /// are both templates so `#{…}` interpolation resolves at eval time; the value
 /// is otherwise emitted verbatim (no SassScript evaluation).
+#[derive(Debug, Clone)]
 pub struct CustomDecl {
     pub property: Vec<TplPiece>,
     pub value: Vec<TplPiece>,
@@ -416,6 +437,7 @@ pub struct CustomDecl {
 /// A nested property set: a declaration whose value (which may be empty) is
 /// followed by a `{ … }` block whose children are namespaced with the parent
 /// property name joined by `-`.
+#[derive(Debug, Clone)]
 pub struct PropertySet {
     pub property: Vec<TplPiece>,
     /// The optional leading value (`b: c { … }` keeps `c`; `b: { … }` is
@@ -428,12 +450,14 @@ pub struct PropertySet {
 
 /// One piece of an interpolated template: literal text or an embedded
 /// expression (`#{...}`).
+#[derive(Debug, Clone)]
 pub enum TplPiece {
     Lit(String),
     Interp(Expr),
 }
 
 /// A value expression.
+#[derive(Debug, Clone)]
 pub enum Expr {
     /// Numeric literal: value + unit (`""` for unitless).
     Number(f64, String),
@@ -528,6 +552,7 @@ pub enum Expr {
 
 /// One clause of a modern `if()`: an optional condition (absent for the
 /// trailing `else` clause) and its value expression.
+#[derive(Debug, Clone)]
 pub struct IfClause {
     /// `None` for the `else` clause; otherwise the parsed condition tree.
     pub condition: Option<IfCond>,
@@ -538,6 +563,7 @@ pub struct IfClause {
 /// `sass(<expr>)` or a verbatim "raw" CSS sequence (`css(...)`, `var(...)`,
 /// nested `if(...)`, interpolation, ...); combined with `not`/`and`/`or`
 /// and parentheses.
+#[derive(Debug, Clone)]
 pub enum IfCond {
     /// `sass(<expr>)` — evaluated for truthiness.
     Sass(Box<Expr>),
@@ -562,6 +588,7 @@ pub enum IfCond {
 /// A `splat` argument (`$list...`) is expanded at call time: a list spreads
 /// into positional arguments and a map spreads into keyword arguments. A
 /// splat argument never carries a `name`.
+#[derive(Debug, Clone)]
 pub struct CallArg {
     pub name: Option<String>,
     pub value: Expr,
@@ -574,7 +601,7 @@ pub struct CallArg {
     pub value_pos: Pos,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     Add,
     Sub,
@@ -595,7 +622,7 @@ pub enum BinOp {
     SingleEq,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum UnOp {
     Neg,
     /// Unary `+`: numeric identity (`+5` -> `5`); on any other operand an
@@ -608,12 +635,14 @@ pub enum UnOp {
 // ---- media queries -----------------------------------------------------
 
 /// A `@media` prelude: a comma-separated list of media queries.
+#[derive(Debug, Clone)]
 pub struct MediaQueryList {
     pub queries: Vec<MediaQuery>,
 }
 
 /// One media query: either a media-type form (`[not|only]? <type> [and
 /// <cond>]*`) or a condition-only form (`<cond> [<and|or> <cond>]*`).
+#[derive(Debug, Clone)]
 pub enum MediaQuery {
     /// `[modifier]? <type> [and <cond>]*`. The modifier (`not`/`only`,
     /// already lowercased) and type may contain interpolation.
@@ -630,13 +659,14 @@ pub enum MediaQuery {
 }
 
 /// `and` / `or`, the conjunction joining media conditions.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Conjunction {
     And,
     Or,
 }
 
 /// A single "media in parens": one operand of a media condition.
+#[derive(Debug, Clone)]
 pub enum MediaInParens {
     /// `(<feature>)` — serialized wrapped in parentheses. Boxed because a
     /// [`MediaFeature`] is large relative to the other variants.
@@ -655,6 +685,7 @@ pub enum MediaInParens {
 }
 
 /// The interior of a single `(...)` media feature.
+#[derive(Debug, Clone)]
 pub enum MediaFeature {
     /// `(<name>)` or `(<name>: <value>)`.
     Decl { name: Expr, value: Option<Expr> },
@@ -672,6 +703,7 @@ pub enum MediaFeature {
 /// A parsed `@supports` condition (dart-sass `SupportsCondition`). The
 /// condition is re-serialized canonically at eval time: `(a: b)` declaration
 /// spacing, stripped trivia comments, normalized whitespace.
+#[derive(Debug, Clone)]
 pub enum SupportsCondition {
     /// `(<name>: <value>)`. `custom` is true when the name is a literal
     /// unquoted identifier starting with `--`; its value is then captured
@@ -703,6 +735,7 @@ pub enum SupportsCondition {
 }
 
 /// The right-hand side of a `@supports` declaration condition.
+#[derive(Debug, Clone)]
 pub enum SupportsValue {
     /// A normal SassScript expression value (`(a: 1 + 1)` -> `(a: 2)`).
     Expr(Expr),

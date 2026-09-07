@@ -470,6 +470,7 @@ impl Parser {
             is_global,
             namespace,
             value_pos,
+            pos,
         }))
     }
 

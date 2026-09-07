@@ -42,7 +42,7 @@ pub type HostFunction = Rc<dyn Fn(&[u8]) -> Result<Vec<u8>, String>>;
 /// A registered host function: the matched (normalized) name, its parsed
 /// signature (or a parse error to surface when the function is called), and the
 /// embedder's byte-protocol callback.
-pub(crate) struct HostFn {
+pub struct HostFn {
     /// Hyphen-normalized function name used for call-site matching.
     pub name: String,
     /// The parsed parameter list, or an error message if the signature was
