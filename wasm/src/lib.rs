@@ -267,8 +267,10 @@ fn parse_load_frame(bytes: &[u8]) -> Result<ImporterResult, ImporterError> {
         return Err(bad());
     }
     let syntax = match bytes[0] {
-        0 => Syntax::Scss,
-        1 => Syntax::Sass,
+        // Code 1 was the indented `.sass` syntax; the compiler no longer
+        // implements it, so it is still accepted on the wire but parses as
+        // SCSS — exactly what a `.sass` file now gets from the fs importer.
+        0 | 1 => Syntax::Scss,
         2 => Syntax::Css,
         _ => return Err(bad()),
     };
@@ -350,7 +352,10 @@ impl Importer for HostImporter {
 /// Compile the SCSS in `[input_ptr, input_ptr + input_len)` to CSS.
 ///
 /// - `compressed != 0` selects compressed output.
-/// - `syntax`: `0` SCSS, `1` indented `.sass`, `2` plain CSS.
+/// - `syntax`: `0` SCSS, `2` plain CSS. `1` was the indented `.sass` syntax;
+///   the compiler no longer implements it, so the code is still accepted on
+///   the wire but parses as SCSS — exactly what a `.sass` file now gets from
+///   the fs importer.
 /// - `use_importer != 0` installs [`HostImporter`], so `@use`/`@forward`/
 ///   `@import` call back into the host; `0` disables file imports.
 /// - `(url_ptr, url_len)`: the entry's URL for diagnostics, source-map sources,
@@ -394,7 +399,6 @@ pub extern "C" fn sasso_compile2(
     };
 
     let syntax = match syntax {
-        1 => Syntax::Sass,
         2 => Syntax::Css,
         _ => Syntax::Scss,
     };

@@ -78,7 +78,7 @@ struct BridgeRequest {
 struct BridgeReply {
     /// 1 = hit, 0 = miss, -1 = error (message in `s1`)
     rc: i32,
-    /// load: syntax code 0/1/2
+    /// load: syntax code (see [`CompileConfig::syntax`])
     syntax: u32,
     /// canonicalize: canonical href · load: contents · error: message
     s1: Option<String>,
@@ -186,7 +186,10 @@ fn tell(tsfn: &Tsfn, req: BridgeRequest) {
 
 #[napi(object)]
 pub struct CompileConfig {
-    /// 0 = SCSS, 1 = indented, 2 = CSS (the wasm loader's syntax codes).
+    /// 0 = SCSS, 2 = CSS (the wasm loader's syntax codes). Code 1 used to
+    /// select the indented `.sass` syntax; the compiler no longer implements
+    /// it, so the code is still accepted on the wire but parses as SCSS —
+    /// exactly what a `.sass` file now gets from the built-in fs importer.
     pub syntax: u32,
     /// true = compressed
     pub compressed: bool,
@@ -377,9 +380,11 @@ fn containing_fs_path(s: &str) -> Option<String> {
     file_url_to_path(s).filter(|p| p.starts_with('/'))
 }
 
+/// Map a wire syntax code to a [`Syntax`]. Code 1 (the indented `.sass`
+/// syntax) no longer has a parser behind it and falls back to SCSS with every
+/// other unrecognised code; see [`CompileConfig::syntax`].
 fn syntax_from(code: u32) -> Syntax {
     match code {
-        1 => Syntax::Sass,
         2 => Syntax::Css,
         _ => Syntax::Scss,
     }
