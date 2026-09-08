@@ -559,7 +559,7 @@ impl<'a> Evaluator<'a> {
             match stmt {
                 Stmt::VarDecl(v) => self.apply_var(v)?,
                 Stmt::Comment(..) => {}
-                Stmt::Return(e) => return Ok(Some(self.eval_expr(e)?)),
+                Stmt::Return { value, .. } => return Ok(Some(self.eval_expr(value)?)),
                 Stmt::FunctionDef(c) => {
                     let captured = self.capture_callable(c);
                     self.define_function(&c.name, captured);
@@ -638,7 +638,7 @@ impl<'a> Evaluator<'a> {
                         return Ok(Some(v));
                     }
                 }
-                Stmt::While { cond, body } => {
+                Stmt::While { cond, body, .. } => {
                     self.push_scope(true);
                     let mut result: Result<Option<Value>, Error> = Ok(None);
                     let mut guard = 0u32;

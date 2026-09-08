@@ -72,11 +72,11 @@ impl Parser {
     }
 
     /// `@while <cond> { … }`.
-    pub(super) fn parse_while(&mut self) -> Result<Stmt, Error> {
+    pub(super) fn parse_while(&mut self, pos: Pos) -> Result<Stmt, Error> {
         self.skip_ws_inline();
         let cond = self.parse_value()?;
         let body = self.parse_braced_body()?;
-        Ok(Stmt::While { cond, body })
+        Ok(Stmt::While { cond, body, pos })
     }
 
     /// Parse an `@if <cond> { … }` with its `@else if` / `@else` chain.

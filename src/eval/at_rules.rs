@@ -664,9 +664,11 @@ impl<'a> Evaluator<'a> {
             if let Stmt::Rule(frame) = stmt {
                 for inner in &frame.body {
                     if matches!(inner, Stmt::Rule(_)) {
-                        return Err(Error::unpositioned(
-                            "Style rules may not be used within keyframe blocks.",
-                        ));
+                        let e = Error::unpositioned("Style rules may not be used within keyframe blocks.");
+                        return Err(self.finalize_error(match inner.span() {
+                            Some((pos, len)) => e.or_at(pos, len),
+                            None => e,
+                        }));
                     }
                 }
             }

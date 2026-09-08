@@ -15,11 +15,11 @@ impl Parser {
                         // An interpolated NAME makes this a generic (unknown) at-rule with no
                         // Sass parse-time behavior (`@#{"media"} …`).
         if self.sc.peek() == Some('#') && self.sc.peek_at(1) == Some('{') {
-            return self.parse_interp_at_rule(Vec::new());
+            return self.parse_interp_at_rule(Vec::new(), pos);
         }
         let name = self.read_ident_name()?;
         if self.sc.peek() == Some('#') && self.sc.peek_at(1) == Some('{') {
-            return self.parse_interp_at_rule(vec![TplPiece::Lit(name)]);
+            return self.parse_interp_at_rule(vec![TplPiece::Lit(name)], pos);
         }
         // In plain CSS the Sass control/definition at-rules are rejected; only
         // genuine CSS at-rules (`@media`, `@supports`, `@font-face`,
@@ -61,7 +61,7 @@ impl Parser {
             "else" => Err(Error::at("This at-rule is not allowed here.", pos)),
             "for" => self.parse_for(),
             "each" => self.parse_each(),
-            "while" => self.parse_while(),
+            "while" => self.parse_while(pos),
             // Lowercase `@function`/`@mixin` define Sass callables — UNLESS the
             // name begins with `--`, which dart-sass reserves for plain CSS
             // custom functions/mixins (a function then passes through verbatim;
@@ -72,9 +72,9 @@ impl Parser {
                      forward-compatibility with plain CSS mixins.",
                 pos,
             )),
-            "function" => self.parse_callable_def(true),
-            "mixin" => self.parse_callable_def(false),
-            "return" => self.parse_return(),
+            "function" => self.parse_callable_def(true, pos, start_mark),
+            "mixin" => self.parse_callable_def(false, pos, start_mark),
+            "return" => self.parse_return(pos, start_mark),
             "include" => self.parse_include(pos, start_mark),
             "content" => {
                 self.skip_ws_inline();
@@ -84,9 +84,11 @@ impl Parser {
                 } else {
                     Vec::new()
                 };
+                // Measured before the terminator, like `@include`/`@error`.
+                let length = self.sc.byte_len_from(start_mark);
                 self.skip_ws_inline();
                 self.sc.eat(';');
-                Ok(Stmt::Content(args))
+                Ok(Stmt::Content { args, pos, length })
             }
             "warn" => self.parse_message(MessageKind::Warn, pos, start_mark),
             "debug" => self.parse_message(MessageKind::Debug, pos, start_mark),
@@ -96,7 +98,7 @@ impl Parser {
             "keyframes" | "-webkit-keyframes" | "-moz-keyframes" | "-o-keyframes" | "-ms-keyframes" => {
                 self.parse_keyframes(name)
             }
-            "extend" => self.parse_extend(pos),
+            "extend" => self.parse_extend(pos, start_mark),
             // `@charset` takes exactly one quoted string. A non-string (or
             // missing) argument is dart's "Expected string."; anything after
             // the string is left for the next statement (so `@charset "a" "b"`
@@ -127,6 +129,7 @@ impl Parser {
                         map_file: 0,
                         map_line: 0,
                     },
+                    pos,
                 })
             }
             "supports" => self.parse_supports(),
@@ -140,7 +143,7 @@ impl Parser {
             _ if name.eq_ignore_ascii_case("function") || name.eq_ignore_ascii_case("mixin") => {
                 self.parse_css_custom_callable(name)
             }
-            _ => self.parse_generic_at_rule(name),
+            _ => self.parse_generic_at_rule(name, pos),
         };
         // Source-map: stamp the `@` keyword's 0-based column onto the lines-
         // carrying at-rule variants. Purely additive — `start_col` is read only
@@ -759,7 +762,7 @@ impl Parser {
     /// Parse `@extend <selector> [!optional];`. The selector is captured as a
     /// template (resolving `#{...}` at eval time); a trailing `!optional`
     /// suppresses the "didn't match" error.
-    fn parse_extend(&mut self, pos: Pos) -> Result<Stmt, Error> {
+    fn parse_extend(&mut self, pos: Pos, start_mark: Mark) -> Result<Stmt, Error> {
         self.skip_ws_inline();
         let selector = trim_prelude(self.parse_template_mode(&['!', ';', '}', '{'], CommentMode::Strip)?);
         let mut optional = false;
@@ -772,12 +775,15 @@ impl Parser {
             }
             optional = true;
         }
+        // Measured before the terminator, like `@include`/`@error`.
+        let length = self.sc.byte_len_from(start_mark);
         self.skip_ws_inline();
         self.sc.eat(';');
         Ok(Stmt::Extend {
             selector,
             optional,
             pos,
+            length,
         })
     }
 
@@ -1453,6 +1459,7 @@ impl Parser {
             let selector_pos = self.sc.position();
             let selector = self.parse_template(&['{'])?;
             let (body, lines) = self.parse_braced_body_lines()?;
+            let end_pos = self.sc.position();
             return Ok(Stmt::AtRoot {
                 query: None,
                 body: vec![Stmt::Rule(Rule {
@@ -1462,6 +1469,7 @@ impl Parser {
                     selector_interp_spans: Vec::new(),
                     brace_line: lines.start,
                     end_line: lines.end,
+                    end_pos,
                 })],
             });
         };
@@ -1533,7 +1541,7 @@ impl Parser {
     /// `@page`, `@charset`, vendor `@foo`, and unknown directives.
     /// Parse the rest of an at-rule whose name contains interpolation:
     /// finish the name template, then a generic prelude and optional body.
-    fn parse_interp_at_rule(&mut self, mut name: Vec<TplPiece>) -> Result<Stmt, Error> {
+    fn parse_interp_at_rule(&mut self, mut name: Vec<TplPiece>, pos: Pos) -> Result<Stmt, Error> {
         loop {
             if self.sc.peek() == Some('#') && self.sc.peek_at(1) == Some('{') {
                 self.sc.bump();
@@ -1564,10 +1572,15 @@ impl Parser {
             self.sc.eat(';');
             None
         };
-        Ok(Stmt::InterpAtRule { name, prelude, body })
+        Ok(Stmt::InterpAtRule {
+            name,
+            prelude,
+            body,
+            pos,
+        })
     }
 
-    fn parse_generic_at_rule(&mut self, name: String) -> Result<Stmt, Error> {
+    fn parse_generic_at_rule(&mut self, name: String, pos: Pos) -> Result<Stmt, Error> {
         self.skip_ws_inline();
         // dart-sass parses `@-moz-document` (only the exact lowercase spelling)
         // with a structured grammar that strips trivia comments between tokens;
@@ -1606,6 +1619,7 @@ impl Parser {
             prelude,
             body,
             lines,
+            pos,
         })
     }
 
@@ -2117,7 +2131,7 @@ impl Parser {
     }
 
     /// Parse a `@function name(params) { … }` or `@mixin name(params) { … }`.
-    fn parse_callable_def(&mut self, is_function: bool) -> Result<Stmt, Error> {
+    fn parse_callable_def(&mut self, is_function: bool, pos: Pos, start_mark: Mark) -> Result<Stmt, Error> {
         self.skip_ws_inline();
         let name_pos = self.sc.position();
         let name = self.read_ident_name()?;
@@ -2127,13 +2141,23 @@ impl Parser {
             return Err(Error::at("Invalid function name.", name_pos));
         }
         let params = self.parse_param_list()?;
+        // Byte length of the `@function name(params)` / `@mixin name` prelude,
+        // measured before the body's `{` — the caret dart draws when the
+        // definition is illegal where it sits.
+        let length = self.sc.byte_len_from(start_mark);
         let body = self.parse_braced_body()?;
         // Unknown at-rules aren't allowed in a function body (parse-time in
         // dart-sass: "This at-rule is not allowed here.").
         if is_function {
             reject_at_rules_in(&body)?;
         }
-        let callable = Rc::new(Callable { name, params, body });
+        let callable = Rc::new(Callable {
+            name,
+            params,
+            body,
+            pos,
+            length,
+        });
         Ok(if is_function {
             Stmt::FunctionDef(callable)
         } else {
@@ -2554,12 +2578,14 @@ impl Parser {
     }
 
     /// Parse `@return <expr>;`.
-    fn parse_return(&mut self) -> Result<Stmt, Error> {
+    fn parse_return(&mut self, pos: Pos, start_mark: Mark) -> Result<Stmt, Error> {
         self.skip_ws_inline();
         let value = self.parse_value()?;
+        // Measured before the terminator, like `@include`/`@error`.
+        let length = self.sc.byte_len_from(start_mark);
         self.skip_ws_inline();
         self.sc.eat(';');
-        Ok(Stmt::Return(value))
+        Ok(Stmt::Return { value, pos, length })
     }
 
     /// Parse `@include name[(args)] [{ content }];`.
@@ -2590,16 +2616,20 @@ impl Parser {
                 ));
             }
         }
+        // Byte length of `@include name(args)` (through the closing `)` or the
+        // end of the name), excluding the content block / trailing `;` — and
+        // excluding the whitespace before them, so `@include m { … }` blames
+        // `@include m` exactly like `@include m;` does.
+        let mut length = self.sc.byte_len_from(start_mark);
         self.skip_ws_inline();
         let args = if self.sc.peek() == Some('(') {
             self.sc.bump();
-            self.parse_args_after_paren()?
+            let args = self.parse_args_after_paren()?;
+            length = self.sc.byte_len_from(start_mark);
+            args
         } else {
             Vec::new()
         };
-        // Byte length of `@include name(args)` (through the closing `)` or the
-        // end of the name), excluding the content block / trailing `;`.
-        let length = self.sc.byte_len_from(start_mark);
         self.skip_ws_inline();
         // An optional `using (params)` clause names the content block's
         // parameters, bound from the `@content(args)` call.

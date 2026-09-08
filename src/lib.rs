@@ -638,28 +638,34 @@ impl<'a> Compiler<'a> {
         };
         // A parse error never reached the evaluator, so render its snippet here
         // (single `root stylesheet` frame) when a diagnostic URL is known.
-        sheet.map_err(|mut e| {
-            if !self.url.is_empty() && e.has_position() {
-                // A parse error is always in the entry file: nothing has been
-                // loaded yet.
-                e = e.with_file(self.url.clone());
-                if e.rendered.is_none() {
-                    let span = diag::Span {
-                        line: e.line,
-                        col: e.col,
-                        length: e.length,
-                    };
-                    e.rendered = Some(diag::render_error(
-                        &e.message,
-                        &self.source,
-                        &self.url,
-                        span,
-                        self.glyphs(),
-                    ));
-                }
-            }
-            e
-        })
+        sheet.map_err(|e| self.render_entry_error(e))
+    }
+
+    /// Render an error raised against the ENTRY file before (or without) an
+    /// evaluator — a parse error, or a declaration-placement violation — into
+    /// the same block the evaluator produces: header, snippet, and a single
+    /// `root stylesheet` frame. Nothing has been loaded at that point, so the
+    /// position can only be in the entry file.
+    fn render_entry_error(&self, mut e: Error) -> Error {
+        if self.url.is_empty() || !e.has_position() {
+            return e;
+        }
+        e = e.with_file(self.url.clone());
+        if e.rendered.is_none() {
+            let span = diag::Span {
+                line: e.line,
+                col: e.col,
+                length: e.length,
+            };
+            e.rendered = Some(diag::render_error(
+                &e.message,
+                &self.source,
+                &self.url,
+                span,
+                self.glyphs(),
+            ));
+        }
+        e
     }
 
     /// A fresh evaluator configured from these options — the same one
@@ -706,7 +712,7 @@ impl<'a> Compiler<'a> {
         // function/mixin bodies (a compile-time restriction, checked before
         // eval) — checked here rather than in `parse` so a caller-modified tree
         // is validated too.
-        eval::validate_declarations(sheet)?;
+        eval::validate_declarations(sheet).map_err(|e| self.render_entry_error(e))?;
         let mut evaluator = self.evaluator();
         let mut nodes = Vec::new();
         evaluator.eval_sheet(sheet, &mut nodes)?;

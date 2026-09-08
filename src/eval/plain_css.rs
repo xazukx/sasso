@@ -160,6 +160,7 @@ impl<'a> Evaluator<'a> {
                     prelude,
                     body,
                     lines,
+                    ..
                 } => {
                     let prelude_s = self.eval_template(prelude)?.trim().to_string();
                     let lines = self.stamp(*lines);
@@ -326,6 +327,7 @@ impl<'a> Evaluator<'a> {
                     prelude,
                     body,
                     lines,
+                    ..
                 } => {
                     let prelude_s = self.eval_template(prelude)?.trim().to_string();
                     let lines = self.stamp(*lines);
@@ -582,6 +584,7 @@ impl<'a> Evaluator<'a> {
                 prelude,
                 body,
                 lines,
+                ..
             } => {
                 let prelude_s = self.eval_template(prelude)?.trim().to_string();
                 match body {

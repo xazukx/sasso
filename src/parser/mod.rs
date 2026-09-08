@@ -9,9 +9,9 @@ use std::rc::Rc;
 
 use crate::ast::{
     BinOp, CallArg, Callable, ConfigEntry, Conjunction, CssCustomItem, CssCustomValue, CustomDecl,
-    Declaration, Expr, ForwardMember, IfBranch, IfClause, IfCond, ImportArg, ImportModifier, MediaFeature,
-    MediaInParens, MediaQuery, MediaQueryList, Param, ParamList, PropertySet, Rule, SrcLines, Stmt,
-    Stylesheet, SupportsCondition, SupportsValue, TplPiece, UnOp, VarDecl,
+    Declaration, Expr, ForwardMember, IfBranch, IfClause, IfCond, ImportArg, ImportModifier, MapEntry,
+    MediaFeature, MediaInParens, MediaQuery, MediaQueryList, Param, ParamList, PropertySet, Rule, SrcLines,
+    Stmt, Stylesheet, SupportsCondition, SupportsValue, TplPiece, UnOp, VarDecl,
 };
 use crate::error::Error;
 use crate::scanner::{Mark, Pos, Scanner};
@@ -237,7 +237,11 @@ fn reject_at_rules_in(stmts: &[Stmt]) -> Result<(), Error> {
     for s in stmts {
         match s {
             Stmt::AtRule { .. } | Stmt::InterpAtRule { .. } => {
-                return Err(Error::unpositioned("This at-rule is not allowed here."));
+                let e = Error::unpositioned("This at-rule is not allowed here.");
+                return Err(match s.span() {
+                    Some((pos, len)) => e.or_at(pos, len),
+                    None => e,
+                });
             }
             Stmt::If(branches) => {
                 for b in branches {

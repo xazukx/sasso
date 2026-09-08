@@ -247,7 +247,8 @@ impl Parser {
         if !self.sc.eat('}') {
             return Err(Error::at("expected \"}\"", self.sc.position()));
         }
-        let end_line = self.sc.position().line as u32;
+        let end_pos = self.sc.position();
+        let end_line = end_pos.line as u32;
         Ok(Stmt::Rule(Rule {
             selector,
             body,
@@ -255,6 +256,7 @@ impl Parser {
             selector_interp_spans,
             brace_line,
             end_line,
+            end_pos,
         }))
     }
 
@@ -409,7 +411,11 @@ impl Parser {
             for s in stmts {
                 match s {
                     Stmt::Rule(_) => {
-                        return Err(Error::unpositioned("expected \":\"."));
+                        let e = Error::unpositioned("expected \":\".");
+                        return Err(match s.span() {
+                            Some((pos, len)) => e.or_at(pos, len),
+                            None => e,
+                        });
                     }
                     Stmt::If(branches) => {
                         for b in branches {
@@ -479,6 +485,7 @@ impl Parser {
                 break;
             }
         }
+        let value_end = self.sc.position();
         self.skip_ws_inline();
         self.sc.eat(';');
         Ok(Stmt::VarDecl(VarDecl {
@@ -489,6 +496,7 @@ impl Parser {
             namespace,
             value_pos,
             pos,
+            value_end,
         }))
     }
 

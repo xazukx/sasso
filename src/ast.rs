@@ -121,13 +121,16 @@ pub enum Stmt {
         /// (evaluate.dart:1441).
         list_pos: Pos,
     },
-    /// `@while <cond> { … }`.
-    While { cond: Expr, body: Vec<Stmt> },
+    /// `@while <cond> { … }`. `pos` is the 1-based position of the `@while`
+    /// keyword, which the iteration-limit guard is blamed on.
+    While { cond: Expr, body: Vec<Stmt>, pos: Pos },
     /// `@function name(params) { … @return … }`. Shared in an `Rc` so the
     /// definition survives in the environment after its source drops.
     FunctionDef(Rc<Callable>),
-    /// `@return <expr>;`
-    Return(Expr),
+    /// `@return <expr>;`. `pos` is the 1-based position of the `@return`
+    /// keyword and `length` the byte length of the `@return <expr>` span
+    /// (excluding the trailing `;`), for the "not allowed here" diagnostic.
+    Return { value: Expr, pos: Pos, length: usize },
     /// `@mixin name(params) { … }`.
     MixinDef(Rc<Callable>),
     /// `@include name(args) [{ content }];`. `module` is the namespace of a
@@ -148,8 +151,14 @@ pub enum Stmt {
         length: usize,
     },
     /// `@content;` or `@content(args)` — runs the `@include`'s content block,
-    /// passing any arguments to its `using (params)`.
-    Content(Vec<CallArg>),
+    /// passing any arguments to its `using (params)`. `pos` is the 1-based
+    /// position of the `@content` keyword and `length` the byte length of the
+    /// `@content[(args)]` span (excluding the trailing `;`).
+    Content {
+        args: Vec<CallArg>,
+        pos: Pos,
+        length: usize,
+    },
     /// A generic at-rule: `@name <prelude> { body }` or `@name <prelude>;`.
     /// `body == None` is the statement (`;`) form. Used for `@font-face`,
     /// `@page`, `@charset`, `@supports`, vendor `@foo`, and unknown
@@ -161,6 +170,9 @@ pub enum Stmt {
         /// Source lines: `start` = the `{` line (or the rule's own line for the
         /// `;` form), `end` = the `}` line (or the same line).
         lines: SrcLines,
+        /// 1-based position of the at-rule keyword (the `@`). [`Pos::NONE`] for
+        /// an at-rule the evaluator synthesized rather than parsed.
+        pos: Pos,
     },
     /// A generic at-rule whose NAME contains interpolation
     /// (`@#{"media"} … {}`): always treated as unknown — no Sass parse-time
@@ -170,6 +182,8 @@ pub enum Stmt {
         name: Vec<TplPiece>,
         prelude: Vec<TplPiece>,
         body: Option<Vec<Stmt>>,
+        /// 1-based position of the at-rule keyword (the `@`).
+        pos: Pos,
     },
     /// A plain-CSS custom `@function`/`@mixin` whose name begins with `--`.
     /// dart-sass does not treat these as Sass definitions: the whole construct
@@ -223,7 +237,11 @@ pub enum Stmt {
     Extend {
         selector: Vec<TplPiece>,
         optional: bool,
+        /// 1-based position of the `@extend` keyword (the `@`).
         pos: Pos,
+        /// Byte length of the `@extend <selector> [!optional]` span, excluding
+        /// the trailing `;` — the caret dart draws when the target is missing.
+        length: usize,
     },
     /// `@warn <expr>;` — writes to stderr, emits no CSS. `pos` is the 1-based
     /// position of the `@warn` keyword (the innermost stack frame).
@@ -236,6 +254,47 @@ pub enum Stmt {
     /// the `@error <expr>` span (used as the snippet span only at the document
     /// root; inside a call the innermost call site is used instead).
     Error { value: Expr, pos: Pos, length: usize },
+}
+
+impl Stmt {
+    /// The source position and caret byte length dart-sass blames for this
+    /// statement as a whole (a length of `0` means "draw a single caret").
+    /// `None` for the statement kinds that record no position of their own —
+    /// an error with no span of its own is then left for an enclosing node to
+    /// blame.
+    ///
+    /// The evaluator applies this at every statement boundary, so an error
+    /// raised deep in a helper that has no span of its own still surfaces
+    /// pointing at the statement it came from.
+    pub fn span(&self) -> Option<(Pos, usize)> {
+        // A declaration's caret covers its text through the end of the value,
+        // which `value_end` already marks; everything else either carries an
+        // explicit length or draws a single caret.
+        let decl_len = |start: Pos, end: Pos| end.offset.saturating_sub(start.offset);
+        let span = match self {
+            Stmt::VarDecl(v) => (v.pos, decl_len(v.pos, v.value_end)),
+            Stmt::Rule(r) => (r.selector_pos, decl_len(r.selector_pos, r.end_pos)),
+            Stmt::Decl(d) => (d.pos, decl_len(d.pos, d.value_end)),
+            Stmt::CustomDecl(d) => (d.pos, decl_len(d.pos, d.value_end)),
+            Stmt::PropertySet(ps) => (ps.pos, decl_len(ps.pos, ps.value_end)),
+            Stmt::Import(args) => match args.first()? {
+                ImportArg::Sass { pos, length, .. } | ImportArg::Css { pos, length, .. } => (*pos, *length),
+            },
+            Stmt::Use { pos, .. } | Stmt::Forward { pos, .. } => (*pos, 0),
+            Stmt::For { from_pos, .. } => (*from_pos, 0),
+            Stmt::Each { list_pos, .. } => (*list_pos, 0),
+            Stmt::Include { pos, length, .. }
+            | Stmt::Extend { pos, length, .. }
+            | Stmt::Return { pos, length, .. }
+            | Stmt::Content { pos, length, .. }
+            | Stmt::Error { pos, length, .. } => (*pos, *length),
+            Stmt::FunctionDef(c) | Stmt::MixinDef(c) => (c.pos, c.length),
+            Stmt::AtRule { pos, .. } | Stmt::InterpAtRule { pos, .. } | Stmt::While { pos, .. } => (*pos, 0),
+            Stmt::Warn { pos, .. } | Stmt::Debug { pos, .. } => (*pos, 0),
+            _ => return None,
+        };
+        span.0.is_known().then_some(span)
+    }
 }
 
 /// One `$name: value [!default]` entry in a `@use`/`@forward` `with (...)`
@@ -321,6 +380,12 @@ pub struct Callable {
     pub name: String,
     pub params: ParamList,
     pub body: Vec<Stmt>,
+    /// 1-based position of the `@function`/`@mixin` keyword (the `@`).
+    pub pos: Pos,
+    /// Byte length of the `@function name(params)` / `@mixin name(params)`
+    /// prelude, excluding the body's `{` — the caret dart draws when the
+    /// definition is illegal where it sits.
+    pub length: usize,
 }
 
 /// A declared parameter list: positional/defaulted params plus an optional
@@ -363,6 +428,10 @@ pub struct VarDecl {
     /// [`crate::Options::record_variable_values`] records evaluated values
     /// under, so tooling can match a value back to the exact declaration.
     pub pos: Pos,
+    /// Position just past the declaration's value and any `!default`/`!global`
+    /// flag, excluding the terminating `;` — so the declaration's whole span is
+    /// `pos..value_end`, which is the caret dart draws when it blames one.
+    pub value_end: Pos,
 }
 
 /// The source span of one top-level `#{…}` interpolation inside a rule's
@@ -396,6 +465,10 @@ pub struct Rule {
     pub brace_line: u32,
     /// 1-based line of the rule's closing `}` (0 when unavailable).
     pub end_line: u32,
+    /// Position just past the rule's closing `}` ([`Pos::NONE`] when
+    /// unavailable), so the rule's whole span is `selector_pos..end_pos` — the
+    /// caret dart draws when a rule is illegal where it sits.
+    pub end_pos: Pos,
 }
 
 /// One top-level item in a plain-CSS custom `@function`/`@mixin` body. The
@@ -495,6 +568,17 @@ pub enum TplPiece {
     Interp(Expr),
 }
 
+/// One `key: value` entry of a map literal, with the key's source position so
+/// a `Duplicate key.` error can point at the offending key rather than at the
+/// declaration that contains the map.
+#[derive(Debug, Clone)]
+pub struct MapEntry {
+    pub key: Expr,
+    pub value: Expr,
+    /// 1-based position where the key's text starts.
+    pub key_pos: Pos,
+}
+
 /// A value expression.
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -580,7 +664,7 @@ pub enum Expr {
     /// expression / list by the `:` after the first key. An empty map is
     /// written `()` but parses as the empty list; only a non-empty
     /// `(k: v, …)` produces this node.
-    Map(Vec<(Expr, Expr)>),
+    Map(Vec<MapEntry>),
     /// `#{ expr }` used in value position — always yields an unquoted
     /// string.
     Interp(Box<Expr>),

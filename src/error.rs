@@ -95,6 +95,30 @@ impl Error {
         self
     }
 
+    /// Blame `pos` (with `length` bytes of caret) if no position has been
+    /// recorded yet, leaving an already positioned error untouched.
+    ///
+    /// This is how a position reaches an error raised deep in a helper that
+    /// has no span of its own: the evaluator applies the enclosing AST node's
+    /// position as each statement and expression boundary is unwound, so the
+    /// innermost node that *has* a span wins — the same rule dart-sass gets
+    /// from attaching a span to every node it evaluates.
+    pub fn or_at(mut self, pos: Pos, length: usize) -> Self {
+        if !self.has_position() && pos.is_known() {
+            self.line = pos.line;
+            self.col = pos.col;
+            self.start = pos.offset;
+            // `length` belongs to `pos`: applying it to an error that already
+            // has a narrower span of its own would stretch the caret across
+            // text the error is not about.
+            if self.length == 0 {
+                self.length = length;
+            }
+            self.end = self.start + self.length;
+        }
+        self
+    }
+
     /// Attribute this error to `file` (a diagnostic URL) if it is not already
     /// attributed.
     pub fn with_file(mut self, file: impl Into<String>) -> Self {

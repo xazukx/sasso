@@ -1383,6 +1383,9 @@ struct PendingExtend {
     /// (empty for the root stylesheet).
     origin: String,
     pos: Pos,
+    /// Byte length of the `@extend <selector>` span, for the caret drawn when
+    /// the target turns out not to exist.
+    length: usize,
 }
 
 impl<'a> Evaluator<'a> {
@@ -1612,10 +1615,55 @@ impl<'a> Evaluator<'a> {
                 return Err(e);
             }
         }
-        self.apply_extends(out)?;
+        // Extends resolve after the whole sheet has run, so an unsatisfied
+        // `@extend` surfaces here rather than at the statement that wrote it —
+        // and is rendered against the file that DID write it, which by now is
+        // not necessarily the file evaluation came to rest in.
+        if let Err(e) = self.apply_extends(out) {
+            self.emit_deprecation_footer();
+            return Err(e);
+        }
         hoist_css_imports(out);
         self.emit_deprecation_footer();
         Ok(())
+    }
+
+    /// Render `e` as a diagnostic block attributed to the file `key` (a
+    /// canonical URL), rather than to whatever file the evaluator happens to
+    /// be in. Empty `key` means the current file.
+    ///
+    /// [`Self::finalize_error`] is the common case — it renders against the
+    /// live context, which is right for an error raised while that context is
+    /// on the stack. A deferred check (`@extend` resolution) has no such
+    /// context left, so it names its origin explicitly.
+    pub(super) fn finalize_error_in(&self, mut e: Error, key: &str) -> Error {
+        if e.rendered.is_some() || !self.diag_enabled() || !e.has_position() {
+            return e;
+        }
+        let key = if key.is_empty() {
+            self.current_key.clone()
+        } else {
+            key.to_string()
+        };
+        let url = if key == self.current_key {
+            self.current_url.clone()
+        } else {
+            self.module_diag_url("", &key)
+        };
+        let frames = vec![DiagFrame {
+            url,
+            key,
+            pos: Pos {
+                line: e.line,
+                col: e.col,
+                offset: e.start,
+            },
+            member: "root stylesheet".to_string(),
+            length: 0,
+        }];
+        e.file = Some(frames[0].url.clone());
+        e.rendered = Some(self.render_error_with_frames(&e, &frames));
+        e
     }
 
     /// The source-map `sources` table, ordered so that an interned file id `i`
@@ -2059,6 +2107,35 @@ impl<'a> Evaluator<'a> {
     /// nested-block construct that reuses it.
     fn exec(&mut self, stmts: &[Stmt], parents: &[String], sink: &mut Sink<'_>) -> Result<(), Error> {
         for stmt in stmts {
+            if let Err(e) = self.exec_stmt(stmt, parents, sink) {
+                return Err(self.blame_stmt(e, stmt));
+            }
+        }
+        Ok(())
+    }
+
+    /// Give `e` this statement's position if it carries none, then render it
+    /// while `current_url`/`current_source`/`call_stack` still describe the
+    /// file and call context it was raised in.
+    ///
+    /// The mirror of what [`Self::eval_expr`] does for expressions. Between
+    /// them, every error that escapes evaluation has a span: an error raised
+    /// in a helper with no position of its own picks up the innermost
+    /// enclosing node that has one, which is where dart-sass — attaching a
+    /// span to every AST node it visits — blames it too.
+    fn blame_stmt(&self, e: Error, stmt: &Stmt) -> Error {
+        let e = match stmt.span() {
+            Some((pos, len)) => e.or_at(pos, len),
+            None => e,
+        };
+        self.finalize_error(e)
+    }
+
+    /// Execute one statement. Every error leaving here passes through
+    /// [`Self::blame_stmt`], which gives it this statement's position if it
+    /// carries none of its own.
+    fn exec_stmt(&mut self, stmt: &Stmt, parents: &[String], sink: &mut Sink<'_>) -> Result<(), Error> {
+        {
             match stmt {
                 Stmt::VarDecl(v) => {
                     // The declaration's own enclosing selector, saved and
@@ -2194,7 +2271,7 @@ impl<'a> Evaluator<'a> {
                     self.pop_scope();
                     result?;
                 }
-                Stmt::While { cond, body } => {
+                Stmt::While { cond, body, .. } => {
                     self.push_scope(true);
                     let mut result = Ok(());
                     let mut guard = 0u32;
@@ -2228,7 +2305,7 @@ impl<'a> Evaluator<'a> {
                     let captured = self.capture_callable(callable);
                     self.define_mixin(&callable.name, captured);
                 }
-                Stmt::Return(_) => {
+                Stmt::Return { .. } => {
                     return Err(Error::unpositioned("@return is only allowed inside a function."));
                 }
                 Stmt::Include {
@@ -2271,7 +2348,9 @@ impl<'a> Evaluator<'a> {
                     config,
                     pos,
                 } => self.exec_forward(url, prefix.as_deref(), show, hide, config, *pos, parents, sink)?,
-                Stmt::Content(content_args) => {
+                Stmt::Content {
+                    args: content_args, ..
+                } => {
                     // The content block runs in the caller's context, so it is no
                     // longer "directly in a mixin" (dart-sass): a
                     // `meta.content-exists()` inside it is an error.
@@ -2286,12 +2365,15 @@ impl<'a> Evaluator<'a> {
                     prelude,
                     body,
                     lines,
+                    ..
                 } => {
                     let lines = self.stamp(*lines);
                     self.eval_at_rule(name, prelude, body.as_deref(), lines, parents, sink)?;
                     self.last_child_invisible = false;
                 }
-                Stmt::InterpAtRule { name, prelude, body } => {
+                Stmt::InterpAtRule {
+                    name, prelude, body, ..
+                } => {
                     // The name resolves at eval time; `@keyframes` is the one
                     // rule whose special handling happens here (frame stops).
                     let resolved = self.eval_template(name)?;
@@ -2347,7 +2429,8 @@ impl<'a> Evaluator<'a> {
                     selector,
                     optional,
                     pos,
-                } => self.register_extend(selector, *optional, *pos, parents)?,
+                    length,
+                } => self.register_extend(selector, *optional, *pos, *length, parents)?,
                 Stmt::Warn { value, pos } => self.emit_warn(value, *pos)?,
                 Stmt::Debug { value, pos } => self.emit_debug(value, *pos)?,
                 Stmt::Error { value, pos, length } => {
@@ -3630,8 +3713,24 @@ pub fn validate_declarations(sheet: &Stylesheet) -> Result<(), Error> {
 }
 
 fn validate_decl_scope(stmts: &[Stmt], ctx: ScopeCtx) -> Result<(), Error> {
-    let scope = ctx.decl;
     for stmt in stmts {
+        // This walk runs before evaluation, so there is no statement boundary
+        // in `exec` to blame the offender — do it here instead, on the same
+        // rule: the innermost statement that has a span wins, which is the one
+        // dart-sass points at.
+        if let Err(e) = validate_decl_stmt(stmt, ctx) {
+            return Err(match stmt.span() {
+                Some((pos, len)) => e.or_at(pos, len),
+                None => e,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_decl_stmt(stmt: &Stmt, ctx: ScopeCtx) -> Result<(), Error> {
+    let scope = ctx.decl;
+    {
         // Inside a `@function` body dart-sass only permits variable
         // assignments, control flow, `@return`, `@warn`/`@debug`/`@error`, and
         // comments. Reject the rest here (with dart's precedence ordering)
@@ -3661,7 +3760,7 @@ fn validate_decl_scope(stmts: &[Stmt], ctx: ScopeCtx) -> Result<(), Error> {
                 // declaration check below, which already yields dart's
                 // "This at-rule is not allowed here." for a nested function.
                 Stmt::VarDecl(_)
-                | Stmt::Return(_)
+                | Stmt::Return { .. }
                 | Stmt::Warn { .. }
                 | Stmt::Debug { .. }
                 | Stmt::Error { .. }
@@ -3699,7 +3798,7 @@ fn validate_decl_scope(stmts: &[Stmt], ctx: ScopeCtx) -> Result<(), Error> {
             // `decl` scope is `Mixin` throughout a mixin body, so testing it
             // captures every nesting. (Inside a `@function` the earlier guard
             // already emitted "This at-rule is not allowed here.".)
-            Stmt::Content(_) if scope != DeclScope::Mixin => {
+            Stmt::Content { .. } if scope != DeclScope::Mixin => {
                 return Err(Error::unpositioned(
                     "@content is only allowed within mixin declarations.".to_string(),
                 ));
@@ -4381,7 +4480,7 @@ fn body_uses_content(body: &[Stmt]) -> bool {
 
 fn stmt_uses_content(stmt: &Stmt) -> bool {
     match stmt {
-        Stmt::Content(_) => true,
+        Stmt::Content { .. } => true,
         Stmt::Rule(r) => body_uses_content(&r.body),
         Stmt::If(branches) => branches.iter().any(|b| body_uses_content(&b.body)),
         Stmt::For { body, .. }

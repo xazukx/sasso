@@ -70,6 +70,14 @@ Conformance is tracked separately as a ratchet against the official
   so a `$x` inside a mixin body reports the rule that included the mixin — and
   it is recorded even for a rule that emits no CSS at all, which is exactly
   where recovering the scope from the output tree cannot work.
+- **Positions on the AST nodes that lacked them**, so `Stmt::span` can answer
+  for every statement kind: `Stmt::Return`, `Stmt::Content`, `Stmt::While`,
+  `Stmt::AtRule` and `Stmt::InterpAtRule` gained `pos`; `Stmt::Extend`,
+  `Stmt::Return`, `Stmt::Content` and `Callable` (`@function`/`@mixin`) gained
+  the caret `length` beside it; `Rule` gained `end_pos` and `VarDecl` a
+  `value_end`, so a rule's and a declaration's whole span is available.
+  `Expr::Map`'s entries became a named `MapEntry` carrying each key's position,
+  which is what a `Duplicate key.` error points at.
 - **`Expr::NsVar` and `ImportArg::Css` now record a position** —
   `Expr::NsVar { module, name, pos }` and
   `ImportArg::Css { url, modifiers, pos, length }`. Both arms of `ImportArg`
@@ -79,6 +87,27 @@ Conformance is tracked separately as a ratchet against the official
 
 ### Fixed
 
+- **Every error the compiler raises now carries a source position.** Roughly a
+  hundred diagnostics — a mixin that does not exist, a missing or duplicated
+  argument, a bad `@content`/`@return` placement, a duplicate map key, an
+  unsatisfied `@extend`, a `@function`/`@mixin` declared where it may not be —
+  used to surface as a bare `Error: <message>` with no line, no file, no source
+  snippet and no stack trace. They are now blamed on the innermost AST node
+  that has a span, which is where dart-sass blames them too: the evaluator
+  applies the enclosing statement's or expression's span as each boundary is
+  unwound (`Stmt::span` is public, so tooling can ask the same question), and
+  the pre-evaluation validators — which have no boundary to unwind through —
+  blame the offending statement directly. Sweeping all 14218 sass-spec cases
+  with an instrumented build now finds zero unpositioned errors, down from 46.
+  Spot-checked against dart-sass 1.100, the position AND caret width match
+  byte-for-byte on every shape tested.
+- **Errors raised outside evaluation now render a full diagnostic block.** An
+  unsatisfied `@extend` (resolved after the sheet has run) and a
+  declaration-placement violation (checked before it starts) both had a
+  position but printed the legacy `Error: <msg> (line:col)` one-liner, because
+  neither path rendered a snippet. Both now produce the header + snippet +
+  frame trace, and an `@extend` written in a loaded file is rendered against
+  *that* file rather than whichever one evaluation came to rest in.
 - **A declaration where only a style rule may appear is now positioned.** A bare
   declaration directly inside a top-level `@media`, or at the top level of an
   `@import`ed file, is invalid — dart-sass re-reads it as a selector and fails
@@ -105,6 +134,16 @@ Conformance is tracked separately as a ratchet against the official
 - **A relative canonical URL is shown in full in diagnostics.** A frame for
   `theme/_colors.scss` now prints that, not `_colors.scss`, matching dart-sass;
   absolute paths (what `FsImporter` produces) still collapse to a basename.
+
+### Removed
+
+- **The indented `.sass` syntax and its parser.** `Syntax::Sass`, the CLI's
+  `--indented` flag and the `.sass` extension inference are gone; a `.sass`
+  file now parses as SCSS. The wasm and node wrappers keep accepting wire
+  syntax code `1` — the value their JS side sends for `"indented"` — so an
+  existing caller does not break, but it now selects the SCSS parser like any
+  other unrecognised code. (Their JS surfaces still advertise
+  `syntax: "indented"`; that is worth pruning separately.)
 
 ## [0.9.1] - 2026-09-01
 

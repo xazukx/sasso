@@ -90,12 +90,22 @@ impl<'a> Evaluator<'a> {
     }
 
     pub(super) fn eval_expr(&mut self, expr: &Expr) -> Result<Value, Error> {
-        // Finalize any positioned error into a rendered diagnostic block here,
-        // where `current_url`/`current_source`/`call_stack` still describe the
-        // file and call context the error was raised in (cross-file safe).
+        // Give the error this expression's own position if a helper deeper
+        // down raised it without one, then finalize it into a rendered
+        // diagnostic block here, where `current_url`/`current_source`/
+        // `call_stack` still describe the file and call context it was raised
+        // in (cross-file safe). Since this runs at every level of the
+        // expression tree, the innermost node that HAS a span is the one that
+        // gets blamed — which is where dart-sass blames it too.
         match self.eval_expr_inner(expr) {
             Ok(v) => Ok(v),
-            Err(e) => Err(self.finalize_error(e)),
+            Err(e) => {
+                let e = match expr_span(expr) {
+                    Some((pos, len)) => e.or_at(pos, len),
+                    None => e,
+                };
+                Err(self.finalize_error(e))
+            }
         }
     }
 
@@ -207,12 +217,13 @@ impl<'a> Evaluator<'a> {
                 let mut map = Map {
                     entries: std::rc::Rc::new(Vec::new()),
                 };
-                for (k, v) in entries {
-                    let key = self.eval_expr(k)?.without_slash();
-                    let val = self.eval_expr(v)?;
-                    // A duplicate literal key is an error in dart-sass.
+                for entry in entries {
+                    let key = self.eval_expr(&entry.key)?.without_slash();
+                    let val = self.eval_expr(&entry.value)?;
+                    // A duplicate literal key is an error in dart-sass, blamed
+                    // on the SECOND key's own span.
                     if map.get(&key).is_some() {
-                        return Err(Error::unpositioned("Duplicate key."));
+                        return Err(Error::at("Duplicate key.", entry.key_pos));
                     }
                     map.insert(key, val);
                 }
@@ -736,4 +747,19 @@ impl<'a> Evaluator<'a> {
             }
         }
     }
+}
+
+/// The position and caret byte length dart-sass blames for `expr` as a whole
+/// (`0` = draw a single caret). `None` for the node kinds that carry no
+/// position of their own, which then leave an unpositioned error alone for an
+/// enclosing node to blame.
+fn expr_span(expr: &Expr) -> Option<(Pos, usize)> {
+    let (pos, len) = match expr {
+        Expr::Func { pos, length, .. } => (*pos, *length),
+        Expr::Var { pos, name } => (*pos, 1 + name.len()),
+        Expr::NsVar { pos, module, name } => (*pos, module.len() + 2 + name.len()),
+        Expr::Binary { pos, .. } | Expr::Div { pos, .. } | Expr::InterpFunc { pos, .. } => (*pos, 0),
+        _ => return None,
+    };
+    pos.is_known().then_some((pos, len))
 }

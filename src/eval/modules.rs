@@ -16,6 +16,7 @@ impl<'a> Evaluator<'a> {
         selector: &[TplPiece],
         optional: bool,
         pos: Pos,
+        length: usize,
         parents: &[String],
     ) -> Result<(), Error> {
         // dart checks `_styleRule` (null inside `@at-root` before any nested
@@ -52,6 +53,7 @@ impl<'a> Evaluator<'a> {
                         optional,
                         in_media,
                         pos,
+                        length,
                     });
                 }
                 crate::selector::TargetClass::Complex => {
@@ -254,12 +256,16 @@ impl<'a> Evaluator<'a> {
                     visible && crate::selector::selector_contains_simple(s, &pe.target)
                 })
             {
-                return Err(Error::at(
-                    format!(
-                        "The target selector was not found.\nUse \"@extend {} !optional\" to avoid this error.",
-                        pe.target_str
-                    ),
-                    pe.pos,
+                return Err(self.finalize_error_in(
+                    Error::at(
+                        format!(
+                            "The target selector was not found.\nUse \"@extend {} !optional\" to avoid this error.",
+                            pe.target_str
+                        ),
+                        pe.pos,
+                    )
+                    .with_length(pe.length),
+                    &pe.origin,
                 ));
             }
         }

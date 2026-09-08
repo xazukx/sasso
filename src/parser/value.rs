@@ -739,10 +739,11 @@ impl Parser {
                 // Parse the first sub-expression at the space-list level. A
                 // following `:` makes this a map literal `(k: v, …)`; anything
                 // else is an ordinary parenthesised expression / list.
+                let first_pos = self.sc.position();
                 let first = self.space_list()?;
                 self.skip_ws_inline();
                 if self.sc.peek() == Some(':') && self.sc.peek_at(1) != Some(':') {
-                    return self.parse_map_after_first_key(first);
+                    return self.parse_map_after_first_key(first, first_pos);
                 }
                 let e = self.finish_paren_list(first)?;
                 self.skip_ws_inline();
@@ -963,13 +964,17 @@ impl Parser {
     /// parsed and the `:` separator confirmed (but not yet consumed). Each
     /// entry is `key: value` at the space-list level, comma-separated, with an
     /// optional trailing comma before `)`.
-    fn parse_map_after_first_key(&mut self, first_key: Expr) -> Result<Expr, Error> {
+    fn parse_map_after_first_key(&mut self, first_key: Expr, first_key_pos: Pos) -> Result<Expr, Error> {
         let mut entries = Vec::new();
         // Consume the `:` for the first entry and read its value.
         self.sc.bump();
         self.skip_ws_inline();
         let first_val = self.space_list()?;
-        entries.push((first_key, first_val));
+        entries.push(MapEntry {
+            key: first_key,
+            value: first_val,
+            key_pos: first_key_pos,
+        });
         loop {
             self.skip_ws_inline();
             if !self.sc.eat(',') {
@@ -979,6 +984,7 @@ impl Parser {
             if self.sc.peek() == Some(')') {
                 break; // trailing comma
             }
+            let key_pos = self.sc.position();
             let key = self.space_list()?;
             self.skip_ws_inline();
             if !(self.sc.peek() == Some(':') && self.sc.peek_at(1) != Some(':')) {
@@ -987,7 +993,11 @@ impl Parser {
             self.sc.bump();
             self.skip_ws_inline();
             let val = self.space_list()?;
-            entries.push((key, val));
+            entries.push(MapEntry {
+                key,
+                value: val,
+                key_pos,
+            });
         }
         self.skip_ws_inline();
         if !self.sc.eat(')') {
