@@ -27,6 +27,19 @@
 //! or, in the CLI, the input file's extension) — parsing into the same AST and
 //! sharing the evaluator and emitter. The north-star target is 100% of the
 //! official `sass-spec` suite, tracked by the harness in `spec/`.
+//!
+//! ## Source positions
+//!
+//! One rule, no exceptions: **every line and column in this crate is 1-based,
+//! and every byte offset is 0-based.** `0` is therefore free to mean "unknown"
+//! for a line or column, which is how [`Pos::NONE`], [`Error::line`],
+//! [`VarSpan`] (`file == 0`) and the AST's span metadata all spell it — an
+//! unknown byte offset is spelled by the accompanying line/file being `0`,
+//! since `0` is a perfectly real offset. Columns count **characters**, not
+//! bytes; offsets and span lengths count bytes, matching dart-sass.
+//!
+//! The Source Map v3 format is 0-based on the wire, so `sourcemap.rs` lowers
+//! positions at the moment it records them and nowhere else.
 
 // The library's `unsafe` is confined to one audited module — `arena`, the
 // scoped bump allocator (perf #5), verified by unit tests + Miri. Every other

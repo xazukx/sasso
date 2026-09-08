@@ -80,7 +80,6 @@ impl Parser {
                 }
                 Some('/') if self.sc.peek_at(1) == Some('*') => {
                     let start = self.sc.position();
-                    let col0 = start.col - 1;
                     self.sc.bump();
                     self.sc.bump();
                     let pieces = self.parse_loud_comment_body()?;
@@ -92,8 +91,8 @@ impl Parser {
                             start: start.line as u32,
                             end: end_line,
                             col: start.col as u32,
-                            // The `/*`'s 0-based column, for source-map output.
-                            start_col: col0 as u32,
+                            // The `/*`'s column, for source-map output.
+                            start_col: start.col as u32,
                             map_file: 0,
                             map_line: 0,
                         },

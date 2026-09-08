@@ -207,7 +207,7 @@ let run = compiler.evaluate(&sheet).unwrap();
 for (span, var) in run.evaluator.variable_values() {
     let file = run.evaluator.file_url(span.file).unwrap_or("?");
     let scope = var.selector.as_deref().map_or("(root)".to_string(), |s| s.join(", "));
-    println!("{file} {}:{}  ${} = {}  in {scope}", span.line + 1, span.col + 1, var.name, var.value.to_css(false));
+    println!("{file} {}:{}  ${} = {}  in {scope}", span.line, span.col, var.name, var.value.to_css(false));
 }
 ```
 

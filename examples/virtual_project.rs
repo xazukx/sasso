@@ -255,7 +255,6 @@ fn capture_variables(files: &MemoryImporter) {
     let mut by_file: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for v in run.evaluator.variable_values().values() {
         let file = run.evaluator.file_url(v.span.file).unwrap_or("<unknown>");
-        // Spans are 0-based; diagnostics are 1-based.
         let guard = if v.is_default { " !default" } else { "" };
         // The declaration's scope: the enclosing style rule's resolved
         // selector, or the document root.
@@ -265,8 +264,8 @@ fn capture_variables(files: &MemoryImporter) {
             .map_or_else(|| "(root)".to_string(), |sel| sel.join(", "));
         by_file.entry(file).or_default().push(format!(
             "{:>3}:{:<3} ${} = {}{}   in {scope}",
-            v.span.line + 1,
-            v.span.col + 1,
+            v.span.line,
+            v.span.col,
             v.name,
             v.value.to_css(false),
             guard,

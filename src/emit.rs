@@ -83,17 +83,18 @@ fn record(out: &str, lines: SrcLines, collector: &mut Option<SmCollector>) {
         } else {
             lines.start
         };
-        // `line` is the 1-based source line; 0 means "unknown" — skip it.
+        // Lines and columns are 1-based here; `0` means "unknown" — skip it.
         if line == 0 {
             return;
         }
-        c.record(out, file, line - 1, lines.start_col);
+        c.record(out, file, line, lines.start_col);
     }
 }
 
-/// Record a mapped token from an already-0-based [`VarSpan`] (a declaration
-/// VALUE's span, resolved at eval time). `file == 0` means "unknown" and is
-/// skipped. Like [`record`], reads the output but never mutates it.
+/// Record a mapped token from a [`VarSpan`] (a declaration VALUE's span,
+/// resolved at eval time), whose line/column are 1-based like every other
+/// position. `file == 0` means "unknown" and is skipped. Like [`record`],
+/// reads the output but never mutates it.
 fn record_span(out: &str, span: VarSpan, collector: &mut Option<SmCollector>) {
     if let Some(c) = collector {
         c.record(out, span.file, span.line, span.col);
@@ -458,8 +459,8 @@ fn emit_item_expanded(
 /// whitespace is part of `value`, dart-sass adds no space) and never appends an
 /// `!important` flag; a normal declaration uses the canonical `: ` separator.
 /// A multi-line custom value is re-indented (dart `_writeReindentedValue`):
-/// `name_col` is the declaration name's 0-based source column and `indent`
-/// the current output indentation.
+/// `name_col` is the declaration name's 1-based source column (0 = unknown)
+/// and `indent` the current output indentation.
 #[allow(clippy::too_many_arguments)]
 fn emit_decl_value_expanded(
     out: &mut String,
@@ -483,7 +484,9 @@ fn emit_decl_value_expanded(
                 out.push_str(trim_ascii_right_exclude_escape(value));
                 out.push(' ');
             }
-            MinIndent::Min(m) => write_with_indent(out, value, m.min(name_col), indent),
+            // The strip width is a COUNT of leading characters, so the 1-based
+            // column becomes the 0-based count it caps.
+            MinIndent::Min(m) => write_with_indent(out, value, m.min(name_col.saturating_sub(1)), indent),
         }
         return;
     }
@@ -868,6 +871,8 @@ fn emit_node_compressed(out: &mut String, node: &OutNode, collector: &mut Option
 /// column>)` leading whitespace and gain the CURRENT output indentation;
 /// whitespace-only interior lines collapse to bare newlines. The final line
 /// always counts as content — the `*/` closer follows this text.
+///
+/// `start_col` is the comment's 1-based source column (0 = unknown).
 fn push_comment_text(out: &mut String, text: &str, indent: &str, start_col: usize) {
     if !text.contains('\n') {
         out.push_str(text);
@@ -882,7 +887,9 @@ fn push_comment_text(out: &mut String, text: &str, indent: &str, start_col: usiz
         let ind = line.len() - line.trim_start_matches([' ', '\t']).len();
         min = Some(min.map_or(ind, |m| m.min(ind)));
     }
-    let strip = min.map_or(0, |m| m.min(start_col));
+    // As in `emit_decl_value_expanded`, the cap is a character COUNT, so the
+    // 1-based column drops by one.
+    let strip = min.map_or(0, |m| m.min(start_col.saturating_sub(1)));
     out.push_str(lines[0]);
     for (i, line) in lines.iter().enumerate().skip(1) {
         out.push('\n');

@@ -85,6 +85,21 @@ Conformance is tracked separately as a ratchet against the official
   entry in the tree can be located in the source; previously only the Sass arm
   could.
 
+### Changed
+
+- **One position convention across the whole crate: lines and columns are
+  1-based, byte offsets are 0-based.** `Pos` and `Error` were already 1-based,
+  but the newly public position carriers were not: `VarSpan::line`/`col` (and
+  so `VariableValue::span`) and the AST's `SrcLines` column fields were 0-based,
+  so the same point in a file had two spellings depending on which struct held
+  it. They are now 1-based like everything else, with `0` reserved for
+  "unknown" — which means a `VarSpan` can be printed straight into a
+  diagnostic (`{}:{}`, `span.line`, `span.col`) with no `+ 1`. `Pos::offset`,
+  `Error::start`/`end` and `VarSpan::offset` stay 0-based byte indices. Emitted
+  source maps are unaffected: Source Map v3 is 0-based on the wire, and
+  `sourcemap.rs` now converts at the single point where it records a mapping,
+  so the generated `mappings` string is byte-for-byte what it was.
+
 ### Fixed
 
 - **Every error the compiler raises now carries a source position.** Roughly a

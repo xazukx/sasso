@@ -145,11 +145,11 @@ impl Parser {
             }
             _ => self.parse_generic_at_rule(name, pos),
         };
-        // Source-map: stamp the `@` keyword's 0-based column onto the lines-
-        // carrying at-rule variants. Purely additive — `start_col` is read only
-        // by source-map generation, never by the serializer.
+        // Source-map: stamp the `@` keyword's column onto the lines-carrying
+        // at-rule variants. Purely additive — `start_col` is read only by
+        // source-map generation, never by the serializer.
         let mut stmt = stmt?;
-        let at_col = (pos.col as u32).saturating_sub(1);
+        let at_col = pos.col as u32;
         if let Stmt::AtRule { lines, .. }
         | Stmt::Media { lines, .. }
         | Stmt::Supports { lines, .. }

@@ -14,9 +14,12 @@ pub struct Stylesheet {
     pub stmts: Vec<Stmt>,
 }
 
-/// 1-based source-line metadata for the serializer's trailing-comment rule
+/// Source-line metadata for the serializer's trailing-comment rule
 /// (dart `_isTrailingComment`). `file` is an evaluator-interned source id
 /// (0 = unknown, never trailing).
+///
+/// Every line and column here is **1-based**, like [`Pos`], with
+/// `0` reserved for "unknown"; see the crate docs for the crate-wide rule.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SrcLines {
     pub file: u32,
@@ -24,14 +27,15 @@ pub struct SrcLines {
     pub start: u32,
     /// The construct's last line (closing delimiter / end of value).
     pub end: u32,
-    /// A comment's 1-based `/*` column (0 elsewhere): two comments with the
-    /// same file/lines/column are span-identical CLONES (the same file
-    /// imported twice), which dart's span-containment branch rejects as
-    /// trailing — distinct same-line comments differ in column and still join.
+    /// A comment's `/*` column, or a custom property's name column (0 when
+    /// neither applies): two comments with the same file/lines/column are
+    /// span-identical CLONES (the same file imported twice), which dart's
+    /// span-containment branch rejects as trailing — distinct same-line
+    /// comments differ in column and still join.
     pub col: u32,
-    /// The 0-based source COLUMN of the mapped token's start (a selector's
-    /// first character, a declaration/at-rule keyword, a comment's `/*`), used
-    /// ONLY by source-map generation — never by the serializer. Default 0 when
+    /// The source COLUMN of the mapped token's start (a selector's first
+    /// character, a declaration/at-rule keyword, a comment's `/*`), used
+    /// ONLY by source-map generation — never by the serializer. `0` when
     /// unknown. Distinct from [`Self::col`], which is overloaded for the
     /// trailing-comment / custom-property-reindent heuristics; this field is a
     /// pure additive carrier and changes no CSS output.
@@ -43,7 +47,7 @@ pub struct SrcLines {
     /// disabled (dart maps the duplicated parent selector to the ORIGINAL rule's
     /// span). Like [`Self::start_col`] this changes no CSS output.
     pub map_file: u32,
-    /// Source-map-only OVERRIDE for the mapped 1-based source line (0 = fall
+    /// Source-map-only OVERRIDE for the mapped source line (0 = fall
     /// back to [`Self::start`]). Set together with [`Self::map_file`] on a
     /// bubbled-selector wrapper; see that field.
     pub map_line: u32,

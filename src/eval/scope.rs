@@ -72,8 +72,8 @@ impl<'a> Evaluator<'a> {
         sp
     }
 
-    /// Turn a 1-based source position in the CURRENT file into a [`VarSpan`]
-    /// (interned file id + 0-based line/col). [`Pos::NONE`] yields the "unknown"
+    /// Turn a source position in the CURRENT file into a [`VarSpan`] (interned
+    /// file id + the same 1-based line/col). [`Pos::NONE`] yields the "unknown"
     /// span, which the source map drops.
     pub(super) fn span_at(&mut self, pos: Pos) -> VarSpan {
         if !self.options.source_map || !pos.is_known() {
@@ -81,8 +81,8 @@ impl<'a> Evaluator<'a> {
         }
         VarSpan {
             file: self.intern_current_file(),
-            line: pos.line as u32 - 1,
-            col: pos.col as u32 - 1,
+            line: pos.line as u32,
+            col: pos.col as u32,
             offset: pos.offset as u32,
         }
     }

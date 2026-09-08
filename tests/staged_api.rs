@@ -276,14 +276,15 @@ $top: 1px;
         .values()
         .map(|v| (v.name.as_str(), v.span.line, v.span.col, v.value.to_css(false)))
         .collect();
+    // Spans carry 1-based line/column, exactly like a diagnostic's position.
     assert_eq!(
         recorded,
         vec![
-            ("top", 0, 0, "1px".to_string()),
+            ("top", 1, 1, "1px".to_string()),
             // Rule-scoped: unreachable through `env` once the rule closes.
-            ("inner", 2, 2, "2px".to_string()),
+            ("inner", 3, 3, "2px".to_string()),
             // A loop body records its LAST visit.
-            ("loop", 6, 2, "2".to_string()),
+            ("loop", 7, 3, "2".to_string()),
         ]
     );
 

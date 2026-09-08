@@ -106,7 +106,7 @@ fn new_scope() -> Scope {
     std::rc::Rc::new(std::cell::RefCell::new(HashMap::default()))
 }
 
-/// Where a variable was DEFINED: the interned source file id plus the 0-based
+/// Where a variable was DEFINED: the interned source file id plus the 1-based
 /// line/column of the defining expression's first character.
 ///
 /// This is sasso's equivalent of the `AstNode` dart stores in
@@ -124,9 +124,11 @@ fn new_scope() -> Scope {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 pub struct VarSpan {
     pub file: u32,
-    /// 0-based source line.
+    /// 1-based source line, matching [`Pos::line`](crate::Pos::line); `0` only
+    /// for the "unknown" span (`file == 0`).
     pub line: u32,
-    /// 0-based source column.
+    /// 1-based source column, counted in characters like
+    /// [`Pos::col`](crate::Pos::col); `0` only for the "unknown" span.
     pub col: u32,
     /// 0-based **byte** offset of the same point in that file's source, so a
     /// tool can slice the declaration out without walking a line table. `0`
@@ -151,7 +153,7 @@ pub struct VariableValue {
     pub name: String,
     /// The evaluated value bound by this declaration.
     pub value: Value,
-    /// Where the declaration starts: interned file id plus 0-based line/column.
+    /// Where the declaration starts: interned file id plus 1-based line/column.
     /// Resolve `file` to a URL with [`Evaluator::file_url`].
     pub span: VarSpan,
     /// Whether the declaration carried `!default`.
@@ -1581,8 +1583,8 @@ impl<'a> Evaluator<'a> {
         let span = if v.pos.is_known() {
             VarSpan {
                 file: self.intern_current_file(),
-                line: v.pos.line as u32 - 1,
-                col: v.pos.col as u32 - 1,
+                line: v.pos.line as u32,
+                col: v.pos.col as u32,
                 offset: v.pos.offset as u32,
             }
         } else {
@@ -2570,9 +2572,9 @@ impl<'a> Evaluator<'a> {
             start: rule.brace_line,
             end: rule.end_line,
             col: 0,
-            // Source-map: the selector's 0-based start column (its first
-            // character), mapped on the rule's first output line.
-            start_col: (rule.selector_pos.col as u32).saturating_sub(1),
+            // Source-map: the selector's start column (its first character),
+            // mapped on the rule's first output line.
+            start_col: rule.selector_pos.col as u32,
             map_file: 0,
             map_line: 0,
         });
@@ -2695,8 +2697,8 @@ impl<'a> Evaluator<'a> {
                 start: d.pos.line as u32,
                 end: d.end_line,
                 col: 0,
-                // Source-map: the property name's 0-based start column.
-                start_col: (d.pos.col as u32).saturating_sub(1),
+                // Source-map: the property name's start column.
+                start_col: d.pos.col as u32,
                 map_file: 0,
                 map_line: 0,
             }),
@@ -2724,11 +2726,11 @@ impl<'a> Evaluator<'a> {
                 file: 0,
                 start: d.pos.line as u32,
                 end: d.end_line,
-                // The name's 0-based source column caps the re-indentation
-                // strip for a multi-line value (dart _writeReindentedValue).
-                col: d.pos.col.saturating_sub(1) as u32,
-                // Source-map: the property name's 0-based start column.
-                start_col: (d.pos.col as u32).saturating_sub(1),
+                // The name's source column caps the re-indentation strip for a
+                // multi-line value (dart _writeReindentedValue).
+                col: d.pos.col as u32,
+                // Source-map: the property name's start column.
+                start_col: d.pos.col as u32,
                 map_file: 0,
                 map_line: 0,
             }),

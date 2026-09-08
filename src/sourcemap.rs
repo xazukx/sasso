@@ -5,9 +5,13 @@
 //! This module is self-contained and not yet wired into the serializer; later
 //! phases feed it from `emit.rs` and surface it through the public API.
 //!
-//! Format reference: the Source Map v3 spec (ECMA-426). All positions are
-//! 0-based; the generated column is in UTF-16 code units (the serializer is
-//! responsible for counting in those units when it feeds `add`).
+//! Format reference: the Source Map v3 spec (ECMA-426). All positions in the
+//! encoded map are 0-based; the generated column is in UTF-16 code units (the
+//! serializer is responsible for counting in those units when it feeds `add`).
+//!
+//! This is the ONLY module that speaks 0-based lines and columns — everywhere
+//! else in the crate they are 1-based. [`SmCollector::record`] is the boundary
+//! where the conversion happens; everything below it is already wire-shaped.
 
 /// The Base64 alphabet used by both VLQ digits and the inline-map data URI.
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -134,19 +138,21 @@ impl Mappings {
 }
 
 /// One raw mapped token recorded by the serializer: a byte offset into the
-/// emitted CSS *body* (before any `@charset`/BOM prefix) and the 0-based source
-/// position it came from. The body offset is resolved to a `(gen_line,
-/// gen_col_utf16)` pair by [`SmCollector::finalize`] once the whole body — and
-/// thus the prefix — is known.
+/// emitted CSS *body* (before any `@charset`/BOM prefix) and the source
+/// position it came from, already lowered to the WIRE format's 0-based
+/// line/column by [`SmCollector::record`] (the rest of the crate is 1-based).
+/// The body offset is resolved to a `(gen_line, gen_col_utf16)` pair by
+/// [`SmCollector::finalize`] once the whole body — and thus the prefix — is
+/// known.
 #[derive(Clone, Copy)]
 pub struct RawEntry {
     /// Byte offset into the CSS body where the mapped token begins.
     pub byte_off: u32,
     /// Evaluator-interned source file id (1-based; 0 = unknown, dropped).
     pub file_id: u32,
-    /// 0-based source line.
+    /// Source line, already 0-based for the wire.
     pub src_line: u32,
-    /// 0-based source column.
+    /// Source column, already 0-based for the wire.
     pub src_col: u32,
 }
 
@@ -182,8 +188,11 @@ impl SmCollector {
     }
 
     /// Record a mapped token at body byte offset `byte_off` whose source
-    /// position is `(file_id, src_line, src_col)` (all 0-based; `file_id` is the
-    /// 1-based interned id, 0 = unknown).
+    /// position is `(file_id, src_line, src_col)`. `file_id` is the interned
+    /// source id (0 = unknown); `src_line`/`src_col` are 1-based, as everywhere
+    /// else in the crate. This is the one place they are lowered to the Source
+    /// Map v3 wire format's 0-based line/column — `0` (unknown) folds to `0`,
+    /// which is what an unset column mapped to before.
     ///
     /// dart's `SourceMapBuffer._addEntry` (util/source_map_buffer.dart:64)
     /// DROPS an entry that is redundant with the previous one:
@@ -213,6 +222,8 @@ impl SmCollector {
         if file_id == 0 {
             return;
         }
+        let src_line = src_line.saturating_sub(1);
+        let src_col = src_col.saturating_sub(1);
         let gen_line = self.gen_line_at(body);
         if self.last == Some((src_line, gen_line)) {
             return;
