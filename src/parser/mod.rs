@@ -180,7 +180,12 @@ struct Parser {
     /// output" diagnostic. Nested template parses (inside an interpolation's
     /// expression) suspend collection.
     collect_interp_spans: bool,
-    interp_spans: Vec<(u32, u32, u32)>,
+    interp_spans: Vec<crate::ast::InterpSpan>,
+    /// Position of the `!` opening the first `!important` flag the value parser
+    /// consumed as a term since it was last cleared. dart's selector scan stops
+    /// at a top-level `!`, so this is where an illegal declaration is blamed
+    /// when its value carries the flag; see `Parser::selector_scan_end`.
+    important_bang: Option<Pos>,
     /// Set once a top-level statement that is *not* a variable declaration,
     /// comment, `@charset`, `@use`, or `@forward` has been parsed. A later
     /// `@use`/`@forward` then errors ("@use rules must be written before any
@@ -212,6 +217,7 @@ fn parse_inner(src: &str, plain_css: bool) -> Result<Stylesheet, Error> {
         block_depth: 0,
         collect_interp_spans: false,
         interp_spans: Vec::new(),
+        important_bang: None,
         seen_non_module_stmt: false,
         plain_css,
     };
@@ -557,6 +563,25 @@ fn value_is_only_comments(span: &[char]) -> bool {
 }
 
 impl Parser {
+    /// The position dart-sass's selector scan would stop at, were this
+    /// declaration's text read as a selector: trailing spaces/tabs are part of
+    /// the scan, a newline is not. Non-consuming — the cursor is restored.
+    ///
+    /// dart reaches `expected "{".` by re-reading a declaration as a selector
+    /// and failing to find the `{`; the caret lands wherever that scan gave up
+    /// (`a: b;` -> the `;`, `a: b !x` -> the `!`, `a: b<newline>}` -> the end
+    /// of the value's line). Recording it here is what lets the evaluator
+    /// reproduce that position when it rejects the declaration much later.
+    fn selector_scan_end(&mut self) -> Pos {
+        let mark = self.sc.mark();
+        while matches!(self.sc.peek(), Some(c) if c.is_whitespace() && c != '\n' && c != '\r') {
+            self.sc.bump();
+        }
+        let pos = self.sc.position();
+        self.sc.reset(mark);
+        pos
+    }
+
     /// Skip inline whitespace; report whether any was consumed.
     fn skip_ws_inline(&mut self) -> bool {
         let mut any = false;
@@ -806,11 +831,12 @@ impl Parser {
                     self.collect_interp_spans = collect;
                     if collect {
                         let end = self.sc.position();
-                        self.interp_spans.push((
-                            span_start.line as u32,
-                            span_start.col as u32,
-                            end.col as u32,
-                        ));
+                        self.interp_spans.push(crate::ast::InterpSpan {
+                            line: span_start.line as u32,
+                            col_start: span_start.col as u32,
+                            col_end: end.col as u32,
+                            offset: span_start.offset as u32,
+                        });
                     }
                     if !self.sc.eat('}') {
                         return Err(Error::at("expected \"}\"", self.sc.position()));

@@ -289,12 +289,14 @@ impl Parser {
             // leading whitespace included (dart's `node.value.span`).
             let value_pos = self.sc.position();
             let value = self.parse_custom_property_value()?;
+            let value_end = self.selector_scan_end();
             let end_line = self.sc.position().line as u32;
             self.sc.eat(';');
             return Ok(Stmt::CustomDecl(CustomDecl {
                 property,
                 value,
                 pos,
+                value_end,
                 end_line,
                 value_pos,
             }));
@@ -302,6 +304,7 @@ impl Parser {
         let ws_after_colon = self.skip_ws_inline();
         // Bare nested property set: `prop: { … }` / `prop:{ … }` (no value).
         if self.sc.peek() == Some('{') {
+            let value_end = self.sc.position();
             let body = self.parse_property_set_body()?;
             return Ok(Stmt::PropertySet(PropertySet {
                 property,
@@ -309,13 +312,25 @@ impl Parser {
                 important: false,
                 body,
                 pos,
+                value_end,
             }));
         }
         // Source-map: where the value's own text begins (dart's
         // `CssValue.span.start` for a declaration value). Captured before
         // `parse_value` consumes it.
         let value_pos = self.sc.position();
+        self.important_bang = None;
         let value = self.parse_value()?;
+        // Where dart's selector scan would give up on this text — the `;`, the
+        // closing `}`, or the end of the value's line. See
+        // `Declaration::value_end`. A trailing `!important` is consumed by the
+        // expression layer as a value term, so its `!` (which is where dart
+        // actually stops) is recovered from the parser rather than from the
+        // cursor, which by now sits past the flag.
+        let value_end = self
+            .important_bang
+            .take()
+            .unwrap_or_else(|| self.selector_scan_end());
         // The line where the declaration's span ends, for the serializer's
         // trailing-comment rule — captured before whitespace is skipped (an
         // `!important` flag extends the span).
@@ -344,6 +359,7 @@ impl Parser {
             let mark = self.sc.mark();
             self.skip_ws_inline();
             if self.sc.peek() == Some('{') {
+                let set_end = self.sc.position();
                 let body = self.parse_property_set_body()?;
                 return Ok(Stmt::PropertySet(PropertySet {
                     property,
@@ -351,6 +367,7 @@ impl Parser {
                     important,
                     body,
                     pos,
+                    value_end: set_end,
                 }));
             }
             self.sc.reset(mark);
@@ -362,6 +379,7 @@ impl Parser {
             value,
             important,
             pos,
+            value_end,
             end_line,
             value_pos,
         }))

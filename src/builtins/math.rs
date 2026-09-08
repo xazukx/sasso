@@ -1292,7 +1292,7 @@ mod tests {
     use crate::scanner::Pos;
 
     fn pos() -> Pos {
-        Pos { line: 1, col: 1 }
+        Pos::new(1, 1, 0)
     }
 
     fn n(value: f64, unit: &str) -> Value {

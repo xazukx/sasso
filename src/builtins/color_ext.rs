@@ -984,7 +984,7 @@ mod tests {
     use crate::value::Color;
 
     fn pos() -> Pos {
-        Pos { line: 1, col: 1 }
+        Pos::new(1, 1, 0)
     }
 
     fn col(s: &str) -> Value {

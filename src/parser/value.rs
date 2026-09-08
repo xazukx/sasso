@@ -626,6 +626,9 @@ impl Parser {
             // term: the canonical unquoted string `!important` (dart
             // `_importantExpression`).
             Some('!') if self.looking_at_important() => {
+                if self.important_bang.is_none() {
+                    self.important_bang = Some(self.sc.position());
+                }
                 self.sc.bump();
                 self.skip_ws_inline();
                 let _ = self.read_ident_name()?;
@@ -1372,18 +1375,24 @@ impl Parser {
         match self.sc.peek() {
             // `ns.$var`
             Some('$') => {
-                let var_pos = self.sc.position();
                 self.sc.bump();
                 let name = self.read_variable_name()?;
                 if is_private_member(&name) {
+                    // dart blames the whole `ns.$name` reference, as for an
+                    // undefined one — not just the `$`.
                     return Err(Error::at(
                         "Private members can't be accessed from outside their modules.",
-                        var_pos,
-                    ));
+                        name_pos,
+                    )
+                    .with_length(self.sc.byte_len_from(name_mark)));
                 }
                 Ok(Some(Expr::NsVar {
                     module: ns.to_string(),
                     name,
+                    // dart blames the WHOLE `ns.$name` reference, so the
+                    // recorded position is the namespace token's start, not
+                    // the `$`.
+                    pos: name_pos,
                 }))
             }
             // `ns.member(...)` — the member must be an identifier immediately

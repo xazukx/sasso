@@ -428,10 +428,18 @@ impl Parser {
     fn parse_import_arg(&mut self, pos: Pos) -> Result<ImportArg, Error> {
         // `url(...)` form — always a plain CSS import.
         if self.peek_is_url_func() {
+            let url_pos = self.sc.position();
+            let mark = self.sc.mark();
             let url = self.parse_import_url_func()?;
+            let url_len = self.sc.byte_len_from(mark);
             self.skip_ws_trivia();
             let modifiers = self.parse_import_modifiers()?;
-            return Ok(ImportArg::Css { url, modifiers });
+            return Ok(ImportArg::Css {
+                url,
+                modifiers,
+                pos: url_pos,
+                length: url_len,
+            });
         }
         // Quoted-string form.
         match self.sc.peek() {
@@ -464,6 +472,8 @@ impl Parser {
                     Ok(ImportArg::Css {
                         url: vec![TplPiece::Lit(raw_url)],
                         modifiers,
+                        pos: url_pos,
+                        length: url_len,
                     })
                 }
             }

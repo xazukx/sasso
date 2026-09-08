@@ -425,7 +425,7 @@ mod tests {
     use super::*;
 
     fn pos() -> Pos {
-        Pos { line: 1, col: 1 }
+        Pos::new(1, 1, 0)
     }
 
     fn s(text: &str, quoted: bool) -> Value {

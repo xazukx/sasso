@@ -115,7 +115,9 @@ impl<'a> Evaluator<'a> {
                 Stmt::Import(args) => {
                     for arg in args {
                         let text = match arg {
-                            ImportArg::Css { url, modifiers } => self.serialize_css_import(url, modifiers)?,
+                            ImportArg::Css { url, modifiers, .. } => {
+                                self.serialize_css_import(url, modifiers)?
+                            }
                             ImportArg::Sass { path, .. } => format!("\"{path}\""),
                         };
                         sink.push_at_rule(OutNode::Raw(format!("@import {text};")));
@@ -350,7 +352,9 @@ impl<'a> Evaluator<'a> {
                 Stmt::Import(args) => {
                     for arg in args {
                         let text = match arg {
-                            ImportArg::Css { url, modifiers } => self.serialize_css_import(url, modifiers)?,
+                            ImportArg::Css { url, modifiers, .. } => {
+                                self.serialize_css_import(url, modifiers)?
+                            }
                             ImportArg::Sass { path, .. } => format!("\"{path}\""),
                         };
                         out.push(OutNode::Raw(format!("@import {text};")));
@@ -536,7 +540,7 @@ impl<'a> Evaluator<'a> {
             Stmt::Import(args) => {
                 for arg in args {
                     let prelude = match arg {
-                        ImportArg::Css { url, modifiers } => self.serialize_css_import(url, modifiers)?,
+                        ImportArg::Css { url, modifiers, .. } => self.serialize_css_import(url, modifiers)?,
                         ImportArg::Sass { path, .. } => format!("\"{path}\""),
                     };
                     items.push(OutItem::ChildlessAtRule {

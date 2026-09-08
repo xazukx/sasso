@@ -143,7 +143,11 @@ impl<'a> Evaluator<'a> {
                     Err(Error::at("Undefined variable.", *pos).with_length(1 + name.len()))
                 }
             },
-            Expr::NsVar { module, name } => self.eval_module_var(module, name, Pos { line: 1, col: 1 }),
+            // The caret covers the whole `ns.$name` reference, exactly as
+            // dart-sass blames `MemberExpression`'s span.
+            Expr::NsVar { module, name, pos } => self
+                .eval_module_var(module, name, *pos)
+                .map_err(|e| e.with_length(module.len() + 2 + name.len())),
             // A string expression (quoted/unquoted/lone-interpolation) resolves
             // its interpolation in a context where the `@supports`-declaration
             // no-simplify flag is OFF, so `(a: #{calc(1 + 2)})` -> `(a: 3)`
@@ -309,7 +313,7 @@ impl<'a> Evaluator<'a> {
                             user: Some(callable as Rc<dyn std::any::Any>),
                         };
                         return self
-                            .invoke_function_ref(&f, vec![arg], Vec::new(), Pos { line: 0, col: 0 })
+                            .invoke_function_ref(&f, vec![arg], Vec::new(), Pos::NONE)
                             .map(Value::without_slash);
                     }
                 }

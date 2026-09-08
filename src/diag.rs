@@ -220,6 +220,48 @@ fn split_lines(source: &str) -> Vec<&str> {
     lines
 }
 
+/// The 0-based **byte** offset of a 1-based (`line`, char-`col`) point in
+/// `source`, clamped to the source length.
+///
+/// The scanner hands every [`Pos`](crate::Pos) a byte offset for free, so this
+/// is only for the few positions the evaluator *synthesizes* by column
+/// arithmetic (recovering a source column from a resolved selector). Walking
+/// the line keeps those offsets on a real UTF-8 boundary, so slicing the
+/// source with [`Error::byte_span`](crate::Error::byte_span) is always safe.
+pub fn byte_offset_of(source: &str, line: usize, col: usize) -> usize {
+    if line == 0 {
+        return 0;
+    }
+    let bytes = source.as_bytes();
+    let mut idx = 0usize;
+    let mut to_skip = line - 1;
+    while to_skip > 0 && idx < bytes.len() {
+        match bytes[idx] {
+            b'\n' => {
+                idx += 1;
+                to_skip -= 1;
+            }
+            b'\r' => {
+                idx += 1;
+                if idx < bytes.len() && bytes[idx] == b'\n' {
+                    idx += 1;
+                }
+                to_skip -= 1;
+            }
+            _ => idx += 1,
+        }
+    }
+    if to_skip > 0 {
+        return source.len();
+    }
+    let rest = &source[idx..];
+    let text = &rest[..rest.find(['\n', '\r']).unwrap_or(rest.len())];
+    idx + text
+        .char_indices()
+        .nth(col.saturating_sub(1))
+        .map_or(text.len(), |(i, _)| i)
+}
+
 /// Expand every TAB in `text` to [`TAB_WIDTH`] spaces. Returns the displayable
 /// string. This is the exact transform dart-sass applies before measuring
 /// column widths, so it is shared by both the source line and the caret math.

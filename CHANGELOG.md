@@ -48,9 +48,50 @@ Conformance is tracked separately as a ratchet against the official
   Intended for tooling (symbol collection, language servers); off by default,
   and it changes no CSS byte. Values come back as live `Value`s, and
   `Evaluator::file_url()` resolves a span's interned file id back to a URL.
+- **Byte offsets on every span.** `Pos` now carries `offset` (the 0-based UTF-8
+  byte index of the same point) alongside its 1-based `line`/`col`, and so do
+  the spans built from it: `Error` gained `start`/`end` — with
+  `Error::byte_span()` returning the range — and `VarSpan` gained `offset`. A
+  tool that wants the offending text can slice the source directly
+  (`&source[err.byte_span().unwrap()]`) instead of walking a line table and
+  guessing whether a column counts characters or bytes: it counts characters,
+  the offset counts bytes. Offsets index the source *as passed in*, so a
+  stripped BOM is still counted.
+- **`Error::file`** — the URL of the file an error's position is in, as a
+  structured field rather than something to scrape out of the rendered frame
+  trace. It is not always the entry file: an error raised inside an `@import`ed
+  or `@use`d stylesheet is blamed on that file, and `start`/`end` index *its*
+  source. `None` when the error carries no position, or when diagnostics have
+  no file name to report (`Options::url` unset).
+- **`VariableValue::selector`** — the resolved selector list of the style rule a
+  recorded variable declaration sits in (`&` and interpolation already
+  substituted, one entry per comma-separated complex selector), or `None` at the
+  document root. It is the selector in force when the declaration was *visited*,
+  so a `$x` inside a mixin body reports the rule that included the mixin — and
+  it is recorded even for a rule that emits no CSS at all, which is exactly
+  where recovering the scope from the output tree cannot work.
+- **`Expr::NsVar` and `ImportArg::Css` now record a position** —
+  `Expr::NsVar { module, name, pos }` and
+  `ImportArg::Css { url, modifiers, pos, length }`. Both arms of `ImportArg`
+  now carry the same `pos`/`length` span of the URL token, so every `@import`
+  entry in the tree can be located in the source; previously only the Sass arm
+  could.
 
 ### Fixed
 
+- **A declaration where only a style rule may appear is now positioned.** A bare
+  declaration directly inside a top-level `@media`, or at the top level of an
+  `@import`ed file, is invalid — dart-sass re-reads it as a selector and fails
+  with `expected "{".` — but sasso reported that with no position at all: line
+  0, no file, no snippet. It now blames the point dart's selector scan gives up
+  on the text (the `;`, the `!` of an `!important` flag, the closing `}`, or the
+  end of the value's line), and the imported-file case reproduces dart's whole
+  block, `@import` frame included, byte for byte.
+- **`ns.$var` diagnostics point at the whole reference.** `Undefined variable.`,
+  `There is no module with the namespace "…".` and `Private members can't be
+  accessed from outside their modules.` on a namespaced variable were blamed on
+  line 1 column 1 (or, for the private case, on the `$`). They now underline all
+  of `ns.$name` from the namespace token, matching dart-sass.
 - **File identity is now the importer's canonical URL, not a display name.**
   Diagnostics abbreviate a loaded file to its basename, and that abbreviation
   used to be what interned file ids, per-file source texts and source-map

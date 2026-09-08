@@ -128,6 +128,11 @@ pub struct VarSpan {
     pub line: u32,
     /// 0-based source column.
     pub col: u32,
+    /// 0-based **byte** offset of the same point in that file's source, so a
+    /// tool can slice the declaration out without walking a line table. `0`
+    /// for the "unknown" span (`file == 0`), which is also a real offset — the
+    /// `file` field is what says whether the span means anything.
+    pub offset: u32,
 }
 
 /// One recorded variable declaration, captured by
@@ -155,6 +160,17 @@ pub struct VariableValue {
     pub is_global: bool,
     /// `Some(ns)` for a namespaced assignment (`ns.$name: …`).
     pub namespace: Option<String>,
+    /// The RESOLVED selector list of the style rule the declaration sits in
+    /// (`&` and `#{…}` already substituted, one entry per comma-separated
+    /// complex selector), or `None` at the document root.
+    ///
+    /// This is the selector in force when the declaration was *visited*, so a
+    /// `$x` inside a mixin body reports the selector of the rule that included
+    /// the mixin — which is the scope the binding actually belongs to. It is
+    /// recorded even for a rule that emits no CSS at all (an empty body, a
+    /// body of nothing but variable declarations), which is exactly where
+    /// recovering the selector from the output tree cannot work.
+    pub selector: Option<Vec<String>>,
     /// Whether the declaration's own right-hand side was evaluated (`true`), or
     /// short-circuited as a `!default` over an existing value / a `@use … with`
     /// configuration override (`false`, and `value` is the value in effect).
@@ -830,6 +846,11 @@ pub struct Evaluator<'a> {
     /// [`EvalOptions::record_variable_values`] is set. A `BTreeMap` so
     /// iteration is in source order (file id, then line, then column).
     variable_values: std::collections::BTreeMap<VarSpan, VariableValue>,
+    /// The resolved selectors of the style rule enclosing the variable
+    /// declaration currently being applied, for
+    /// [`VariableValue::selector`]. Set by `exec` around each `Stmt::VarDecl`
+    /// (and only when recording is on); `None` at the document root.
+    record_parents: Option<Vec<String>>,
     /// Definition spans for the bindings in `scopes`, one frame per scope
     /// (dart `Environment._variableNodes`). Pushed/popped in lockstep. Purely
     /// additive: nothing here can change a CSS byte.
@@ -1382,6 +1403,7 @@ impl<'a> Evaluator<'a> {
             [(key.clone(), Rc::clone(&source))].into_iter().collect();
         Evaluator {
             member: "root stylesheet".to_string(),
+            record_parents: None,
             call_stack: Vec::new(),
             current_url: url,
             current_key: key,
@@ -1558,6 +1580,7 @@ impl<'a> Evaluator<'a> {
                 file: self.intern_current_file(),
                 line: v.pos.line as u32 - 1,
                 col: v.pos.col as u32 - 1,
+                offset: v.pos.offset as u32,
             }
         } else {
             VarSpan::default()
@@ -1571,6 +1594,7 @@ impl<'a> Evaluator<'a> {
                 is_default: v.is_default,
                 is_global: v.is_global,
                 namespace: v.namespace.clone(),
+                selector: self.record_parents.clone(),
                 evaluated,
             },
         );
@@ -1718,7 +1742,12 @@ impl<'a> Evaluator<'a> {
         let frames = self.frames_for(Pos {
             line: e.line,
             col: e.col,
+            offset: e.start,
         });
+        // The primary frame names the file the position is in — not
+        // necessarily the entry file, since an error raised inside an
+        // `@import`ed/`@use`d stylesheet is blamed on THAT file.
+        e.file = Some(frames[0].url.clone());
         e.rendered = Some(self.render_error_with_frames(&e, &frames));
         e
     }
@@ -1743,10 +1772,12 @@ impl<'a> Evaluator<'a> {
         if spans.len() == interp_bounds.len() {
             for (k, &(start, len)) in interp_bounds.iter().enumerate() {
                 if at_idx >= start && at_idx < start + len {
-                    let (line, col_start, col_end) = spans[k];
+                    let sp = spans[k];
+                    let (line, col_start, col_end) = (sp.line, sp.col_start, sp.col_end);
                     let pos = Pos {
                         line: line as usize,
                         col: col_start as usize,
+                        offset: sp.offset as usize,
                     };
                     let mut e = Error::at(MSG, pos);
                     if self.diag_enabled() {
@@ -1765,6 +1796,7 @@ impl<'a> Evaluator<'a> {
                         ));
                         rendered.push('\n');
                         rendered.push_str(&Self::render_frame_block(&frames, 2));
+                        e.file = Some(frames[0].url.clone());
                         e.rendered = Some(rendered);
                     }
                     return e;
@@ -1775,14 +1807,12 @@ impl<'a> Evaluator<'a> {
         // interpolations that precede the offending index.
         if single_line
             && spans.len() == interp_bounds.len()
-            && spans
-                .iter()
-                .all(|&(l, _, _)| l as usize == rule.selector_pos.line)
+            && spans.iter().all(|sp| sp.line as usize == rule.selector_pos.line)
         {
             let mut shift: i64 = 0;
             for (k, &(start, len)) in interp_bounds.iter().enumerate() {
                 if at_idx >= start + len {
-                    let (_, col_start, col_end) = spans[k];
+                    let (col_start, col_end) = (spans[k].col_start, spans[k].col_end);
                     // The source text `#{ ... }` spans from 2 before the
                     // expression start through the closing brace.
                     let src_total = (col_end as i64 + 1) - (col_start as i64 - 2);
@@ -1790,13 +1820,11 @@ impl<'a> Evaluator<'a> {
                 }
             }
             let col = (rule.selector_pos.col as i64 + at_idx as i64 + shift).max(1) as usize;
-            return Error::at(
-                MSG,
-                Pos {
-                    line: rule.selector_pos.line,
-                    col,
-                },
-            );
+            // The column was recovered arithmetically, so the byte offset has
+            // to be resolved against the source rather than carried along.
+            let line = rule.selector_pos.line;
+            let offset = crate::diag::byte_offset_of(&self.source_for(&self.current_key.clone()), line, col);
+            return Error::at(MSG, Pos { line, col, offset });
         }
         Error::at(MSG, rule.selector_pos)
     }
@@ -2011,7 +2039,8 @@ impl<'a> Evaluator<'a> {
             self.call_stack.iter().rev().cloned().collect()
         };
         let mut e = Error::at(msg, frames[0].pos);
-        e.length = frames[0].length;
+        e.set_length(frames[0].length);
+        e.file = Some(frames[0].url.clone());
         e.rendered = Some(self.render_error_with_frames(&e, &frames));
         e
     }
@@ -2031,7 +2060,25 @@ impl<'a> Evaluator<'a> {
     fn exec(&mut self, stmts: &[Stmt], parents: &[String], sink: &mut Sink<'_>) -> Result<(), Error> {
         for stmt in stmts {
             match stmt {
-                Stmt::VarDecl(v) => self.apply_var(v)?,
+                Stmt::VarDecl(v) => {
+                    // The declaration's own enclosing selector, saved and
+                    // restored around the apply: evaluating the right-hand
+                    // side can run a function body that records declarations
+                    // of its own, and the record happens after that.
+                    let saved = if self.options.record_variable_values {
+                        Some(std::mem::replace(
+                            &mut self.record_parents,
+                            (!parents.is_empty()).then(|| parents.to_vec()),
+                        ))
+                    } else {
+                        None
+                    };
+                    let applied = self.apply_var(v);
+                    if let Some(saved) = saved {
+                        self.record_parents = saved;
+                    }
+                    applied?
+                }
                 Stmt::Comment(c, lines) => {
                     let text = self.eval_template(c)?;
                     let lines = self.stamp(*lines);
@@ -2674,7 +2721,7 @@ impl<'a> Evaluator<'a> {
         let importer = self.options.importer;
         for arg in args {
             match arg {
-                ImportArg::Css { url, modifiers } => {
+                ImportArg::Css { url, modifiers, .. } => {
                     let text = self.serialize_css_import(url, modifiers)?;
                     // Inside a style rule the plain-CSS @import stays in the
                     // rule's block (dart keeps it nested:
@@ -2939,18 +2986,25 @@ impl<'a> Evaluator<'a> {
                             // inside top-level control flow — is its parse
                             // error `expected "{".`, regardless of the
                             // @import sitting inside a rule (issue_2295).
-                            fn has_top_decl(stmts: &[Stmt]) -> bool {
-                                stmts.iter().any(|s| match s {
-                                    Stmt::Decl(_) | Stmt::PropertySet(_) | Stmt::CustomDecl(_) => true,
-                                    Stmt::If(branches) => branches.iter().any(|b| has_top_decl(&b.body)),
+                            // Returns the position dart blames — where its
+                            // selector scan gives up on the declaration text
+                            // (see `Declaration::value_end`), in the IMPORTED
+                            // file, which is already the diagnostic context
+                            // here (the `@import` frame is on the stack).
+                            fn top_decl_pos(stmts: &[Stmt]) -> Option<Pos> {
+                                stmts.iter().find_map(|s| match s {
+                                    Stmt::Decl(d) => Some(d.value_end),
+                                    Stmt::CustomDecl(d) => Some(d.value_end),
+                                    Stmt::PropertySet(ps) => Some(ps.value_end),
+                                    Stmt::If(branches) => branches.iter().find_map(|b| top_decl_pos(&b.body)),
                                     Stmt::For { body, .. }
                                     | Stmt::Each { body, .. }
-                                    | Stmt::While { body, .. } => has_top_decl(body),
-                                    _ => false,
+                                    | Stmt::While { body, .. } => top_decl_pos(body),
+                                    _ => None,
                                 })
                             }
-                            if has_top_decl(&sheet.stmts) {
-                                return Err(Error::unpositioned("expected \"{\"."));
+                            if let Some(pos) = top_decl_pos(&sheet.stmts) {
+                                return Err(self.finalize_error(Error::at("expected \"{\".", pos)));
                             }
                             // Render any error before the context restores
                             // below strip its attribution (the `@import`

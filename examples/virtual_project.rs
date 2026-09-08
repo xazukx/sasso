@@ -239,8 +239,9 @@ fn compile_entry(files: &MemoryImporter) {
 /// `Options::record_variable_values` records every variable declaration as it
 /// is evaluated — including ones whose scope is gone by the end of the compile
 /// (a `@each` body, a rule-local `$x`), which no environment lookup could find
-/// afterwards. Each record carries the span it was declared at, and the span's
-/// file id resolves back to that file's canonical URL.
+/// afterwards. Each record carries the span it was declared at — with a byte
+/// offset alongside the line/column — the resolved selector of the rule it sits
+/// in, and a file id that resolves back to that file's canonical URL.
 fn capture_variables(files: &MemoryImporter) {
     let options = Options::default()
         .with_importer(files)
@@ -256,8 +257,14 @@ fn capture_variables(files: &MemoryImporter) {
         let file = run.evaluator.file_url(v.span.file).unwrap_or("<unknown>");
         // Spans are 0-based; diagnostics are 1-based.
         let guard = if v.is_default { " !default" } else { "" };
+        // The declaration's scope: the enclosing style rule's resolved
+        // selector, or the document root.
+        let scope = v
+            .selector
+            .as_deref()
+            .map_or_else(|| "(root)".to_string(), |sel| sel.join(", "));
         by_file.entry(file).or_default().push(format!(
-            "{:>3}:{:<3} ${} = {}{}",
+            "{:>3}:{:<3} ${} = {}{}   in {scope}",
             v.span.line + 1,
             v.span.col + 1,
             v.name,

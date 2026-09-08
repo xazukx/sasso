@@ -192,8 +192,11 @@ impl<'a> Evaluator<'a> {
         // (`@utility x { @media (…) { max-width: …; } }`, Tailwind v4).
         if parents.is_empty() && !self.in_unknown_at_rule {
             for stmt in body {
-                if matches!(stmt, Stmt::Decl(_)) {
-                    return Err(Error::unpositioned("expected \"{\"."));
+                if let Stmt::Decl(d) = stmt {
+                    // dart reaches this by re-reading the declaration as a
+                    // selector and failing to find the `{`, so the caret lands
+                    // where that scan gave up — see `Declaration::value_end`.
+                    return Err(self.finalize_error(Error::at("expected \"{\".", d.value_end)));
                 }
             }
         }

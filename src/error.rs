@@ -4,8 +4,15 @@ use std::fmt;
 
 use crate::scanner::Pos;
 
-/// A compilation error, carrying a human-readable message and a 1-based
-/// source position (`line`/`col` are `0` when the position is unknown).
+/// A compilation error, carrying a human-readable message and the source
+/// position it is blamed on.
+///
+/// The position is available in both flavours: 1-based `line`/`col` for
+/// display (`0` when unknown), and the 0-based byte range
+/// [`start`](Error::start)`..`[`end`](Error::end) for a tool that slices the
+/// source directly. [`file`](Error::file) names the file the position is in,
+/// which is not necessarily the entry file — an error raised inside an
+/// `@import`ed or `@use`d stylesheet is blamed on *that* file.
 ///
 /// Implements [`std::error::Error`], so it composes with `?` and the
 /// wider error ecosystem.
@@ -24,9 +31,24 @@ pub struct Error {
     pub line: usize,
     /// 1-based column number, or `0` if unknown.
     pub col: usize,
+    /// 0-based **byte** offset of the first byte of the offending span, in the
+    /// source of [`file`](Error::file). `0` when unknown — check
+    /// [`has_position`](Error::has_position) first, exactly as for
+    /// `line`/`col`.
+    pub start: usize,
+    /// 0-based **byte** offset one past the last byte of the offending span,
+    /// i.e. the span is `start..end`. Equal to `start` for a zero-width span
+    /// (the renderer still draws a single caret), so `end - start == length`.
+    pub end: usize,
     /// Length of the offending span, in **bytes** of the source. `0` when the
     /// span length is unknown (the renderer still draws a single caret).
     pub length: usize,
+    /// The URL of the file the position refers to, as it appears in
+    /// diagnostics (the entry file's [`Options::url`](crate::Options::url), or
+    /// the loaded file's URL for an error inside an `@import`/`@use`). `None`
+    /// when no position is known, or when diagnostics carry no file name
+    /// (`Options::url` unset).
+    pub file: Option<String>,
     /// The fully rendered diagnostic block (header + snippet + frames), set by
     /// the evaluator once the source/url/glyph context is known. `None` until
     /// then; [`Display`](std::fmt::Display) falls back to the legacy one-liner.
@@ -34,13 +56,17 @@ pub struct Error {
 }
 
 impl Error {
-    /// A positioned error: `message` blamed on the 1-based source position `pos`.
+    /// A positioned error: `message` blamed on the source position `pos`
+    /// (1-based line/column plus its byte offset), with a zero-width span.
     pub fn at(message: impl Into<String>, pos: Pos) -> Self {
         Error {
             message: message.into(),
             line: pos.line,
             col: pos.col,
+            start: pos.offset,
+            end: pos.offset,
             length: 0,
+            file: None,
             rendered: None,
         }
     }
@@ -51,23 +77,60 @@ impl Error {
             message: message.into(),
             line: 0,
             col: 0,
+            start: 0,
+            end: 0,
             length: 0,
+            file: None,
             rendered: None,
         }
     }
 
     /// Attach a span length (in source bytes) if one is not already set. Used at
-    /// AST-node boundaries to size the caret underline.
+    /// AST-node boundaries to size the caret underline; keeps
+    /// [`end`](Error::end) in step.
     pub fn with_length(mut self, length: usize) -> Self {
         if self.length == 0 {
-            self.length = length;
+            self.set_length(length);
         }
         self
     }
 
-    /// Whether a primary `line`/`col` position has been recorded.
+    /// Attribute this error to `file` (a diagnostic URL) if it is not already
+    /// attributed.
+    pub fn with_file(mut self, file: impl Into<String>) -> Self {
+        if self.file.is_none() {
+            self.file = Some(file.into());
+        }
+        self
+    }
+
+    /// Set the span length and the derived [`end`](Error::end) together, so the
+    /// two never drift. Prefer this over assigning
+    /// [`length`](Error::length) directly.
+    pub fn set_length(&mut self, length: usize) {
+        self.length = length;
+        self.end = self.start + length;
+    }
+
+    /// Whether a primary `line`/`col` position has been recorded. The byte
+    /// offsets [`start`](Error::start)/[`end`](Error::end) are meaningful only
+    /// when this is `true`.
     pub fn has_position(&self) -> bool {
         self.line > 0
+    }
+
+    /// The offending span as a byte range into the source of
+    /// [`file`](Error::file), or `None` when no position is known.
+    ///
+    /// ```
+    /// use sasso::{compile, Options};
+    ///
+    /// let src = "a { color: $missing; }";
+    /// let err = compile(src, &Options::default().with_url("input.scss")).unwrap_err();
+    /// assert_eq!(&src[err.byte_span().unwrap()], "$missing");
+    /// ```
+    pub fn byte_span(&self) -> Option<std::ops::Range<usize>> {
+        self.has_position().then_some(self.start..self.end)
     }
 }
 

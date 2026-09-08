@@ -273,6 +273,15 @@ pub enum ImportArg {
     Css {
         url: Vec<TplPiece>,
         modifiers: Vec<ImportModifier>,
+        /// The position and byte length of the URL token, recorded exactly as
+        /// for [`ImportArg::Sass`]. A plain CSS `@import` is never resolved to
+        /// a stylesheet, so nothing in compilation reads this — it is here so
+        /// every `@import` entry in the tree can be located in the source
+        /// (tooling that links imports, and the `[import]` deprecation
+        /// snippet, need both arms to carry a span).
+        pos: Pos,
+        /// Byte length of the URL token at `pos`.
+        length: usize,
     },
 }
 
@@ -356,6 +365,21 @@ pub struct VarDecl {
     pub pos: Pos,
 }
 
+/// The source span of one top-level `#{…}` interpolation inside a rule's
+/// selector, recorded so an error blamed on the interpolation's *output* can
+/// also point at the expression that produced it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterpSpan {
+    /// 1-based line of the interpolated expression's first character.
+    pub line: u32,
+    /// 1-based column of the expression's first character (just past `#{`).
+    pub col_start: u32,
+    /// 1-based column of the closing `}`.
+    pub col_end: u32,
+    /// 0-based byte offset of the expression's first character.
+    pub offset: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub selector: Vec<TplPiece>,
@@ -363,10 +387,10 @@ pub struct Rule {
     /// 1-based position where the selector text starts, for mapping a
     /// resolved-selector error column back to the source.
     pub selector_pos: crate::scanner::Pos,
-    /// Expression spans (line, start col, col of `}`) of the selector's
-    /// top-level `#{…}` interpolations, parallel to its `Interp` pieces —
-    /// for the dual-span "error in interpolated output" diagnostic.
-    pub selector_interp_spans: Vec<(u32, u32, u32)>,
+    /// Expression spans of the selector's top-level `#{…}` interpolations,
+    /// parallel to its `Interp` pieces — for the dual-span "error in
+    /// interpolated output" diagnostic.
+    pub selector_interp_spans: Vec<InterpSpan>,
     /// 1-based line of the rule's opening `{` (0 when unavailable), for the
     /// serializer's trailing-comment rule.
     pub brace_line: u32,
@@ -404,6 +428,15 @@ pub struct Declaration {
     pub value: Expr,
     pub important: bool,
     pub pos: Pos,
+    /// Where the declaration's value text ends, with trailing *horizontal*
+    /// whitespace skipped: the `;`, the `!` of an `!important` flag, the `}`
+    /// closing the block, or the newline that ends the line. This is the point
+    /// dart-sass's parser stops at when it reads the same text as a *selector*
+    /// — so it is the position blamed when the declaration turns out to be
+    /// illegal where it sits (a bare declaration directly inside a top-level
+    /// `@media`, or at the top level of an `@import`ed file, both of which
+    /// dart reports as `expected "{".`).
+    pub value_end: Pos,
     /// 1-based line where the declaration's value ends (0 when unavailable),
     /// for the serializer's trailing-comment rule.
     pub end_line: u32,
@@ -423,6 +456,8 @@ pub struct CustomDecl {
     pub property: Vec<TplPiece>,
     pub value: Vec<TplPiece>,
     pub pos: Pos,
+    /// Where the verbatim value text ends; see [`Declaration::value_end`].
+    pub value_end: Pos,
     /// 1-based line where the declaration's value ends (0 when unavailable),
     /// for the serializer's trailing-comment rule.
     pub end_line: u32,
@@ -446,6 +481,10 @@ pub struct PropertySet {
     pub important: bool,
     pub body: Vec<Stmt>,
     pub pos: Pos,
+    /// Where the property name's own text ends; see [`Declaration::value_end`].
+    /// A property set's `{` is what dart stops its selector scan at, so this
+    /// is the position blamed when the set is illegal where it sits.
+    pub value_end: Pos,
 }
 
 /// One piece of an interpolated template: literal text or an embedded
@@ -475,8 +514,11 @@ pub enum Expr {
     /// `$name` variable reference.
     Var { name: String, pos: Pos },
     /// `ns.$name` — a module variable reference (e.g. `math.$pi`). Resolved by
-    /// the evaluator against the used module bound to `module`.
-    NsVar { module: String, name: String },
+    /// the evaluator against the used module bound to `module`. `pos` is the
+    /// 1-based position of the `ns` token, i.e. the first character of the
+    /// whole `ns.$name` reference, which is what an "Undefined variable."
+    /// error is blamed on.
+    NsVar { module: String, name: String, pos: Pos },
     /// The parent selector `&` used in value position. Resolves to the current
     /// resolved selector as a comma-separated list of space-separated
     /// compound-selector strings, or `null` at the document root.

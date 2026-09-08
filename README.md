@@ -126,6 +126,23 @@ let files = MemoryImporter::new().with_file("base/_reset.scss", "html { margin: 
 let css = compile("@use \"base/reset\";", &Options::default().with_importer(&files)).unwrap();
 ```
 
+A compile [`Error`] carries its position in both flavours — 1-based
+`line`/`col` for display, and the 0-based byte range `start..end`
+(`Error::byte_span()`) for slicing the source directly — plus `file`, the URL of
+the file the position is in. That is not always the entry file: an error raised
+inside an `@import`ed or `@use`d stylesheet is blamed on *that* file, and the
+byte span indexes *its* source.
+
+```rust
+use sasso::{compile, Options};
+
+let src = "a { color: $missing; }";
+let err = compile(src, &Options::default().with_url("input.scss")).unwrap_err();
+assert_eq!((err.line, err.col), (1, 12));
+assert_eq!(&src[err.byte_span().unwrap()], "$missing");
+assert_eq!(err.file.as_deref(), Some("input.scss"));
+```
+
 ### Staged compiles: inspect and rewrite the intermediates
 
 `compile` takes a source string and runs parse → evaluate → emit as one closed
@@ -169,8 +186,10 @@ a rule's selectors can be swapped for) and `value` (`Value` and friends).
 `Options::record_variable_values(true)` additionally records every variable
 declaration's evaluated value as it is visited, keyed by the declaration's
 span — including variables local to a rule, mixin or loop, whose scope is gone
-by the time the compile finishes. `Evaluator::file_url` resolves a span's file
-id back to the canonical URL of the file that declared it:
+by the time the compile finishes. Each record also carries the resolved
+`selector` of the style rule it was declared in (`None` at the document root),
+even when that rule emits no CSS at all. `Evaluator::file_url` resolves a
+span's file id back to the canonical URL of the file that declared it:
 
 ```rust
 use sasso::{Compiler, MemoryImporter, Options};
@@ -187,7 +206,8 @@ let run = compiler.evaluate(&sheet).unwrap();
 
 for (span, var) in run.evaluator.variable_values() {
     let file = run.evaluator.file_url(span.file).unwrap_or("?");
-    println!("{file} {}:{}  ${} = {}", span.line + 1, span.col + 1, var.name, var.value.to_css(false));
+    let scope = var.selector.as_deref().map_or("(root)".to_string(), |s| s.join(", "));
+    println!("{file} {}:{}  ${} = {}  in {scope}", span.line + 1, span.col + 1, var.name, var.value.to_css(false));
 }
 ```
 
@@ -423,3 +443,4 @@ at your option.
 [`Importer`]: https://docs.rs/sasso
 [`FsImporter`]: https://docs.rs/sasso
 [`MemoryImporter`]: https://docs.rs/sasso
+[`Error`]: https://docs.rs/sasso

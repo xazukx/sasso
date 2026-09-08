@@ -639,19 +639,24 @@ impl<'a> Compiler<'a> {
         // A parse error never reached the evaluator, so render its snippet here
         // (single `root stylesheet` frame) when a diagnostic URL is known.
         sheet.map_err(|mut e| {
-            if !self.url.is_empty() && e.rendered.is_none() && e.has_position() {
-                let span = diag::Span {
-                    line: e.line,
-                    col: e.col,
-                    length: e.length,
-                };
-                e.rendered = Some(diag::render_error(
-                    &e.message,
-                    &self.source,
-                    &self.url,
-                    span,
-                    self.glyphs(),
-                ));
+            if !self.url.is_empty() && e.has_position() {
+                // A parse error is always in the entry file: nothing has been
+                // loaded yet.
+                e = e.with_file(self.url.clone());
+                if e.rendered.is_none() {
+                    let span = diag::Span {
+                        line: e.line,
+                        col: e.col,
+                        length: e.length,
+                    };
+                    e.rendered = Some(diag::render_error(
+                        &e.message,
+                        &self.source,
+                        &self.url,
+                        span,
+                        self.glyphs(),
+                    ));
+                }
             }
             e
         })
