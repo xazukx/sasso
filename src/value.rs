@@ -59,9 +59,8 @@ const _: () = assert!(std::mem::size_of::<Value>() <= 64);
 /// A first-class function reference. Built-in references compare equal by name
 /// (and CSS flag); user references compare by identity of the captured
 /// definition (so a redefined `@function` yields a distinct reference). The
-/// captured user definition is held as a type-erased `Rc` (the concrete
-/// `Callable` lives in `ast`, which cannot be referenced from this module
-/// without a dependency cycle); the evaluator downcasts it when invoking.
+/// captured definition is named by a [`CallableId`], which the evaluator
+/// resolves when invoking.
 #[derive(Clone)]
 pub struct SassFunction {
     /// The function's name (for `inspect` and error messages).
@@ -70,9 +69,31 @@ pub struct SassFunction {
     /// verbatim instead of dispatched to a Sass builtin.
     pub css: bool,
     /// The captured user `@function` definition, or `None` for a built-in /
-    /// plain-CSS reference. Type-erased to break the `ast` ↔ `value` cycle.
-    pub user: Option<std::rc::Rc<dyn std::any::Any>>,
+    /// plain-CSS reference.
+    pub user: Option<CallableId>,
 }
+
+/// A handle to a user `@function`/`@mixin` definition captured as a
+/// first-class value.
+///
+/// A [`Value`] outlives no arena — it can be stored in a map, handed to a host
+/// function, or round-tripped through `meta.call` — while the definition it
+/// names lives in the compile's arena, borrowed from the parse. So the value
+/// carries an INDEX into a table the evaluator owns rather than a reference
+/// into the tree.
+///
+/// Identity is preserved exactly: capturing one definition twice yields the
+/// same handle, and a redefined `@function` gets a fresh one — so comparing two
+/// references still means "the same definition", which is what dart-sass
+/// compares.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct CallableId(pub usize);
+
+/// A handle to a captured module, as [`CallableId`] is to a callable: a
+/// first-class mixin resolved from another `@use`d module carries one so its
+/// body can run in that module's environment.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct ModuleId(pub usize);
 
 impl std::fmt::Debug for SassFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -88,7 +109,7 @@ impl PartialEq for SassFunction {
     fn eq(&self, other: &Self) -> bool {
         match (&self.user, &other.user) {
             // User references: identity of the captured definition.
-            (Some(a), Some(b)) => std::rc::Rc::ptr_eq(a, b),
+            (Some(a), Some(b)) => a == b,
             // Built-in / plain-CSS references: same name and CSS flag.
             (None, None) => self.name == other.name && self.css == other.css,
             _ => false,
@@ -106,21 +127,19 @@ impl SassFunction {
 /// A first-class mixin reference, analogous to [`SassFunction`]. Built-in
 /// references (e.g. `meta.load-css`) compare equal by name; user references
 /// compare by identity of the captured `@mixin` definition (so a redefined
-/// `@mixin` yields a distinct reference). The captured user definition is held
-/// as a type-erased `Rc` (the concrete `Callable` lives in `ast`, which cannot
-/// be referenced from this module without a dependency cycle); the evaluator
-/// downcasts it when invoking.
+/// `@mixin` yields a distinct reference). The captured definition is named by a
+/// [`CallableId`], which the evaluator resolves when invoking.
 #[derive(Clone)]
 pub struct SassMixin {
     /// The mixin's name (for `inspect` and error messages).
     pub name: String,
     /// The captured user `@mixin` definition, or `None` for a built-in
-    /// reference. Type-erased to break the `ast` ↔ `value` cycle.
-    pub user: Option<std::rc::Rc<dyn std::any::Any>>,
+    /// reference.
+    pub user: Option<CallableId>,
     /// The module the captured mixin came from, when it was resolved from
     /// another `@use`d module (so its body runs in that module's environment).
-    /// `None` for a same-module reference. Type-erased to break the cycle.
-    pub module: Option<std::rc::Rc<dyn std::any::Any>>,
+    /// `None` for a same-module reference.
+    pub module: Option<ModuleId>,
     /// The file context the mixin was captured in, used only for a same-module
     /// (`module: None`) first-class capture: when such a reference is applied
     /// via `meta.apply` from another file, a relative `meta.load-css` in its
@@ -158,7 +177,7 @@ impl PartialEq for SassMixin {
     fn eq(&self, other: &Self) -> bool {
         match (&self.user, &other.user) {
             // User references: identity of the captured definition.
-            (Some(a), Some(b)) => std::rc::Rc::ptr_eq(a, b),
+            (Some(a), Some(b)) => a == b,
             // Built-in references: same name.
             (None, None) => self.name == other.name,
             _ => false,

@@ -23,7 +23,10 @@ use crate::error::Error;
 use crate::lines::SrcLines;
 use crate::scanner::Pos;
 use crate::source::{Item, SourceFile, interleave};
-use crate::value::{CalcNode, CalcOp, List, ListSep, Map, Number, SassFunction, SassMixin, SassStr, Value};
+use crate::value::{
+    CalcNode, CalcOp, CallableId, List, ListSep, Map, ModuleId, Number, SassFunction,
+    SassMixin, SassStr, Value,
+};
 use crate::{CanonicalUrl, CanonicalizeContext, Importer, OutputStyle, Syntax};
 
 mod at_rules;
@@ -876,6 +879,18 @@ pub struct Evaluator<'a> {
     /// lockstep with [`Self::current_url`]/[`Self::current_key`] at every file
     /// boundary; it is what turns a [`Span`] into a [`Pos`].
     file: &'a SourceFile<'a>,
+    /// First-class `@function`/`@mixin` definitions captured into values,
+    /// indexed by the [`CallableId`] the value carries. A definition lives in
+    /// the arena; a value does not, so the value names it by handle.
+    captured_callables: Vec<Rc<UserCallable<'a>>>,
+    /// Dedupe for [`Self::captured_callables`], keyed by the definition's
+    /// address — so capturing one definition twice yields one handle and the
+    /// two references compare equal, exactly as identity comparison did.
+    callable_ids: HashMap<usize, CallableId>,
+    /// Modules captured alongside a first-class mixin, indexed by [`ModuleId`].
+    captured_modules: Vec<Rc<Module<'a>>>,
+    /// Dedupe for [`Self::captured_modules`], keyed by the module's address.
+    module_ids: HashMap<usize, ModuleId>,
     /// Parsed `#{…}` bodies, keyed by the enclosing construct's file and span.
     /// An interpolation is parsed once however many times the selector or
     /// prelude holding it is evaluated (a `@for` body, a mixin included twice).
@@ -1489,6 +1504,10 @@ impl<'a> Evaluator<'a> {
             current_linebreaks: Vec::new(),
             extends: Vec::new(),
             decl_prefix: None,
+            captured_callables: Vec::new(),
+            callable_ids: HashMap::default(),
+            captured_modules: Vec::new(),
+            module_ids: HashMap::default(),
             calc_depth: 0,
             in_supports_declaration: false,
             in_plain_css: false,
@@ -1532,6 +1551,46 @@ impl<'a> Evaluator<'a> {
             config_id_counter: std::cell::Cell::new(0),
             consumed_config: Vec::new(),
         }
+    }
+
+    /// Capture a callable as a first-class value, returning its handle.
+    ///
+    /// Capturing the same definition again returns the same handle, so two
+    /// references to one `@function` still compare equal — and a redefined one,
+    /// being a different `Rc`, gets a fresh handle.
+    pub(super) fn capture_fn(&mut self, c: &Rc<UserCallable<'a>>) -> CallableId {
+        let key = Rc::as_ptr(c) as usize;
+        if let Some(id) = self.callable_ids.get(&key) {
+            return *id;
+        }
+        let id = CallableId(self.captured_callables.len());
+        self.captured_callables.push(Rc::clone(c));
+        self.callable_ids.insert(key, id);
+        id
+    }
+
+    /// Resolve a handle back to the definition it names.
+    ///
+    /// A handle only ever comes from [`Self::capture_fn`] on this evaluator, so
+    /// it is always in range.
+    pub(super) fn captured_fn(&self, id: CallableId) -> Option<Rc<UserCallable<'a>>> {
+        self.captured_callables.get(id.0).map(Rc::clone)
+    }
+
+    /// [`Self::capture_fn`] for the module a cross-module mixin came from.
+    pub(super) fn capture_module(&mut self, m: &Rc<Module<'a>>) -> ModuleId {
+        let key = Rc::as_ptr(m) as usize;
+        if let Some(id) = self.module_ids.get(&key) {
+            return *id;
+        }
+        let id = ModuleId(self.captured_modules.len());
+        self.captured_modules.push(Rc::clone(m));
+        self.module_ids.insert(key, id);
+        id
+    }
+
+    pub(super) fn captured_module(&self, id: ModuleId) -> Option<Rc<Module<'a>>> {
+        self.captured_modules.get(id.0).map(Rc::clone)
     }
 
     /// Intern the current file's diagnostics URL as a small id for SrcLines.

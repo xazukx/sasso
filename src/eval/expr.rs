@@ -707,7 +707,7 @@ impl<'a> Evaluator<'a> {
                 let func = crate::value::SassFunction {
                     name: "calc".to_string(),
                     css: false,
-                    user: Some(callable as Rc<dyn std::any::Any>),
+                    user: Some(self.capture_fn(&callable)),
                 };
                 return self
                     .invoke_function_ref(&func, vec![arg], Vec::new(), Pos::NONE)

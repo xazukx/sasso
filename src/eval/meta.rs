@@ -128,10 +128,10 @@ impl<'a> Evaluator<'a> {
                 ))
             }
         };
-        let accepts = match &mixin.user {
-            Some(any) => Rc::clone(any)
-                .downcast::<UserCallable>()
-                .map(|c| body_uses_content(&c.def.body))
+        let accepts = match mixin.user {
+            Some(id) => self
+                .captured_fn(id)
+                .map(|c| body_uses_content(c.def.body))
                 .unwrap_or(false),
             None => mixin.name == "apply",
         };
@@ -202,7 +202,7 @@ impl<'a> Evaluator<'a> {
             return Ok(Value::Function(SassFunction {
                 name,
                 css: false,
-                user: Some(f as Rc<dyn std::any::Any>),
+                user: Some(self.capture_fn(&f)),
             }));
         }
         // A function exposed unprefixed via `@use … as *` (or forwarded into one).
@@ -212,7 +212,7 @@ impl<'a> Evaluator<'a> {
                     return Ok(Value::Function(SassFunction {
                         name,
                         css: false,
-                        user: Some(Rc::clone(&f) as Rc<dyn std::any::Any>),
+                        user: Some(self.capture_fn(&f)),
                     }));
                 }
             }
@@ -284,7 +284,7 @@ impl<'a> Evaluator<'a> {
         if let Some(m) = self.lookup_mixin_norm(&key) {
             return Ok(Value::Mixin(Box::new(SassMixin {
                 name,
-                user: Some(m as Rc<dyn std::any::Any>),
+                user: Some(self.capture_fn(&m)),
                 module: None,
                 // Same-module capture: remember the defining file so a later
                 // `meta.apply` from elsewhere resolves relative loads here.
@@ -311,8 +311,8 @@ impl<'a> Evaluator<'a> {
                     .ok_or_else(|| Error::at(format!("Mixin not found: {name}"), pos))?;
                 return Ok(Value::Mixin(Box::new(SassMixin {
                     name,
-                    user: Some(Rc::clone(&m) as Rc<dyn std::any::Any>),
-                    module: Some(Rc::clone(module) as Rc<dyn std::any::Any>),
+                    user: Some(self.capture_fn(&m)),
+                    module: Some(self.capture_module(module)),
                     // Cross-module capture resolves via the module's own file.
                     origin: None,
                 })));
@@ -339,7 +339,7 @@ impl<'a> Evaluator<'a> {
                 return Ok(Value::Function(SassFunction {
                     name: name.to_string(),
                     css: false,
-                    user: Some(Rc::clone(&f) as Rc<dyn std::any::Any>),
+                    user: Some(self.capture_fn(&f)),
                 }));
             }
             return Err(Error::at(format!("Function not found: {name}"), pos));
@@ -377,8 +377,8 @@ impl<'a> Evaluator<'a> {
             if let Some(m) = module.mixin(name) {
                 return Ok(Value::Mixin(Box::new(SassMixin {
                     name: name.to_string(),
-                    user: Some(Rc::clone(&m) as Rc<dyn std::any::Any>),
-                    module: Some(Rc::clone(module) as Rc<dyn std::any::Any>),
+                    user: Some(self.capture_fn(&m)),
+                    module: Some(self.capture_module(module)),
                     // Cross-module capture resolves via the module's own file.
                     origin: None,
                 })));
@@ -428,7 +428,7 @@ impl<'a> Evaluator<'a> {
                     css: false,
                     user: self
                         .lookup_function_norm(&normalize_arg_name(&s.text))
-                        .map(|c| c as Rc<dyn std::any::Any>),
+                        .map(|c| self.capture_fn(&c)),
                 };
                 self.invoke_function_ref(&f, rest_pos, rest_named, pos)
             }
@@ -448,11 +448,10 @@ impl<'a> Evaluator<'a> {
         pos: Pos,
     ) -> Result<Value, Error> {
         // A captured user `@function`: bind the evaluated args and run its
-        // body in the callable's lexical closure. The payload is a
-        // type-erased `Rc<UserCallable>` (cloning the `Rc` releases the
-        // borrow on `f` before running the body).
-        if let Some(any) = &f.user {
-            if let Ok(callable) = Rc::clone(any).downcast::<UserCallable>() {
+        // body in the callable's lexical closure. Resolving the handle hands
+        // back an owned `Rc`, releasing the borrow on `f` before the body runs.
+        if let Some(id) = f.user {
+            if let Some(callable) = self.captured_fn(id) {
                 let saved_scopes = std::mem::replace(&mut self.scopes, callable.env.clone());
                 let saved_var_spans = std::mem::replace(&mut self.var_spans, callable.env_spans.clone());
                 let saved_semi = std::mem::replace(&mut self.scope_semi_global, callable.env_semi.clone());
@@ -690,16 +689,12 @@ impl<'a> Evaluator<'a> {
                     MemberKind::Function => Value::Function(SassFunction {
                         name: name.clone(),
                         css: false,
-                        user: module
-                            .function(&name)
-                            .map(|f| Rc::clone(&f) as Rc<dyn std::any::Any>),
+                        user: module.function(&name).map(|f| self.capture_fn(&f)),
                     }),
                     MemberKind::Mixin => Value::Mixin(Box::new(SassMixin {
                         name: name.clone(),
-                        user: module
-                            .mixin(&name)
-                            .map(|m| Rc::clone(&m) as Rc<dyn std::any::Any>),
-                        module: Some(Rc::clone(&module) as Rc<dyn std::any::Any>),
+                        user: module.mixin(&name).map(|m| self.capture_fn(&m)),
+                        module: Some(self.capture_module(module)),
                         // Cross-module capture resolves via the module's file.
                         origin: None,
                     })),

@@ -936,11 +936,11 @@ impl<'a> Evaluator<'a> {
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
-        // A captured user `@mixin`: recover the type-erased `Callable`.
-        let callable = match &mixin.user {
-            Some(any) => match Rc::clone(any).downcast::<UserCallable<'a>>() {
-                Ok(c) => c,
-                Err(_) => return Err(Error::unpositioned("Undefined mixin.")),
+        // A captured user `@mixin`: resolve its handle back to the definition.
+        let callable = match mixin.user {
+            Some(id) => match self.captured_fn(id) {
+                Some(c) => c,
+                None => return Err(Error::unpositioned("Undefined mixin.")),
             },
             // A built-in mixin reference (`meta.load-css`/`meta.apply`). Only the
             // content-block validation is observable in the supported cases.
@@ -965,10 +965,7 @@ impl<'a> Evaluator<'a> {
         // A mixin captured from another module runs in that module's
         // environment; either way the body runs in its lexical closure and
         // the `@content` block runs back at the call site.
-        let module = mixin
-            .module
-            .as_ref()
-            .and_then(|m| Rc::clone(m).downcast::<Module>().ok());
+        let module = mixin.module.and_then(|id| self.captured_module(id));
         let saved = module.as_ref().map(|m| self.enter_module(m));
         // Restore the mixin's defining-FILE context for the body (mirroring
         // `run_module_mixin`), so a relative `meta.load-css` resolves against
