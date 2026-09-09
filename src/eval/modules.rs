@@ -1,5 +1,15 @@
 use super::*;
 
+/// A member name in a `@forward ... show/hide` clause. Variables keep
+/// their leading `$` distinction; functions and mixins are bare names.
+#[derive(Debug, Clone)]
+pub enum ForwardMember {
+    /// A `$variable` name (stored without the `$`).
+    Var(String),
+    /// A function or mixin name.
+    Name(String),
+}
+
 /// One `$name: value [!default]` entry in a `@use`/`@forward` `with (...)`
 /// configuration clause.
 #[derive(Debug, Clone)]
