@@ -17,14 +17,11 @@ use std::rc::Rc;
 // (`HashMap::default()` rather than `::new()`, since the hasher is non-default).
 use crate::fxhash::FxHashMap as HashMap;
 
-use crate::ast::{
-    BinOp, CallArg, Callable, Conjunction, CssCustomItem, CssCustomValue, CustomDecl, Declaration, Expr,
-    IfClause, IfCond, ImportArg, ImportModifier, MediaFeature, MediaInParens, MediaQuery, MediaQueryList,
-    ParamList, PropertySet, Rule, SrcLines, Stmt, Stylesheet, SupportsCondition, SupportsValue, TplPiece,
-    UnOp, VarDecl,
-};
+use oxc_css_parser::{Allocator, Span, Syntax as OxcSyntax, ast as ox};
+
 use crate::error::Error;
 use crate::scanner::Pos;
+use crate::source::{Item, SourceFile, interleave};
 use crate::value::{CalcNode, CalcOp, List, ListSep, Map, Number, SassFunction, SassMixin, SassStr, Value};
 use crate::{CanonicalUrl, CanonicalizeContext, Importer, OutputStyle, Syntax};
 
@@ -43,22 +40,25 @@ use binop::*;
 // called from `builtins::math`); re-export it so that path still resolves.
 pub(crate) use binop::eval_div;
 
-/// One cached `@import` resolution: (resolved canonical key, syntax, parsed
-/// sheet, source text), shared across repeated imports within a single
-/// compile. The source rides along so re-executions can swap it in as the
-/// current diagnostics/stamp context.
-type CachedImport = std::rc::Rc<(String, Syntax, crate::ast::Stylesheet, std::rc::Rc<str>)>;
+/// One cached `@import` resolution: the resolved canonical key and the parsed
+/// file, shared across repeated imports within a single compile. The file
+/// carries its own source text and syntax, so re-executions can swap it in as
+/// the current diagnostics/stamp context.
+type CachedImport<'a> = (String, &'a SourceFile<'a>);
 
 /// dart `_preModuleComments`: comments registered on a module's first load,
 /// keyed by its canonical key, shared by reference down nested module
 /// evaluations (see the field on [`Evaluator`]).
 type PreModuleComments = Rc<RefCell<HashMap<String, Vec<(String, SrcLines)>>>>;
 
-/// Parse imported/`@use`d source with the front-end matching its file syntax.
-fn parse_with_syntax(src: &str, syntax: Syntax) -> Result<crate::ast::Stylesheet, Error> {
+/// The parser grammar matching a loaded file's syntax.
+fn oxc_syntax(syntax: Syntax) -> OxcSyntax {
     match syntax {
-        Syntax::Scss => crate::parser::parse(src),
-        Syntax::Css => crate::parser::parse_plain_css(src),
+        Syntax::Scss => OxcSyntax::Scss,
+        // Plain CSS is its own grammar in the parser: no SassScript, no
+        // `#{}`, and root declarations rejected — which is what dart-sass's
+        // `CssParser` enforces by hand.
+        Syntax::Css => OxcSyntax::Css,
     }
 }
 
@@ -842,6 +842,20 @@ pub struct EvalOptions<'a> {
 }
 
 pub struct Evaluator<'a> {
+    /// The arena every parse in this compile allocates into. Source texts,
+    /// syntax trees and cached interpolation fragments all live here, so a
+    /// `&'a` reference into any of them stays valid for the whole compile —
+    /// which is what lets the evaluator hold references into one file's tree
+    /// while loading another.
+    arena: &'a Allocator,
+    /// The file whose statements are currently being evaluated. Swapped in
+    /// lockstep with [`Self::current_url`]/[`Self::current_key`] at every file
+    /// boundary; it is what turns a [`Span`] into a [`Pos`].
+    file: &'a SourceFile<'a>,
+    /// Parsed `#{…}` bodies, keyed by the enclosing construct's file and span.
+    /// An interpolation is parsed once however many times the selector or
+    /// prelude holding it is evaluated (a `@for` body, a mixin included twice).
+    interp_cache: HashMap<(usize, usize, usize), &'a [Chunk<'a>]>,
     scopes: Vec<Scope>,
     /// Every variable declaration's evaluated value, keyed by the
     /// declaration's span — populated only when

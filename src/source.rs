@@ -36,6 +36,9 @@ pub(crate) struct SourceFile<'a> {
     pub comments: &'a [Comment<'a>],
     /// The parsed tree.
     pub sheet: &'a ox::Stylesheet<'a>,
+    /// The grammar the file was parsed under. Re-parsing an interpolation
+    /// body out of it has to use the same one.
+    syntax: OxcSyntax,
 }
 
 impl<'a> SourceFile<'a> {
@@ -106,6 +109,7 @@ impl<'a> SourceFile<'a> {
             line_starts,
             comments,
             sheet: arena.alloc(sheet),
+            syntax,
         }))
     }
 
@@ -131,6 +135,11 @@ impl<'a> SourceFile<'a> {
     /// The 1-based line `offset` sits on.
     pub(crate) fn line_at(&self, offset: usize) -> u32 {
         self.line_starts.partition_point(|&s| s <= offset).max(1) as u32
+    }
+
+    /// The grammar this file was parsed under.
+    pub(crate) fn syntax(&self) -> OxcSyntax {
+        self.syntax
     }
 
     /// Turn a parser error into a compiler error blamed on this file.
