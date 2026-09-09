@@ -145,6 +145,14 @@ impl<'a> SourceFile<'a> {
         self.syntax
     }
 
+    /// The same, as the crate's own [`Syntax`](crate::Syntax).
+    pub(crate) fn file_syntax(&self) -> crate::Syntax {
+        match self.syntax {
+            OxcSyntax::Css => crate::Syntax::Css,
+            _ => crate::Syntax::Scss,
+        }
+    }
+
     /// Turn a parser error into a compiler error blamed on this file.
     pub(crate) fn syntax_error(&self, err: &oxc_css_parser::error::Error) -> Error {
         syntax_error(self.url, self.text, self.bom, self.line_starts, err)

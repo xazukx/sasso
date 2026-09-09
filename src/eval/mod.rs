@@ -258,7 +258,7 @@ pub struct UserCallable<'a> {
     pub env_semi: Vec<bool>,
     pub env_fns: Vec<FnScope<'a>>,
     pub env_mixins: Vec<FnScope<'a>>,
-    pub env_modules: EnvModules,
+    pub env_modules: EnvModules<'a>,
 }
 
 /// A style rule's selector list, carried through the output tree either as the
@@ -1352,7 +1352,7 @@ struct ContentBlock<'a> {
     /// `Some` only for a cross-module include: the environment to install while
     /// the block runs, so the content resolves against the call site, not the
     /// mixin's module.
-    caller_env: Option<Box<SavedModuleEnv>>,
+    caller_env: Option<Box<SavedModuleEnv<'a>>>,
 }
 
 /// The caller-side environment saved while a cross-module member call runs in
@@ -3356,7 +3356,7 @@ impl<'a> Evaluator<'a> {
                     match entry {
                         Some(entry) => {
                             let (resolved_key, file, sheet) = (&entry.0, entry.1, entry.2);
-                            let syntax = file.syntax_kind();
+                            let syntax = file.file_syntax();
                             // The diagnostic `@import` frame records the
                             // IMPORTING file at the URL token — push it before
                             // the context swap below rebinds current_url.
@@ -7682,7 +7682,7 @@ fn include_target<'a>(name: &'a ox::FunctionName<'a>) -> (String, Option<&'a str
 #[allow(clippy::type_complexity)]
 fn forward_visibility<'a>(
     v: Option<&'a ox::SassForwardVisibility<'a>>,
-) -> (Option<Vec<ForwardMember>>, Option<Vec<ForwardMember>>) {
+) -> (Option<Vec<modules::ForwardMember>>, Option<Vec<modules::ForwardMember>>) {
     let Some(v) = v else {
         return (None, None);
     };
@@ -7690,8 +7690,10 @@ fn forward_visibility<'a>(
         .members
         .iter()
         .map(|m| match m {
-            ox::SassForwardMember::Ident(id) => ForwardMember::Name(id.name.to_string()),
-            ox::SassForwardMember::Variable(var) => ForwardMember::Var(var.name.name.to_string()),
+            ox::SassForwardMember::Ident(id) => modules::ForwardMember::Name(id.name.to_string()),
+            ox::SassForwardMember::Variable(var) => {
+                modules::ForwardMember::Var(var.name.name.to_string())
+            }
         })
         .collect();
     match v.modifier.kind {

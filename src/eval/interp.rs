@@ -120,7 +120,8 @@ impl<'a> Evaluator<'a> {
             }));
         }
 
-        let chunks: &'a [Chunk<'a>] = self.arena.alloc_slice_fill_iter(chunks);
+        // `Chunk` needs no drop, so the arena can own the slice outright.
+        let chunks: &'a [Chunk<'a>] = self.arena.alloc(chunks).as_slice();
         self.interp_cache
             .insert((file.text.as_ptr() as usize, span.start, span.end), chunks);
         Ok(chunks)

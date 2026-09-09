@@ -160,7 +160,7 @@ impl<'a> Evaluator<'a> {
         // parser context (`_inUnknownAtRule`) legalizes them too
         // (`@utility x { @media (…) { max-width: …; } }`, Tailwind v4).
         if parents.is_empty() && !self.in_unknown_at_rule {
-            for stmt in body {
+            for stmt in &body.statements {
                 if let Stmt::Decl(d) = stmt {
                     // dart reaches this by re-reading the declaration as a
                     // selector and failing to find the `{`, so the caret lands

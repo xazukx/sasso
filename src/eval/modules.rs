@@ -418,7 +418,7 @@ impl<'a> Evaluator<'a> {
     /// Install a saved environment snapshot, returning the displaced one to
     /// restore afterwards.
     pub(super) fn install_env(&mut self, env: SavedModuleEnv<'a>) -> SavedModuleEnv<'a> {
-        SavedModuleEnv<'a> {
+        SavedModuleEnv {
             scopes: std::mem::replace(&mut self.scopes, env.scopes),
             var_spans: std::mem::replace(&mut self.var_spans, env.var_spans),
             scope_semi_global: std::mem::replace(&mut self.scope_semi_global, env.scope_semi_global),
@@ -435,7 +435,7 @@ impl<'a> Evaluator<'a> {
     /// Clone the current per-module environment (for capturing a content block's
     /// call-site closure).
     pub(super) fn snapshot_env(&self) -> SavedModuleEnv<'a> {
-        SavedModuleEnv<'a> {
+        SavedModuleEnv {
             scopes: self.scopes.clone(),
             var_spans: self.var_spans.clone(),
             scope_semi_global: self.scope_semi_global.clone(),
@@ -565,7 +565,7 @@ impl<'a> Evaluator<'a> {
     ) -> Result<HashMap<String, (Value, bool)>, Error> {
         let mut map = HashMap::default();
         for entry in config {
-            let v = self.eval_value(&entry.value)?.without_slash();
+            let v = entry.value.clone().without_slash();
             // Variable names are dash/underscore-insensitive: store the
             // canonical (dashed) form so `$a_b` and `$a-b` configure the same
             // variable. A duplicate key is an error.
@@ -984,7 +984,7 @@ impl<'a> Evaluator<'a> {
                 .borrow_mut()
                 .insert(key.clone(), Rc::from(src.as_str()));
         }
-        let sheet = match parse_with_syntax(&src, syntax) {
+        let sheet = match SourceFile::parse(self.arena, &diag, &src, oxc_syntax(syntax)) {
             Ok(sheet) => sheet,
             Err(e) => {
                 // A parse error names the LOADED file: render eagerly under
@@ -1709,7 +1709,7 @@ impl<'a> Evaluator<'a> {
         } else {
             Vec::new()
         };
-        SavedModuleEnv<'a> {
+        SavedModuleEnv {
             scopes: std::mem::replace(&mut self.scopes, vec![module_scope]),
             var_spans: std::mem::replace(&mut self.var_spans, module_spans),
             scope_semi_global: std::mem::replace(&mut self.scope_semi_global, vec![true]),
