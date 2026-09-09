@@ -89,6 +89,7 @@ pub use sourcemap::SourceMap;
 /// The parser's own syntax tree, re-exported: sasso evaluates
 /// `oxc-css-parser`'s nodes directly rather than lowering them into a
 /// tree of its own, so this is the type [`Compiler::parse`] hands back.
+pub use oxc_css_parser::ast;
 pub use oxc_css_parser::ast::Stylesheet;
 /// The bump arena a staged compile parses into. Every tree and source
 /// text a [`Compiler`] produces lives here, so it must outlive them.
@@ -508,6 +509,10 @@ fn basename(url: &str) -> &str {
 /// (its intermediates outlive any one step), so every allocation goes to the
 /// global allocator even when [`ScopedAlloc`] is installed.
 pub struct Compiler<'a> {
+    /// The bump arena every stage parses into. The parser's trees borrow
+    /// from it, and the evaluator holds those borrows for the whole compile,
+    /// so it is the caller's to own and must outlive this `Compiler`.
+    allocator: &'a Allocator,
     /// The entry file's source text, as the importer loaded it (owned: the
     /// importer hands back a `String` that must outlive every stage).
     source: String,
@@ -550,6 +555,19 @@ pub struct Evaluation<'a> {
     pub evaluator: Evaluator<'a>,
 }
 
+/// A parsed entry file: the tree, plus the source context that positions and
+/// diagnostics resolve against.
+///
+/// The tree is the parser's own [`Stylesheet`], borrowed mutably from the
+/// arena — rewrite it in place before handing it to
+/// [`evaluate`](Compiler::evaluate), which takes it by value because the
+/// evaluator keeps the borrow for the rest of the compile.
+pub struct Parsed<'a> {
+    pub(crate) file: &'a source::SourceFile<'a>,
+    /// The parsed statements.
+    pub sheet: &'a mut ast::Stylesheet<'a>,
+}
+
 impl<'a> Compiler<'a> {
     /// A staged compile of the entry file named `entry`, loaded through
     /// [`Options::importer`].
@@ -567,7 +585,11 @@ impl<'a> Compiler<'a> {
     ///
     /// Returns [`Error`] when no importer is configured, when the importer
     /// cannot resolve or load `entry`, or when the importer itself fails.
-    pub fn new(entry: &str, options: &'a Options<'a>) -> Result<Self, Error> {
+    pub fn new(
+        allocator: &'a Allocator,
+        entry: &str,
+        options: &'a Options<'a>,
+    ) -> Result<Self, Error> {
         let importer = options.importer.ok_or_else(|| {
             Error::unpositioned(
                 "No importer configured: the staged compiler loads its entry file through Options::with_importer.",
@@ -586,6 +608,7 @@ impl<'a> Compiler<'a> {
             .map_err(|e| Error::unpositioned(e.message))?
             .ok_or_else(|| Error::unpositioned(format!("Can't load stylesheet {:?}.", canonical.as_str())))?;
         Ok(Compiler {
+            allocator,
             source: loaded.contents,
             entry: canonical,
             url: options.url.unwrap_or(entry).to_string(),
@@ -600,8 +623,13 @@ impl<'a> Compiler<'a> {
     ///
     /// Kept private: the public staged API is file-based so that every source
     /// it touches has a name to attribute spans and diagnostics to.
-    pub(crate) fn from_source(source: &'a str, options: &'a Options<'a>) -> Self {
+    pub(crate) fn from_source(
+        allocator: &'a Allocator,
+        source: &'a str,
+        options: &'a Options<'a>,
+    ) -> Self {
         Compiler {
+            allocator,
             source: source.to_string(),
             // No importer resolved this, so its identity is its display name
             // (`""` when none was configured) — there is only ever one such
@@ -650,14 +678,21 @@ impl<'a> Compiler<'a> {
     ///
     /// Returns [`Error`] on a syntax error, carrying a rendered diagnostic
     /// snippet naming the entry file.
-    pub fn parse(&self) -> Result<ast::Stylesheet, Error> {
-        let sheet = match self.syntax {
-            Syntax::Scss => parser::parse(&self.source),
-            Syntax::Css => parser::parse_plain_css(&self.source),
+    pub fn parse(&self) -> Result<Parsed<'a>, Error> {
+        let syntax = match self.syntax {
+            Syntax::Scss => oxc_css_parser::Syntax::Scss,
+            Syntax::Css => oxc_css_parser::Syntax::Css,
+        };
+        let url = if self.url.is_empty() {
+            self.entry.as_str()
+        } else {
+            &self.url
         };
         // A parse error never reached the evaluator, so render its snippet here
         // (single `root stylesheet` frame) when a diagnostic URL is known.
-        sheet.map_err(|e| self.render_entry_error(e))
+        let (file, sheet) = source::SourceFile::parse(self.allocator, url, &self.source, syntax)
+            .map_err(|e| self.render_entry_error(e))?;
+        Ok(Parsed { file, sheet })
     }
 
     /// Render an error raised against the ENTRY file before (or without) an
@@ -690,26 +725,31 @@ impl<'a> Compiler<'a> {
     /// A fresh evaluator configured from these options — the same one
     /// [`evaluate`](Self::evaluate) builds. Use it directly to drive
     /// [`Evaluator::eval_sheet`] yourself.
-    pub fn evaluator(&self) -> Evaluator<'_> {
+    pub fn evaluator(&self, parsed: &Parsed<'a>) -> Evaluator<'a> {
         // A file-based compile always has a name for every source, so it always
         // renders byte-exact `Error:`/`WARNING:` blocks. The nameless
         // `from_source` path keeps the old rule: diagnostics only when the
         // caller supplied a display URL, and the source-map run labels an
         // unnamed entry `stdin` (so `sourcesContent` still works).
         let named = !self.url.is_empty();
+        // `EvalOptions` borrows for `'a`, so the strings it points at are
+        // interned into the arena rather than borrowed from `self`.
+        let source: &'a str = self.allocator.alloc_str(&self.source);
+        let url: &'a str = self.allocator.alloc_str(&self.url);
+        let entry_key: &'a str = self.allocator.alloc_str(self.entry.as_str());
         let (source, url) = match (self.source_map, named) {
-            (true, true) | (false, true) => (self.source.as_str(), self.url.as_str()),
-            (true, false) => (self.source.as_str(), "stdin"),
+            (true, true) | (false, true) => (source, url),
+            (true, false) => (source, "stdin"),
             (false, false) => ("", ""),
         };
-        Evaluator::new(eval::EvalOptions {
+        Evaluator::new(self.allocator, parsed.file, eval::EvalOptions {
             style: self.options.style,
             importer: self.options.importer,
             functions: &self.options.functions,
             source,
             diagnostics: named,
             url,
-            entry_key: self.entry.as_str(),
+            entry_key,
             glyphs: self.glyphs(),
             warn: self.options.warn.as_ref(),
             source_map: self.source_map,
@@ -726,13 +766,18 @@ impl<'a> Compiler<'a> {
     /// Returns [`Error`] on a declaration-placement violation (an `@function` /
     /// `@mixin` in a control directive, `@content` outside a mixin, …) or any
     /// evaluation failure.
-    pub fn evaluate(&self, sheet: &ast::Stylesheet) -> Result<Evaluation<'_>, Error> {
+    pub fn evaluate(&self, parsed: Parsed<'a>) -> Result<Evaluation<'a>, Error> {
+        let mut evaluator = self.evaluator(&parsed);
+        // Re-borrowing the owned `&'a mut` as shared keeps the arena lifetime,
+        // which is why `parsed` is taken by value: the evaluator holds the tree
+        // for as long as it lives.
+        let Parsed { file, sheet } = parsed;
+        let sheet: &'a ast::Stylesheet<'a> = sheet;
         // Reject `@function`/`@mixin` declarations in control directives or
         // function/mixin bodies (a compile-time restriction, checked before
         // eval) — checked here rather than in `parse` so a caller-modified tree
         // is validated too.
-        eval::validate_declarations(sheet).map_err(|e| self.render_entry_error(e))?;
-        let mut evaluator = self.evaluator();
+        eval::validate_declarations(file, sheet).map_err(|e| self.render_entry_error(e))?;
         let mut nodes = Vec::new();
         evaluator.eval_sheet(sheet, &mut nodes)?;
         Ok(Evaluation { nodes, evaluator })
@@ -783,8 +828,8 @@ impl<'a> Compiler<'a> {
     ///
     /// Returns [`Error`] on a parse or evaluation failure.
     pub fn compile(&self) -> Result<String, Error> {
-        let sheet = self.parse()?;
-        let run = self.evaluate(&sheet)?;
+        let parsed = self.parse()?;
+        let run = self.evaluate(parsed)?;
         Ok(self.emit(&run.nodes))
     }
 
@@ -802,9 +847,10 @@ impl<'a> Compiler<'a> {
 /// [`compile_inner`], then emit with the source-map collector and assemble the
 /// [`SourceMap`].
 fn compile_inner_sm(source: &str, options: &Options<'_>) -> Result<CompileResult, Error> {
-    let compiler = Compiler::from_source(source, options).with_source_map(true);
-    let sheet = compiler.parse()?;
-    let mut run = compiler.evaluate(&sheet)?;
+    let arena = Allocator::default();
+    let compiler = Compiler::from_source(&arena, source, options).with_source_map(true);
+    let parsed = compiler.parse()?;
+    let mut run = compiler.evaluate(parsed)?;
     Ok(compiler.emit_with_source_map(&run.nodes, &mut run.evaluator))
 }
 
@@ -812,5 +858,6 @@ fn compile_inner_sm(source: &str, options: &Options<'_>) -> Result<CompileResult
 /// [`compile`]; all of its allocations may be arena-resident, so its result is
 /// copied out by the wrapper before the arena is reset.
 fn compile_inner(source: &str, options: &Options<'_>) -> Result<String, Error> {
-    Compiler::from_source(source, options).compile()
+    let arena = Allocator::default();
+    Compiler::from_source(&arena, source, options).compile()
 }

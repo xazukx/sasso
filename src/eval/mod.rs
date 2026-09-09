@@ -882,15 +882,15 @@ pub struct Evaluator<'a> {
     /// First-class `@function`/`@mixin` definitions captured into values,
     /// indexed by the [`CallableId`] the value carries. A definition lives in
     /// the arena; a value does not, so the value names it by handle.
-    captured_callables: Vec<Rc<UserCallable<'a>>>,
+    captured_callables: RefCell<Vec<Rc<UserCallable<'a>>>>,
     /// Dedupe for [`Self::captured_callables`], keyed by the definition's
     /// address — so capturing one definition twice yields one handle and the
     /// two references compare equal, exactly as identity comparison did.
-    callable_ids: HashMap<usize, CallableId>,
+    callable_ids: RefCell<HashMap<usize, CallableId>>,
     /// Modules captured alongside a first-class mixin, indexed by [`ModuleId`].
-    captured_modules: Vec<Rc<Module<'a>>>,
+    captured_modules: RefCell<Vec<Rc<Module<'a>>>>,
     /// Dedupe for [`Self::captured_modules`], keyed by the module's address.
-    module_ids: HashMap<usize, ModuleId>,
+    module_ids: RefCell<HashMap<usize, ModuleId>>,
     /// Parsed `#{…}` bodies, keyed by the enclosing construct's file and span.
     /// An interpolation is parsed once however many times the selector or
     /// prelude holding it is evaluated (a `@for` body, a mixin included twice).
@@ -1511,10 +1511,10 @@ impl<'a> Evaluator<'a> {
             current_linebreaks: Vec::new(),
             extends: Vec::new(),
             decl_prefix: None,
-            captured_callables: Vec::new(),
-            callable_ids: HashMap::default(),
-            captured_modules: Vec::new(),
-            module_ids: HashMap::default(),
+            captured_callables: RefCell::new(Vec::new()),
+            callable_ids: RefCell::new(HashMap::default()),
+            captured_modules: RefCell::new(Vec::new()),
+            module_ids: RefCell::new(HashMap::default()),
             calc_depth: 0,
             in_supports_declaration: false,
             in_plain_css: false,
@@ -1565,14 +1565,15 @@ impl<'a> Evaluator<'a> {
     /// Capturing the same definition again returns the same handle, so two
     /// references to one `@function` still compare equal — and a redefined one,
     /// being a different `Rc`, gets a fresh handle.
-    pub(super) fn capture_fn(&mut self, c: &Rc<UserCallable<'a>>) -> CallableId {
+    pub(super) fn capture_fn(&self, c: &Rc<UserCallable<'a>>) -> CallableId {
         let key = Rc::as_ptr(c) as usize;
-        if let Some(id) = self.callable_ids.get(&key) {
+        if let Some(id) = self.callable_ids.borrow().get(&key) {
             return *id;
         }
-        let id = CallableId(self.captured_callables.len());
-        self.captured_callables.push(Rc::clone(c));
-        self.callable_ids.insert(key, id);
+        let mut table = self.captured_callables.borrow_mut();
+        let id = CallableId(table.len());
+        table.push(Rc::clone(c));
+        self.callable_ids.borrow_mut().insert(key, id);
         id
     }
 
@@ -1581,23 +1582,24 @@ impl<'a> Evaluator<'a> {
     /// A handle only ever comes from [`Self::capture_fn`] on this evaluator, so
     /// it is always in range.
     pub(super) fn captured_fn(&self, id: CallableId) -> Option<Rc<UserCallable<'a>>> {
-        self.captured_callables.get(id.0).map(Rc::clone)
+        self.captured_callables.borrow().get(id.0).map(Rc::clone)
     }
 
     /// [`Self::capture_fn`] for the module a cross-module mixin came from.
-    pub(super) fn capture_module(&mut self, m: &Rc<Module<'a>>) -> ModuleId {
+    pub(super) fn capture_module(&self, m: &Rc<Module<'a>>) -> ModuleId {
         let key = Rc::as_ptr(m) as usize;
-        if let Some(id) = self.module_ids.get(&key) {
+        if let Some(id) = self.module_ids.borrow().get(&key) {
             return *id;
         }
-        let id = ModuleId(self.captured_modules.len());
-        self.captured_modules.push(Rc::clone(m));
-        self.module_ids.insert(key, id);
+        let mut table = self.captured_modules.borrow_mut();
+        let id = ModuleId(table.len());
+        table.push(Rc::clone(m));
+        self.module_ids.borrow_mut().insert(key, id);
         id
     }
 
     pub(super) fn captured_module(&self, id: ModuleId) -> Option<Rc<Module<'a>>> {
-        self.captured_modules.get(id.0).map(Rc::clone)
+        self.captured_modules.borrow().get(id.0).map(Rc::clone)
     }
 
     /// Intern the current file's diagnostics URL as a small id for SrcLines.

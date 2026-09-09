@@ -469,8 +469,9 @@ impl<'a> Evaluator<'a> {
         // only evaluated when needed.
         if matches!(b.op.kind, K::And | K::Or) {
             let l = self.eval_value(&b.left)?;
-            return match (b.op.kind, l.is_truthy()) {
-                (K::And, true) | (K::Or, false) => self.eval_value(&b.right),
+            let and = matches!(b.op.kind, K::And);
+            return match (and, l.is_truthy()) {
+                (true, true) | (false, false) => self.eval_value(&b.right),
                 _ => Ok(l),
             };
         }
