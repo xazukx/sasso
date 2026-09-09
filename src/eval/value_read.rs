@@ -109,56 +109,18 @@ fn arg_of<'a>(value: &'a ox::ComponentValue<'a>) -> Arg<'a> {
     }
 }
 
-/// A value run grouped into its top-level elements and the separator that
-/// joined them.
-pub(crate) struct Group<'a> {
-    /// Each element, still as the run of component values that spells it.
-    pub items: Vec<&'a [ox::ComponentValue<'a>]>,
-    /// The separator joining them. [`ListSep::Undecided`] when there is a
-    /// single element and nothing joined it.
-    pub sep: ListSep,
-}
-
-/// Group a value run into its top-level elements: commas win over spaces, and
-/// a run with neither is a single element.
+/// Split a value run on top-level commas.
 ///
-/// `/` is *not* a separator here — it is the division operator, handled while
-/// evaluating an element (see `Evaluator::eval_slash_chain`), because whether
-/// it divides or keeps its slash spelling depends on the operands.
-pub(crate) fn group<'a>(values: &'a [ox::ComponentValue<'a>]) -> Group<'a> {
-    let commas = split_on(values, ox::DelimiterKind::Comma);
-    if commas.len() > 1 {
-        let mut items = commas;
-        // A trailing comma does not add an element: `a, b,` is a two-element
-        // list.
-        if items.last().is_some_and(|g| g.is_empty()) {
-            items.pop();
-        }
-        return Group {
-            items,
-            sep: ListSep::Comma,
-        };
+/// A trailing comma adds no element (`a, b,` is a two-element list), which is
+/// the only place the parser's flat run needs interpreting.
+pub(crate) fn split_commas<'a>(
+    values: &'a [ox::ComponentValue<'a>],
+) -> Vec<&'a [ox::ComponentValue<'a>]> {
+    let mut out = split_on(values, ox::DelimiterKind::Comma);
+    if out.len() > 1 && out.last().is_some_and(|g| g.is_empty()) {
+        out.pop();
     }
-
-    let single = commas.into_iter().next().unwrap_or(&[]);
-    if single.is_empty() {
-        return Group {
-            items: Vec::new(),
-            sep: ListSep::Undecided,
-        };
-    }
-    // Everything adjacent is a space list — unless a `/` is in play, in which
-    // case the whole run is one division expression.
-    if single.len() == 1 || single.iter().any(is_solidus) {
-        return Group {
-            items: vec![single],
-            sep: ListSep::Undecided,
-        };
-    }
-    Group {
-        items: single.iter().map(std::slice::from_ref).collect(),
-        sep: ListSep::Space,
-    }
+    out
 }
 
 /// Split a run on a top-level delimiter, keeping empty groups.

@@ -1,4 +1,4 @@
-use super::value_read::{Arg, args_of, group, is_solidus, values_span};
+use super::value_read::{Arg, args_of, is_solidus, split_commas};
 use super::*;
 
 impl<'a> Evaluator<'a> {
@@ -59,93 +59,91 @@ impl<'a> Evaluator<'a> {
         &mut self,
         values: &'a [ox::ComponentValue<'a>],
     ) -> Result<Value, Error> {
-        let g = group(values);
-        match (g.items.len(), g.sep) {
-            (0, _) => Ok(Value::List(List {
+        let groups = split_commas(values);
+        if groups.len() > 1 {
+            let mut vals = Vec::with_capacity(groups.len());
+            for g in &groups {
+                vals.push(self.eval_element_run(g)?);
+            }
+            return Ok(Value::List(List {
+                items: vals.into(),
+                sep: ListSep::Comma,
+                bracketed: false,
+                keywords: None,
+            }));
+        }
+        self.eval_element_run(groups.first().copied().unwrap_or(&[]))
+    }
+
+    /// Evaluate one comma-group: a run of adjacent values, with any `/` folded
+    /// into its immediate neighbours.
+    ///
+    /// `/` binds tighter than juxtaposition, so `1 2 3 / 0.5` is the
+    /// three-element space list `1 2 (3/0.5)` — which is how `rgb(1 2 3 / 0.5)`
+    /// reaches the builtin as a list whose last element carries the slash.
+    fn eval_element_run(
+        &mut self,
+        values: &'a [ox::ComponentValue<'a>],
+    ) -> Result<Value, Error> {
+        if values.is_empty() {
+            return Ok(Value::List(List {
                 items: Vec::new().into(),
                 sep: ListSep::Undecided,
                 bracketed: false,
                 keywords: None,
-            })),
-            (1, ListSep::Undecided) => self.eval_slash_chain(g.items[0]),
-            _ => {
-                let mut vals = Vec::with_capacity(g.items.len());
-                for item in &g.items {
-                    vals.push(self.eval_slash_chain(item)?);
-                }
-                Ok(Value::List(List {
-                    items: vals.into(),
-                    sep: g.sep,
-                    bracketed: false,
-                    keywords: None,
-                }))
+            }));
+        }
+        let mut elems: Vec<Value> = Vec::new();
+        // Whether each element is still eligible to keep the deprecated slash
+        // spelling — true only for number literals and chains of them.
+        let mut slashy: Vec<bool> = Vec::new();
+        let mut i = 0usize;
+        while i < values.len() {
+            if is_solidus(&values[i]) {
+                let op = *values[i].span();
+                i += 1;
+                let Some(rhs_node) = values.get(i) else {
+                    // A trailing `/` with nothing after it is text.
+                    elems.push(Value::Str(SassStr {
+                        text: "/".to_string().into(),
+                        quoted: false,
+                    }));
+                    slashy.push(false);
+                    break;
+                };
+                let rhs = self.eval_value(rhs_node)?;
+                let rhs_ok = is_slash_operand_node(rhs_node);
+                let (lhs, lhs_ok) = match elems.pop() {
+                    Some(v) => (v, slashy.pop().unwrap_or(false)),
+                    // A leading `/` divides nothing; dart reads it as text.
+                    None => (
+                        Value::Str(SassStr {
+                            text: String::new().into(),
+                            quoted: false,
+                        }),
+                        false,
+                    ),
+                };
+                // Inside a calculation `/` is always real division.
+                let slash = self.calc_depth == 0 && lhs_ok && rhs_ok;
+                elems.push(eval_div(lhs, rhs, slash, self.file.pos(op))?);
+                slashy.push(slash);
+                i += 1;
+                continue;
             }
+            elems.push(self.eval_value(&values[i])?);
+            slashy.push(is_slash_operand_node(&values[i]));
+            i += 1;
         }
-    }
-
-    /// Evaluate one list element, which may be a `/`-joined chain.
-    ///
-    /// dart-sass keeps the deprecated slash *spelling* only between number
-    /// literals (and chains of them); anything else — a variable, a call, a
-    /// parenthesised operand — performs real division. Inside a calculation
-    /// `/` always divides.
-    fn eval_slash_chain(
-        &mut self,
-        values: &'a [ox::ComponentValue<'a>],
-    ) -> Result<Value, Error> {
-        if !values.iter().any(is_solidus) {
-            return self.eval_space_run(values);
+        if elems.len() == 1 {
+            return Ok(elems.pop().expect("len checked"));
         }
-        let mut parts: Vec<&'a [ox::ComponentValue<'a>]> = Vec::new();
-        let mut ops: Vec<Span> = Vec::new();
-        let mut start = 0usize;
-        for (i, v) in values.iter().enumerate() {
-            if is_solidus(v) {
-                parts.push(&values[start..i]);
-                ops.push(*v.span());
-                start = i + 1;
-            }
-        }
-        parts.push(&values[start..]);
-
-        let mut iter = parts.into_iter();
-        let first = iter.next().unwrap_or(&[]);
-        let mut slashy = is_slash_operand(first);
-        let mut acc = self.eval_space_run(first)?;
-        for (rhs_values, op) in iter.zip(ops) {
-            let rhs_slashy = is_slash_operand(rhs_values);
-            let rhs = self.eval_space_run(rhs_values)?;
-            let slash = self.calc_depth == 0 && slashy && rhs_slashy;
-            acc = eval_div(acc, rhs, slash, self.file.pos(op))?;
-            slashy = slash;
-        }
-        Ok(acc)
-    }
-
-    /// Evaluate a run of adjacent values with no `,` or `/` in it.
-    fn eval_space_run(
-        &mut self,
-        values: &'a [ox::ComponentValue<'a>],
-    ) -> Result<Value, Error> {
-        match values {
-            [] => Ok(Value::Str(SassStr {
-                text: String::new().into(),
-                quoted: false,
-            })),
-            [one] => self.eval_value(one),
-            many => {
-                let mut vals = Vec::with_capacity(many.len());
-                for v in many {
-                    vals.push(self.eval_value(v)?);
-                }
-                Ok(Value::List(List {
-                    items: vals.into(),
-                    sep: ListSep::Space,
-                    bracketed: false,
-                    keywords: None,
-                }))
-            }
-        }
+        Ok(Value::List(List {
+            items: elems.into(),
+            sep: ListSep::Space,
+            bracketed: false,
+            keywords: None,
+        }))
     }
 
     // ---- single values -----------------------------------------------
@@ -238,14 +236,26 @@ impl<'a> Evaluator<'a> {
             CV::SassBinaryExpression(b) => self.eval_binary_expr(b),
             CV::SassList(l) => self.eval_sass_list(l, false),
             CV::BracketBlock(b) => {
-                let g = group(&b.value);
-                let mut vals = Vec::with_capacity(g.items.len());
-                for item in &g.items {
-                    vals.push(self.eval_slash_chain(item)?);
-                }
+                // `[a, b]` and `[a b]` are bracketed lists; the separator is
+                // whatever joined them, and a single element decides nothing.
+                let groups = split_commas(&b.value);
+                let (items, sep) = if groups.len() > 1 {
+                    let mut vals = Vec::with_capacity(groups.len());
+                    for g in &groups {
+                        vals.push(self.eval_element_run(g)?);
+                    }
+                    (vals, ListSep::Comma)
+                } else {
+                    match self.eval_element_run(groups.first().copied().unwrap_or(&[]))? {
+                        Value::List(l) if !l.bracketed => {
+                            (l.items.to_vec(), l.sep)
+                        }
+                        one => (vec![one], ListSep::Undecided),
+                    }
+                };
                 Ok(Value::List(List {
-                    items: vals.into(),
-                    sep: g.sep,
+                    items: items.into(),
+                    sep,
                     bracketed: true,
                     keywords: None,
                 }))
