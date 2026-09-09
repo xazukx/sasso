@@ -315,7 +315,7 @@ impl<'a> Evaluator<'a> {
                 return Ok(Value::Color(color));
             }
             return Ok(Value::Str(SassStr {
-                text: id.raw.to_string().into(),
+                text: id.name.to_string().into(),
                 quoted: false,
             }));
         }
@@ -340,14 +340,15 @@ impl<'a> Evaluator<'a> {
         i: &'a ox::InterpolableIdent<'a>,
     ) -> Result<String, Error> {
         match i {
-            // The source spelling is kept, not the decoded one: an escape in
-            // an identifier is part of how it serializes.
-            ox::InterpolableIdent::Literal(id) => Ok(id.raw.to_string()),
+            // The DECODED spelling: dart-sass canonicalizes an identifier's
+            // escapes rather than echoing the source, and the serializer
+            // re-escapes whatever still needs it.
+            ox::InterpolableIdent::Literal(id) => Ok(id.name.to_string()),
             ox::InterpolableIdent::SassInterpolated(si) => {
                 let mut out = String::new();
                 for e in &si.elements {
                     match e {
-                        ox::SassInterpolatedIdentElement::Static(p) => out.push_str(p.raw),
+                        ox::SassInterpolatedIdentElement::Static(p) => out.push_str(p.value),
                         ox::SassInterpolatedIdentElement::Expression(cv) => {
                             let v = self.eval_value(cv)?;
                             out.push_str(&interp_checked(&v)?);
@@ -367,14 +368,12 @@ impl<'a> Evaluator<'a> {
         s: &'a ox::InterpolableStr<'a>,
     ) -> Result<String, Error> {
         match s {
-            ox::InterpolableStr::Literal(lit) => Ok(unquote_raw(lit.raw).to_string()),
+            ox::InterpolableStr::Literal(lit) => Ok(lit.value.to_string()),
             ox::InterpolableStr::SassInterpolated(si) => {
                 let mut out = String::new();
                 for e in &si.elements {
                     match e {
-                        ox::SassInterpolatedStrElement::Static(p) => {
-                            out.push_str(unquote_raw(p.raw))
-                        }
+                        ox::SassInterpolatedStrElement::Static(p) => out.push_str(p.value),
                         ox::SassInterpolatedStrElement::Expression(cv) => {
                             let v = self.eval_value(cv)?;
                             out.push_str(&interp_checked(&v)?);
