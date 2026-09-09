@@ -33,12 +33,8 @@ pub(crate) enum Chunk<'a> {
 impl<'a> Evaluator<'a> {
     /// The source text of `span`, with every `#{…}` in it replaced by the
     /// value of its expression.
-    pub(super) fn interpolate(
-        &mut self,
-        file: &'a SourceFile<'a>,
-        span: Span,
-    ) -> Result<String, Error> {
-        Ok(self.interpolate_bounds(file, span)?.0)
+    pub(super) fn interpolate(&mut self, span: Span) -> Result<String, Error> {
+        Ok(self.interpolate_bounds(span)?.0)
     }
 
     /// [`Self::interpolate`], additionally reporting each interpolation's
@@ -48,10 +44,10 @@ impl<'a> Evaluator<'a> {
     /// output" diagnostic.
     pub(super) fn interpolate_bounds(
         &mut self,
-        file: &'a SourceFile<'a>,
         span: Span,
     ) -> Result<(String, Vec<(usize, usize)>), Error> {
-        let chunks = self.chunks(file, span)?;
+        let file = self.file;
+        let chunks = self.chunks(span)?;
         let mut out = String::new();
         let mut chars = 0usize;
         let mut bounds = Vec::new();
@@ -63,7 +59,7 @@ impl<'a> Evaluator<'a> {
                     chars += text.chars().count();
                 }
                 Chunk::Expr { values, span } => {
-                    let value = self.eval_values(file, &values.values)?;
+                    let value = self.eval_values(&values.values)?;
                     let text = interp_checked(&value).map_err(|e| e.or_at(file.pos(*span), 0))?;
                     let len = text.chars().count();
                     bounds.push((chars, len));
@@ -77,17 +73,14 @@ impl<'a> Evaluator<'a> {
 
     /// Whether `span`'s text contains any interpolation at all. A selector or
     /// prelude with none can skip the whole resolve-and-reparse path.
-    pub(super) fn has_interp(&self, file: &SourceFile<'a>, span: Span) -> bool {
-        find_interp(file.text_of(span)).is_some()
+    pub(super) fn has_interp(&self, span: Span) -> bool {
+        find_interp(self.file.text_of(span)).is_some()
     }
 
     /// Split `span` into literal and `#{…}` chunks, parsing each
     /// interpolation body once and caching it in the arena.
-    fn chunks(
-        &mut self,
-        file: &'a SourceFile<'a>,
-        span: Span,
-    ) -> Result<&'a [Chunk<'a>], Error> {
+    fn chunks(&mut self, span: Span) -> Result<&'a [Chunk<'a>], Error> {
+        let file = self.file;
         if let Some(cached) = self.interp_cache.get(&(file.text.as_ptr() as usize, span.start, span.end)) {
             return Ok(cached);
         }
@@ -112,7 +105,7 @@ impl<'a> Evaluator<'a> {
                 }));
             }
             chunks.push(Chunk::Expr {
-                values: self.interp_expr(file, base + body, base + close)?,
+                values: self.interp_expr(base + body, base + close)?,
                 span: Span {
                     start: base + open,
                     end: base + close + 1,
@@ -141,10 +134,10 @@ impl<'a> Evaluator<'a> {
     /// `"        $a + 1"` in place keeps every span pointing at the real file.
     fn interp_expr(
         &mut self,
-        file: &'a SourceFile<'a>,
         start: usize,
         end: usize,
     ) -> Result<&'a ox::ComponentValues<'a>, Error> {
+        let file = self.file;
         // Whitespace-pad the fragment up to its real offset so the parser's
         // spans are absolute; the padding costs one arena string per distinct
         // interpolation, parsed once and cached by the caller.

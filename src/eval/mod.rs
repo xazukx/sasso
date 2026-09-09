@@ -28,12 +28,17 @@ use crate::{CanonicalUrl, CanonicalizeContext, Importer, OutputStyle, Syntax};
 mod at_rules;
 mod binop;
 mod calc;
+mod call;
 mod control_flow;
 mod expr;
+mod interp;
 mod meta;
 mod modules;
 mod plain_css;
 mod scope;
+mod value_read;
+
+use interp::Chunk;
 
 use binop::*;
 // `eval_div` is part of the crate-internal surface (`crate::eval::eval_div`,
@@ -917,6 +922,9 @@ pub struct Evaluator<'a> {
     /// Empty at the document root and inside ordinary rules; a child declaration
     /// emitted while this is non-empty is namespaced as `<prefix>-<name>`.
     decl_prefix: Option<String>,
+    /// How deeply evaluation is nested inside a calculation. `/` divides for
+    /// real inside one, instead of keeping its deprecated slash spelling.
+    calc_depth: u32,
     /// Whether we are evaluating the value of a `@supports` declaration. When
     /// set, `calc()` interiors are NOT simplified (dart-sass keeps
     /// `calc(1 + 2)` literal in `@supports (a: calc(1 + 2))`), matching
@@ -1459,6 +1467,7 @@ impl<'a> Evaluator<'a> {
             current_linebreaks: Vec::new(),
             extends: Vec::new(),
             decl_prefix: None,
+            calc_depth: 0,
             in_supports_declaration: false,
             in_plain_css: false,
             config_is_implicit: false,

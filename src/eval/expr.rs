@@ -1,51 +1,8 @@
+use super::value_read::{Arg, args_of, group, is_solidus, values_span};
 use super::*;
 
 impl<'a> Evaluator<'a> {
-    // ---- templates & expressions ------------------------------------
-
-    pub(super) fn eval_template(&mut self, pieces: &[TplPiece]) -> Result<String, Error> {
-        let mut s = String::new();
-        for piece in pieces {
-            match piece {
-                TplPiece::Lit(t) => s.push_str(t),
-                TplPiece::Interp(e) => {
-                    let v = self.eval_expr(e)?;
-                    s.push_str(&interp_checked(&v)?);
-                }
-            }
-        }
-        Ok(s)
-    }
-
-    /// Like [`Self::eval_template`], additionally returning each `Interp`
-    /// piece's (char start, char length) range in the output — used to decide
-    /// whether a resolved-selector error column falls inside interpolated
-    /// text (the dual-span "error in interpolated output" diagnostic).
-    pub(super) fn eval_template_bounds(
-        &mut self,
-        pieces: &[TplPiece],
-    ) -> Result<(String, Vec<(usize, usize)>), Error> {
-        let mut s = String::new();
-        let mut chars = 0usize;
-        let mut bounds = Vec::new();
-        for piece in pieces {
-            match piece {
-                TplPiece::Lit(t) => {
-                    s.push_str(t);
-                    chars += t.chars().count();
-                }
-                TplPiece::Interp(e) => {
-                    let v = self.eval_expr(e)?;
-                    let out = interp_checked(&v)?;
-                    let len = out.chars().count();
-                    bounds.push((chars, len));
-                    s.push_str(&out);
-                    chars += len;
-                }
-            }
-        }
-        Ok((s, bounds))
-    }
+    // ---- interpolation & the parent selector -------------------------
 
     /// The value of `&` in value position: the current resolved selector list
     /// as a comma-separated Sass list where each item is one complex selector
@@ -89,677 +46,863 @@ impl<'a> Evaluator<'a> {
         })
     }
 
-    pub(super) fn eval_expr(&mut self, expr: &Expr) -> Result<Value, Error> {
-        // Give the error this expression's own position if a helper deeper
-        // down raised it without one, then finalize it into a rendered
-        // diagnostic block here, where `current_url`/`current_source`/
-        // `call_stack` still describe the file and call context it was raised
-        // in (cross-file safe). Since this runs at every level of the
-        // expression tree, the innermost node that HAS a span is the one that
-        // gets blamed — which is where dart-sass blames it too.
-        match self.eval_expr_inner(expr) {
+    // ---- value runs --------------------------------------------------
+
+    /// Evaluate a run of component values — a declaration's value, an
+    /// argument, an interpolation body — as one SassScript value.
+    ///
+    /// The parser keeps `,` and `/` as delimiters in the run rather than
+    /// building list nodes, so the grouping happens here: commas make a comma
+    /// list, adjacency makes a space list, and `/` divides (or keeps its
+    /// deprecated slash spelling, see [`Self::eval_slash_chain`]).
+    pub(super) fn eval_values(
+        &mut self,
+        values: &'a [ox::ComponentValue<'a>],
+    ) -> Result<Value, Error> {
+        let g = group(values);
+        match (g.items.len(), g.sep) {
+            (0, _) => Ok(Value::List(List {
+                items: Vec::new().into(),
+                sep: ListSep::Undecided,
+                bracketed: false,
+                keywords: None,
+            })),
+            (1, ListSep::Undecided) => self.eval_slash_chain(g.items[0]),
+            _ => {
+                let mut vals = Vec::with_capacity(g.items.len());
+                for item in &g.items {
+                    vals.push(self.eval_slash_chain(item)?);
+                }
+                Ok(Value::List(List {
+                    items: vals.into(),
+                    sep: g.sep,
+                    bracketed: false,
+                    keywords: None,
+                }))
+            }
+        }
+    }
+
+    /// Evaluate one list element, which may be a `/`-joined chain.
+    ///
+    /// dart-sass keeps the deprecated slash *spelling* only between number
+    /// literals (and chains of them); anything else — a variable, a call, a
+    /// parenthesised operand — performs real division. Inside a calculation
+    /// `/` always divides.
+    fn eval_slash_chain(
+        &mut self,
+        values: &'a [ox::ComponentValue<'a>],
+    ) -> Result<Value, Error> {
+        if !values.iter().any(is_solidus) {
+            return self.eval_space_run(values);
+        }
+        let mut parts: Vec<&'a [ox::ComponentValue<'a>]> = Vec::new();
+        let mut ops: Vec<Span> = Vec::new();
+        let mut start = 0usize;
+        for (i, v) in values.iter().enumerate() {
+            if is_solidus(v) {
+                parts.push(&values[start..i]);
+                ops.push(*v.span());
+                start = i + 1;
+            }
+        }
+        parts.push(&values[start..]);
+
+        let mut iter = parts.into_iter();
+        let first = iter.next().unwrap_or(&[]);
+        let mut slashy = is_slash_operand(first);
+        let mut acc = self.eval_space_run(first)?;
+        for (rhs_values, op) in iter.zip(ops) {
+            let rhs_slashy = is_slash_operand(rhs_values);
+            let rhs = self.eval_space_run(rhs_values)?;
+            let slash = self.calc_depth == 0 && slashy && rhs_slashy;
+            acc = eval_div(acc, rhs, slash, self.file.pos(op))?;
+            slashy = slash;
+        }
+        Ok(acc)
+    }
+
+    /// Evaluate a run of adjacent values with no `,` or `/` in it.
+    fn eval_space_run(
+        &mut self,
+        values: &'a [ox::ComponentValue<'a>],
+    ) -> Result<Value, Error> {
+        match values {
+            [] => Ok(Value::Str(SassStr {
+                text: String::new().into(),
+                quoted: false,
+            })),
+            [one] => self.eval_value(one),
+            many => {
+                let mut vals = Vec::with_capacity(many.len());
+                for v in many {
+                    vals.push(self.eval_value(v)?);
+                }
+                Ok(Value::List(List {
+                    items: vals.into(),
+                    sep: ListSep::Space,
+                    bracketed: false,
+                    keywords: None,
+                }))
+            }
+        }
+    }
+
+    // ---- single values -----------------------------------------------
+
+    /// Evaluate one component value.
+    ///
+    /// Give the error this node's own position if a helper deeper down raised
+    /// it without one, then finalize it into a rendered diagnostic block here,
+    /// where `current_url`/`current_source`/`call_stack` still describe the
+    /// file and call context it was raised in. Since this runs at every level
+    /// of the value tree, the innermost node that HAS a span is the one that
+    /// gets blamed — which is where dart-sass blames it too.
+    pub(super) fn eval_value(
+        &mut self,
+        value: &'a ox::ComponentValue<'a>,
+    ) -> Result<Value, Error> {
+        match self.eval_value_inner(value) {
             Ok(v) => Ok(v),
             Err(e) => {
-                let e = match expr_span(expr) {
-                    Some((pos, len)) => e.or_at(pos, len),
-                    None => e,
-                };
+                let span = *value.span();
+                let e = e.or_at(self.file.pos(span), span.end.saturating_sub(span.start));
                 Err(self.finalize_error(e))
             }
         }
     }
 
-    pub(super) fn eval_expr_inner(&mut self, expr: &Expr) -> Result<Value, Error> {
-        match expr {
-            Expr::Number(v, unit) => Ok(Value::Number(Number::with_unit(*v, unit.clone()))),
-            Expr::Color(c) => Ok(Value::Color(c.clone())),
-            Expr::Bool(b) => Ok(Value::Bool(*b)),
-            Expr::Null => Ok(Value::Null),
-            Expr::Parent => Ok(self.parent_selector_value()),
-            // Reading a variable drops a bare slash-division's spelling
-            // (dart-sass `withoutSlash`): `$x: 1/2; a {b: $x}` is `0.5`.
-            // Slashes nested inside a stored list are preserved.
-            Expr::Var { name, pos } => match self.lookup(name) {
-                // `lookup` already returns an owned clone out of the scope;
-                // `without_slash` consumes it, so a second clone is wasted.
-                Some(v) => Ok(v.without_slash()),
-                None => {
-                    // A user module variable exposed unprefixed via `@use … as *`.
-                    let star_hits: Vec<Value> = if is_private_member(name) {
-                        Vec::new()
-                    } else {
-                        self.star_user_modules
-                            .iter()
-                            .filter_map(|m| m.var(name))
-                            .collect()
-                    };
-                    if star_hits.len() > 1 {
-                        return Err(Error::at(
-                            "This variable is available from multiple global modules.",
-                            *pos,
-                        ));
-                    }
-                    if let Some(v) = star_hits.into_iter().next() {
-                        return Ok(v.without_slash());
-                    }
-                    // A built-in module variable exposed unprefixed via
-                    // `@use "sass:…" as *` (e.g. `$pi` from `sass:math`).
-                    for m in &self.star_modules {
-                        if let Ok(v) = crate::builtins::module_var(m, name, *pos) {
-                            return Ok(v);
-                        }
-                    }
-                    // The caret covers `$name` (the `$` plus the identifier).
-                    Err(Error::at("Undefined variable.", *pos).with_length(1 + name.len()))
-                }
-            },
-            // The caret covers the whole `ns.$name` reference, exactly as
-            // dart-sass blames `MemberExpression`'s span.
-            Expr::NsVar { module, name, pos } => self
-                .eval_module_var(module, name, *pos)
-                .map_err(|e| e.with_length(module.len() + 2 + name.len())),
-            // A string expression (quoted/unquoted/lone-interpolation) resolves
-            // its interpolation in a context where the `@supports`-declaration
-            // no-simplify flag is OFF, so `(a: #{calc(1 + 2)})` -> `(a: 3)`
-            // (the interpolated calc simplifies), matching dart-sass
-            // `visitStringExpression`.
-            Expr::QuotedString(pieces) => {
+    fn eval_value_inner(
+        &mut self,
+        value: &'a ox::ComponentValue<'a>,
+    ) -> Result<Value, Error> {
+        use ox::ComponentValue as CV;
+        match value {
+            CV::Number(n) => Ok(Value::Number(Number::new(number(n)))),
+            CV::Percentage(p) => Ok(Value::Number(Number::with_unit(
+                number(&p.value),
+                "%".to_string(),
+            ))),
+            CV::Dimension(d) => Ok(Value::Number(Number::with_unit(
+                number(&d.value),
+                d.unit.name.to_string(),
+            ))),
+            CV::HexColor(h) => Ok(match crate::value::Color::from_hex(h.value) {
+                Some(c) => Value::Color(c),
+                // The parser accepts hash tokens that are not colors
+                // (`#abcde`); dart-sass keeps those as identifiers.
+                None => Value::Str(SassStr {
+                    text: format!("#{}", h.raw).into(),
+                    quoted: false,
+                }),
+            }),
+            CV::InterpolableIdent(i) => self.eval_ident(i),
+            CV::InterpolableStr(s) => {
+                // A string expression resolves its interpolation in a context
+                // where the `@supports`-declaration no-simplify flag is OFF,
+                // so `(a: #{calc(1 + 2)})` -> `(a: 3)`, matching dart-sass
+                // `visitStringExpression`.
                 let saved = std::mem::replace(&mut self.in_supports_declaration, false);
-                let text = self.eval_template(pieces);
+                let text = self.eval_interp_str(s);
                 self.in_supports_declaration = saved;
                 Ok(Value::Str(SassStr {
                     text: text?.into(),
                     quoted: true,
                 }))
             }
-            Expr::Ident(pieces) => {
-                let saved = std::mem::replace(&mut self.in_supports_declaration, false);
-                let text = self.eval_template(pieces);
-                self.in_supports_declaration = saved;
-                Ok(Value::Str(SassStr {
-                    text: text?.into(),
-                    quoted: false,
-                }))
-            }
-            Expr::Interp(inner) => {
-                let saved = std::mem::replace(&mut self.in_supports_declaration, false);
-                let v = self.eval_expr(inner);
-                self.in_supports_declaration = saved;
-                // A map or empty list has no CSS serialization, so it cannot be
-                // interpolated (`#{(a: 1)}`, `#{()}`); dart-sass errors instead
-                // of injecting the inspected/empty text.
-                Ok(Value::Str(SassStr {
-                    text: interp_checked(&v?)?.into(),
-                    quoted: false,
-                }))
-            }
-            Expr::ModernIf(clauses) => self.eval_modern_if(clauses),
+            CV::SassVariable(v) => self.eval_variable(v.name.name, self.file.pos(v.span)),
+            CV::SassQualifiedName(q) => match &q.member {
+                ox::SassModuleMemberName::Variable(v) => self
+                    // The caret covers the whole `ns.$name` reference, exactly
+                    // as dart-sass blames `MemberExpression`'s span.
+                    .eval_module_var(q.module.name, v.name.name, self.file.pos(q.span))
+                    .map_err(|e| {
+                        e.with_length(q.module.name.len() + 2 + v.name.name.len())
+                    }),
+                // A bare `ns.member` with no `$` is only a value when it is a
+                // call, which the parser reports as a `Function` instead.
+                ox::SassModuleMemberName::Ident(_) => self.eval_text_value(q.span),
+            },
+            CV::SassParentSelector(n) => match &n.suffix {
+                None => Ok(self.parent_selector_value()),
+                // `&foo` in value position is the parent selector glued to a
+                // suffix, which dart-sass reads as a plain identifier run.
+                Some(_) => self.eval_text_value(n.span),
+            },
             // Parentheses force the deprecated slash to perform real
             // division: `(1/2)` is `0.5`, not the slash value `1/2`.
-            Expr::Paren(inner) => Ok(self.eval_expr(inner)?.without_slash()),
-            Expr::List {
-                items,
-                sep,
-                bracketed,
-            } => {
-                let mut vals = Vec::with_capacity(items.len());
-                for it in items {
-                    vals.push(self.eval_expr(it)?);
+            CV::SassParenthesizedExpression(p) => {
+                Ok(self.eval_value(&p.expr)?.without_slash())
+            }
+            CV::SassUnaryExpression(u) => self.eval_unary(u),
+            CV::SassBinaryExpression(b) => self.eval_binary_expr(b),
+            CV::SassList(l) => self.eval_sass_list(l, false),
+            CV::BracketBlock(b) => {
+                let g = group(&b.value);
+                let mut vals = Vec::with_capacity(g.items.len());
+                for item in &g.items {
+                    vals.push(self.eval_slash_chain(item)?);
                 }
                 Ok(Value::List(List {
                     items: vals.into(),
-                    sep: *sep,
-                    bracketed: *bracketed,
+                    sep: g.sep,
+                    bracketed: true,
                     keywords: None,
                 }))
             }
-            Expr::Map(entries) => {
-                let mut map = Map {
-                    entries: std::rc::Rc::new(Vec::new()),
-                };
-                for entry in entries {
-                    let key = self.eval_expr(&entry.key)?.without_slash();
-                    let val = self.eval_expr(&entry.value)?;
-                    // A duplicate literal key is an error in dart-sass, blamed
-                    // on the SECOND key's own span.
-                    if map.get(&key).is_some() {
-                        return Err(Error::at("Duplicate key.", entry.key_pos));
-                    }
-                    map.insert(key, val);
-                }
-                Ok(Value::Map(map))
-            }
-            Expr::Unary { op, operand } => {
-                let v = self.eval_expr(operand)?.without_slash();
-                match op {
-                    // Unary minus negates a number; on any other operand
-                    // dart-sass produces an unquoted `-<value>` string
-                    // (`- red` -> `-red`, `- "q"` -> `-"q"`). A calculation that
-                    // could not reduce to a number has no negation operator, so
-                    // dart-sass rejects it ("Undefined operation \"-calc(…)\".").
-                    UnOp::Neg => match v {
-                        Value::Number(n) => Ok(Value::Number(n.copy_units(-n.value))),
-                        Value::Calc(_) => Err(Error::unpositioned(format!(
-                            "Undefined operation \"-{}\".",
-                            v.to_css(false)
-                        ))),
-                        // A map or empty list cannot be serialized into the
-                        // unquoted `-<value>` string dart-sass produces, so it
-                        // errors before the join (`-(a: 1)`, `-()`).
-                        other => match css_value_error_msg(&other) {
-                            Some(msg) => Err(Error::unpositioned(msg)),
-                            None => Ok(Value::Str(SassStr {
-                                text: format!("-{}", other.to_css(false)).into(),
-                                quoted: false,
-                            })),
-                        },
-                    },
-                    // Unary plus is numeric identity; on any other operand it
-                    // prepends `+` as an unquoted string (`+foo` -> `+foo`). A
-                    // residual calculation has no unary-plus operator and is
-                    // rejected the same way.
-                    UnOp::Plus => match v {
-                        Value::Number(_) => Ok(v),
-                        Value::Calc(_) => Err(Error::unpositioned(format!(
-                            "Undefined operation \"+{}\".",
-                            v.to_css(false)
-                        ))),
-                        // As with unary `-`, a map or empty list has no CSS
-                        // serialization to prepend `+` to (`+(a: 1)`, `+()`).
-                        other => match css_value_error_msg(&other) {
-                            Some(msg) => Err(Error::unpositioned(msg)),
-                            None => Ok(Value::Str(SassStr {
-                                text: format!("+{}", other.to_css(false)).into(),
-                                quoted: false,
-                            })),
-                        },
-                    },
-                    UnOp::Not => Ok(Value::Bool(!v.is_truthy())),
+            CV::SassMap(m) => self.eval_map(m),
+            CV::Function(f) => self.eval_function(f),
+            CV::Url(u) => self.eval_url(u),
+            CV::Calc(c) => self.eval_calc_node_value(c),
+            CV::Ratio(r) => eval_div(
+                Value::Number(Number::new(number(&r.numerator))),
+                Value::Number(Number::new(number(&r.denominator))),
+                true,
+                self.file.pos(r.solidus_span),
+            ),
+            // A keyword or splat argument outside an argument list, and every
+            // remaining node kind — raw tokens, unicode ranges, an id selector
+            // used as a value (`nav-up: #a`) — read as their own text.
+            CV::SassKeywordArgument(k) => self.eval_value(&k.value),
+            CV::SassArbitraryArgument(a) => self.eval_value(&a.value),
+            other => self.eval_text_value(*other.span()),
+        }
+    }
+
+    /// A node with no SassScript meaning of its own: its source text, with
+    /// interpolation resolved, as an unquoted string.
+    fn eval_text_value(&mut self, span: Span) -> Result<Value, Error> {
+        let saved = std::mem::replace(&mut self.in_supports_declaration, false);
+        let text = self.interpolate(span);
+        self.in_supports_declaration = saved;
+        Ok(Value::Str(SassStr {
+            text: text?.into(),
+            quoted: false,
+        }))
+    }
+
+    /// An identifier in value position: the SassScript keywords, then a named
+    /// color, then a plain (possibly interpolated) identifier.
+    fn eval_ident(&mut self, i: &'a ox::InterpolableIdent<'a>) -> Result<Value, Error> {
+        if let ox::InterpolableIdent::Literal(id) = i {
+            // In plain CSS `true`/`false`/`null` have no special meaning; they
+            // stay plain identifiers (dart-sass `CssParser`).
+            if !self.in_plain_css {
+                match id.name {
+                    "true" => return Ok(Value::Bool(true)),
+                    "false" => return Ok(Value::Bool(false)),
+                    "null" => return Ok(Value::Null),
+                    _ => {}
                 }
             }
-            Expr::Binary { op, lhs, rhs, pos } => {
-                // `and`/`or` short-circuit and yield a value, so the
-                // right operand is only evaluated when needed.
-                let l = self.eval_expr(lhs)?;
-                match op {
-                    BinOp::And => {
-                        if l.is_truthy() {
-                            self.eval_expr(rhs)
-                        } else {
-                            Ok(l)
+            if let Some(color) = crate::value::named_color(id.name) {
+                return Ok(Value::Color(color));
+            }
+            return Ok(Value::Str(SassStr {
+                text: id.raw.to_string().into(),
+                quoted: false,
+            }));
+        }
+        // An interpolated identifier resolves its interpolation with the
+        // `@supports` no-simplify flag off, like a string expression.
+        let saved = std::mem::replace(&mut self.in_supports_declaration, false);
+        let text = self.eval_interp_ident(i);
+        self.in_supports_declaration = saved;
+        let text = text?;
+        // dart-sass re-reads the resolved text: an interpolation that produces
+        // a keyword or a color name still yields a plain unquoted string, so
+        // only the literal arm above consults them.
+        Ok(Value::Str(SassStr {
+            text: text.into(),
+            quoted: false,
+        }))
+    }
+
+    /// An interpolable identifier's text, with `#{…}` resolved.
+    pub(super) fn eval_interp_ident(
+        &mut self,
+        i: &'a ox::InterpolableIdent<'a>,
+    ) -> Result<String, Error> {
+        match i {
+            // The source spelling is kept, not the decoded one: an escape in
+            // an identifier is part of how it serializes.
+            ox::InterpolableIdent::Literal(id) => Ok(id.raw.to_string()),
+            ox::InterpolableIdent::SassInterpolated(si) => {
+                let mut out = String::new();
+                for e in &si.elements {
+                    match e {
+                        ox::SassInterpolatedIdentElement::Static(p) => out.push_str(p.raw),
+                        ox::SassInterpolatedIdentElement::Expression(cv) => {
+                            let v = self.eval_value(cv)?;
+                            out.push_str(&interp_checked(&v)?);
                         }
                     }
-                    BinOp::Or => {
-                        if l.is_truthy() {
-                            Ok(l)
-                        } else {
-                            self.eval_expr(rhs)
+                }
+                Ok(out)
+            }
+            other => self.interpolate(*other.span()),
+        }
+    }
+
+    /// An interpolable string's *contents*, with `#{…}` resolved and the
+    /// surrounding quotes removed.
+    pub(super) fn eval_interp_str(
+        &mut self,
+        s: &'a ox::InterpolableStr<'a>,
+    ) -> Result<String, Error> {
+        match s {
+            ox::InterpolableStr::Literal(lit) => Ok(unquote_raw(lit.raw).to_string()),
+            ox::InterpolableStr::SassInterpolated(si) => {
+                let mut out = String::new();
+                for e in &si.elements {
+                    match e {
+                        ox::SassInterpolatedStrElement::Static(p) => {
+                            out.push_str(unquote_raw(p.raw))
+                        }
+                        ox::SassInterpolatedStrElement::Expression(cv) => {
+                            let v = self.eval_value(cv)?;
+                            out.push_str(&interp_checked(&v)?);
                         }
                     }
-                    _ => {
-                        let r = self.eval_expr(rhs)?;
-                        eval_binary(*op, l.without_slash(), r.without_slash(), *pos)
-                    }
                 }
+                Ok(out)
             }
-            Expr::Div {
-                lhs, rhs, slash, pos, ..
-            } => {
-                let l = self.eval_expr(lhs)?;
-                let r = self.eval_expr(rhs)?;
-                eval_div(l, r, *slash, *pos)
-            }
-            Expr::Calc { inner, .. } => {
-                // dart resolves user functions BEFORE calculation semantics: a
-                // user-defined `@function calc(...)` shadows the CSS
-                // calculation (issue_1706), receiving the argument evaluated
-                // as an ordinary expression. Vendor-prefixed `-x-calc(` stays
-                // a parse-time special function and can't be overridden.
-                if !self.in_plain_css {
-                    if let Some(callable) = self.lookup_function("calc") {
-                        let arg = self.eval_expr(inner)?.without_slash();
-                        let f = crate::value::SassFunction {
-                            name: "calc".to_string(),
-                            css: false,
-                            user: Some(callable as Rc<dyn std::any::Any>),
-                        };
-                        return self
-                            .invoke_function_ref(&f, vec![arg], Vec::new(), Pos::NONE)
-                            .map(Value::without_slash);
-                    }
-                }
-                let node = self.eval_calc(inner)?;
-                // Inside a `@supports` declaration the calculation is kept
-                // unsimplified: the `calc()` wrapper is always preserved (even
-                // around a single number), matching dart-sass `simplify: false`.
-                if self.in_supports_declaration {
-                    return Ok(Value::Calc(node));
-                }
-                // A calculation that reduces to a single finite number unwraps
-                // to it; a non-finite result (infinity/NaN) stays a
-                // calculation so it serializes as `calc(infinity)` etc., and
-                // anything still containing an operation stays a calculation.
-                match node {
-                    // A calculation that reduces to a single number unwraps to
-                    // it — including a non-finite result (dart-sass:
-                    // `meta.type-of(calc(NaN)) == number`); the Number's own
-                    // serialization restores the `calc(NaN)`/`calc(infinity *
-                    // 1px)` spelling.
-                    CalcNode::Number(n) => Ok(Value::Number(n)),
-                    // `calc()` wrapping a single already-complete calculation
-                    // (`calc(min(1%, 2px))`, `calc(clamp(…))`, etc.) is
-                    // redundant: dart-sass drops the outer `calc()` and emits
-                    // the inner calculation directly. (A non-calculation leaf
-                    // such as `calc(var(--x))` keeps its wrapper.)
-                    CalcNode::Str(s) if is_complete_calculation(&s) => Ok(Value::Str(SassStr {
-                        text: s.into(),
-                        quoted: false,
-                    })),
-                    other => Ok(Value::Calc(other)),
-                }
-            }
-            // An interpolated-name call is a *plain CSS* function (dart-sass
-            // `PlainCssCallable`): the resolved name is never dispatched to a
-            // built-in or user function; the arguments evaluate and the call
-            // serializes verbatim. Keyword arguments are rejected.
-            Expr::InterpFunc { name, args, pos } => {
-                let fname = self.eval_template(name)?;
-                if args.iter().any(|a| a.name.is_some()) {
-                    return Err(Error::at(
-                        "Plain CSS functions don't support keyword arguments.",
-                        *pos,
-                    ));
-                }
-                let mut parts: Vec<String> = Vec::with_capacity(args.len());
-                for a in args {
-                    let v = self.eval_expr(&a.value)?;
-                    parts.push(v.to_css(self.compressed()));
-                }
-                Ok(Value::Str(SassStr {
-                    text: format!("{fname}({})", parts.join(", ")).into(),
-                    quoted: false,
-                }))
-            }
-            Expr::Func {
-                name,
-                args,
+            other => self.interpolate(*other.span()),
+        }
+    }
+
+    /// Read a variable, honouring the unprefixed `@use … as *` namespaces.
+    ///
+    /// Reading a variable drops a bare slash-division's spelling (dart-sass
+    /// `withoutSlash`): `$x: 1/2; a {b: $x}` is `0.5`. Slashes nested inside a
+    /// stored list are preserved.
+    fn eval_variable(&mut self, name: &str, pos: Pos) -> Result<Value, Error> {
+        if let Some(v) = self.lookup(name) {
+            // `lookup` already returns an owned clone out of the scope;
+            // `without_slash` consumes it, so a second clone is wasted.
+            return Ok(v.without_slash());
+        }
+        // A user module variable exposed unprefixed via `@use … as *`.
+        let star_hits: Vec<Value> = if is_private_member(name) {
+            Vec::new()
+        } else {
+            self.star_user_modules
+                .iter()
+                .filter_map(|m| m.var(name))
+                .collect()
+        };
+        if star_hits.len() > 1 {
+            return Err(Error::at(
+                "This variable is available from multiple global modules.",
                 pos,
-                length,
-                module,
-            } => {
-                // A namespaced call `ns.fn(...)` resolves only against the used
-                // built-in module bound to `ns`.
-                if let Some(ns) = module {
-                    return self.eval_module_call(ns, name, args, *pos, *length);
-                }
-                // In a plain-CSS module no function is invoked (dart-sass
-                // `plainCss` looks none up): the call re-serializes verbatim
-                // with its arguments evaluated. CSS calculations (min/max/…)
-                // still simplify through their normal paths below.
-                if self.in_plain_css
-                    && !is_supports_calc_function(name)
-                    && !name.eq_ignore_ascii_case("calc")
-                    && !args.iter().any(|a| a.splat || a.name.is_some())
-                {
-                    let mut parts: Vec<String> = Vec::with_capacity(args.len());
-                    for a in args {
-                        parts.push(self.eval_expr(&a.value)?.to_css(self.compressed()));
-                    }
-                    return Ok(Value::Str(SassStr {
-                        text: format!("{name}({})", parts.join(", ")).into(),
-                        quoted: false,
-                    }));
-                }
-                // Resolve a user `@function` of this name ONCE (it was probed
-                // 6+ times along this arm). A `--`-prefixed call is always plain
-                // CSS (dart reserves it for custom functions), so it never binds
-                // to a user function even though `@function __a` would normalize
-                // to the same `--a` key. Every later "no user override" guard
-                // reuses `has_user_fn`.
-                let user_fn = if name.starts_with("--") {
-                    None
-                } else {
-                    self.lookup_function(name)
-                };
-                let has_user_fn = user_fn.is_some();
-                // Inside a `@supports` declaration, a CSS math function
-                // (`min`/`max`/`clamp`/…) is kept unsimplified: its arguments
-                // are resolved through the (non-folding) calc machinery and the
-                // call is serialized verbatim, matching dart-sass
-                // `simplify: false`. A user-defined function of the same name
-                // still wins, so this only applies to builtins.
-                if self.in_supports_declaration && is_supports_calc_function(name) && !has_user_fn {
-                    return self.eval_supports_calc_func(name, args, *pos);
-                }
-                // if() is lazy: only the selected branch is evaluated.
-                if name == "if" {
-                    return self.eval_if_function(args, *pos);
-                }
-                // User-defined @function takes precedence over builtins.
-                if let Some(func) = user_fn {
-                    return self.call_function(&func, args, Some((*pos, *length)));
-                }
-                // A user module function exposed unprefixed via `@use … as *`.
-                if !self.star_user_modules.is_empty() && !is_private_member(name) {
-                    let hits: Vec<(Rc<Module>, Rc<UserCallable>)> = self
-                        .star_user_modules
-                        .iter()
-                        .filter_map(|m| m.function(name).map(|f| (Rc::clone(m), f)))
-                        .collect();
-                    if hits.len() > 1 {
-                        return Err(Error::at(
-                            "This function is available from multiple global modules.".to_string(),
-                            *pos,
-                        ));
-                    }
-                    if let Some((m, f)) = hits.into_iter().next() {
-                        return self.call_user_module_function(&m, &f, args, Some((*pos, *length)));
-                    }
-                }
-                // A bare `calc()` reaches here as a plain call (the parser only
-                // treats `calc(<arg>)` as a calculation), so a user
-                // `@function calc()` could have handled it above. With no user
-                // override it is the CSS `calc()`, which requires an argument.
-                if name.eq_ignore_ascii_case("calc") && args.is_empty() {
-                    return Err(Error::at("Missing argument.", *pos));
-                }
-                // The pure CSS-calculation functions are parsed as
-                // calculations, which cannot take a `...` rest argument.
-                if is_calc_function(name) && args.iter().any(|a| a.splat) {
-                    return Err(Error::at("Rest arguments can't be used with calculations.", *pos));
-                }
-                // The single-/double-argument math calculations (`sin`, `cos`,
-                // `sqrt`, `pow`, `log`, `hypot`, …) parse their arguments as
-                // calculation expressions, not ordinary SassScript. That means a
-                // disallowed operator (`%`, comparison) inside an argument is
-                // rejected ("This operation can't be used in a calculation."),
-                // and an argument that does not reduce to a single number — it
-                // still references a `var()`/interpolation/unknown ident — keeps
-                // the whole call as a preserved calculation
-                // (`sin(2px + var(--c))`) rather than erroring. When every
-                // argument reduces to a plain number the normal builtin path
-                // computes the result (and applies its unit checks), so this only
-                // changes the two calc-specific behaviours above.
-                if is_pure_calc_math_function(name)
-                    && !has_user_fn
-                    && !args.iter().any(|a| a.splat || a.name.is_some())
-                {
-                    if let Some(v) = self.try_eval_calc_math_call(name, args, *pos)? {
-                        return Ok(v);
-                    }
-                }
-                // `calc-size()` is a two-argument calculation: a sizing keyword
-                // (or `var()`/calculation) plus a calculation, always preserved.
-                if name.eq_ignore_ascii_case("calc-size")
-                    && !has_user_fn
-                    && !args.iter().any(|a| a.splat || a.name.is_some())
-                {
-                    return self.eval_calc_size(args, *pos);
-                }
-                // A three-argument `clamp()` evaluates its bounds and value as
-                // calculations, so a `var()`/operation argument (`1% + 1px`)
-                // keeps the call preserved instead of erroring as Sass
-                // arithmetic. Other arities (a preserved single argument, or an
-                // arity error) fall through to the builtin.
-                if name.eq_ignore_ascii_case("clamp")
-                    && !has_user_fn
-                    && args.len() == 3
-                    && !args.iter().any(|a| a.splat || a.name.is_some())
-                {
-                    return self.try_eval_clamp(args, *pos);
-                }
-                // `abs()` is a legacy global function that also exists as the CSS
-                // `abs()` calculation. When its single positional argument
-                // references a `var()`/interpolation it is parsed as a
-                // calculation and preserved with its numeric subtree folded
-                // (`abs(1px + 2px - var(--c))` -> `abs(3px - var(--c))`).
-                // Without such a substitution the argument resolves to a plain
-                // number, so the deprecated `math.abs` global handles it as
-                // before (`abs(1 + 1px)` -> `2px`, `abs(-3) -> 3`).
-                if name.eq_ignore_ascii_case("abs")
-                    && !has_user_fn
-                    && args.len() == 1
-                    && args[0].name.is_none()
-                    && !args[0].splat
-                    && expr_contains_calc_substitution(&args[0].value)
-                {
-                    let node = self.eval_calc(&args[0].value)?;
-                    return Ok(Value::Str(SassStr {
-                        text: format!("abs({})", node.to_calc_css(self.compressed())).into(),
-                        quoted: false,
-                    }));
-                }
-                // `round()` is likewise the CSS round() calculation: each
-                // argument evaluates as a calculation (so `1.4px + var(--c)`
-                // keeps its `+` with the numeric subtree folded, and
-                // `1px + 4px` folds to `5px`). If every argument simplifies
-                // (numbers, plus a leading strategy keyword), the normal
-                // builtin computes the result; otherwise the call is
-                // preserved. Calc-incompatible SassScript (`7 % 3`) falls back
-                // to the legacy one-argument `math.round` (arity errors and
-                // all).
-                if name.eq_ignore_ascii_case("round")
-                    && !has_user_fn
-                    && (1..=3).contains(&args.len())
-                    && !args.iter().any(|a| a.splat || a.name.is_some())
-                {
-                    // A SassScript-only operator (`7 % 3`) makes the call a
-                    // plain function, and the only plain `round` is the legacy
-                    // one-argument `math.round` — multi-argument forms are an
-                    // arity error (dart-sass).
-                    if args.iter().any(|a| expr_has_non_calc_op(&a.value)) {
-                        if args.len() > 1 {
-                            return Err(Error::at(
-                                format!("Only 1 argument allowed, but {} were passed.", args.len()),
-                                *pos,
-                            ));
-                        }
-                        // A single argument falls through to the legacy builtin.
-                    } else if let Ok(nodes) =
-                        args.iter()
-                            .map(|a| self.eval_calc(&a.value))
-                            .collect::<Result<Vec<CalcNode>, Error>>()
-                    {
-                        let simplified = |i: usize, n: &CalcNode| match n {
-                            CalcNode::Number(_) => true,
-                            // A leading strategy keyword participates as a
-                            // keyword, not an operand.
-                            CalcNode::Str(s) => {
-                                i == 0
-                                    && nodes.len() >= 2
-                                    && matches!(
-                                        s.to_ascii_lowercase().as_str(),
-                                        "nearest" | "up" | "down" | "to-zero"
-                                    )
-                            }
-                            _ => false,
-                        };
-                        if !nodes.iter().enumerate().all(|(i, n)| simplified(i, n)) {
-                            // A preserved round is a first-class Calculation
-                            // (`meta.calc-name`/`calc-args` see it).
-                            return Ok(Value::Calc(CalcNode::Func {
-                                name: "round".to_string(),
-                                args: nodes,
-                            }));
-                        }
-                        // Fall through to the normal builtin path below.
-                    }
-                }
-                // `min`/`max` are likewise CSS calculations: their arguments
-                // fold as calc expressions, and any unsimplifiable operand
-                // (`1px + var(--c)`) preserves the call with the folded
-                // subtrees spelled as calc (`max(5px, 1px + var(--c))`). When
-                // every argument folds to a number the builtin computes as
-                // before, and SassScript-only operators (`7 % 3`) keep the
-                // whole call on the legacy path.
-                if (name.eq_ignore_ascii_case("min") || name.eq_ignore_ascii_case("max"))
-                    && !has_user_fn
-                    && !args.is_empty()
-                    && !args.iter().any(|a| a.splat || a.name.is_some())
-                    && !args.iter().any(|a| expr_has_non_calc_op(&a.value))
-                {
-                    if let Ok(nodes) = args
-                        .iter()
-                        .map(|a| self.eval_calc(&a.value))
-                        .collect::<Result<Vec<CalcNode>, Error>>()
-                    {
-                        if !nodes.iter().all(|n| matches!(n, CalcNode::Number(_))) {
-                            // A preserved min/max is a first-class Calculation
-                            // (`meta.calc-name`/`calc-args` see it).
-                            return Ok(Value::Calc(CalcNode::Func {
-                                name: name.to_ascii_lowercase(),
-                                args: nodes,
-                            }));
-                        }
-                    }
-                    // Fall through to the normal builtin path below.
-                }
-                // Evaluate args, expanding any `...` splat into positional /
-                // keyword arguments.
-                let (mut pos_args, mut named, call_sep) = self.eval_call_args(args)?;
-                // The global (deprecated) aliases of the `sass:meta` existence
-                // predicates resolve against the evaluator state, not the
-                // value-only builtin layer. A user-defined function of the same
-                // name still wins (checked above).
-                if matches!(
-                    name.as_str(),
-                    "variable-exists"
-                        | "global-variable-exists"
-                        | "mixin-exists"
-                        | "function-exists"
-                        | "content-exists"
-                        | "get-function"
-                        | "call"
-                        | "keywords"
-                ) {
-                    for v in &mut pos_args {
-                        *v = std::mem::replace(v, Value::Null).without_slash();
-                    }
-                    for (_, v) in &mut named {
-                        *v = std::mem::replace(v, Value::Null).without_slash();
-                    }
-                    if let Some(r) = self.try_meta_eval_call(name, &pos_args, &named, *pos) {
-                        return r;
-                    }
-                }
-                // The proprietary Microsoft `alpha()` filter overload: when the
-                // global `alpha()` is called with one or more unquoted-string
-                // arguments that each contain a `=` (an IE `alpha(opacity=80)`
-                // hack, produced by the single-`=` operator), dart-sass passes
-                // the call through verbatim as a CSS function instead of
-                // treating the argument as a color.
-                if name == "alpha"
-                    && named.is_empty()
-                    && !pos_args.is_empty()
-                    && pos_args
-                        .iter()
-                        .all(|v| matches!(v, Value::Str(s) if !s.quoted && s.text.contains('=')))
-                {
-                    let inner = pos_args
-                        .iter()
-                        .map(|v| v.to_css(false))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return Ok(Value::Str(SassStr {
-                        text: format!("alpha({inner})").into(),
-                        quoted: false,
-                    }));
-                }
-                // A member exposed unprefixed via `@use "sass:<mod>" as *`: when
-                // the bare name is not already a global builtin, route it to the
-                // first star module that owns it (e.g. `div` -> `math.div`,
-                // `set` -> `map.set`). Global builtins keep their own behaviour.
-                if !crate::builtins::is_builtin(name) {
-                    for m in self.star_modules.clone() {
-                        if crate::builtins::module_has_member(&m, name) {
-                            for v in &mut pos_args {
-                                *v = std::mem::replace(v, Value::Null).without_slash();
-                            }
-                            for (n, v) in &mut named {
-                                *v = std::mem::replace(v, Value::Null).without_slash();
-                                let _ = n;
-                            }
-                            return crate::builtins::call_module(&m, name, &pos_args, &named, *pos)
-                                .map(Value::without_slash);
-                        }
-                    }
-                }
-                // Host-defined custom functions (dart-sass `functions`): they
-                // override built-in globals but lose to user `@function`s and
-                // module members (checked above). Resolved by calling back into
-                // the embedder with the bound args serialized to the host-value
-                // wire format.
-                if !self.options.functions.is_empty() {
-                    let norm = crate::host_fn::normalize_name(name);
-                    if let Some(idx) = self.options.functions.iter().position(|f| f.name == norm) {
-                        // Extract the owned signature + callback so the immutable
-                        // borrow on `self.options` ends before any `&mut self`.
-                        let (param_names, rest_name): (Vec<String>, Option<String>) = {
-                            let hf = &self.options.functions[idx];
-                            match &hf.params {
-                                Ok(p) => (p.params.iter().map(|x| x.name.clone()).collect(), p.rest.clone()),
-                                Err(e) => return Err(Error::at(e.clone(), *pos)),
-                            }
-                        };
-                        let callback = self.options.functions[idx].callback.clone();
-                        // Real Sass function: collapse slash-division args.
-                        for v in &mut pos_args {
-                            *v = std::mem::replace(v, Value::Null).without_slash();
-                        }
-                        for (_, v) in &mut named {
-                            *v = std::mem::replace(v, Value::Null).without_slash();
-                        }
-                        let bound = crate::host_fn::bind_host_args(
-                            &param_names,
-                            rest_name.as_deref(),
-                            std::mem::take(&mut pos_args),
-                            std::mem::take(&mut named),
-                            call_sep,
-                            &norm,
-                        )
-                        .map_err(|e| Error::at(e, *pos))?;
-                        // First-class function/mixin args round-trip as opaque
-                        // handles into a per-dispatch table; save/restore the
-                        // outer table so a nested custom-function call is safe.
-                        let saved = crate::host_fn::swap_handles(Vec::new());
-                        let result: Result<Value, String> = crate::host_fn::serialize_args(&bound)
-                            .and_then(|b| callback(&b))
-                            .and_then(|b| crate::host_fn::deserialize_value(&b));
-                        crate::host_fn::swap_handles(saved);
-                        return result.map_err(|e| Error::at(e, *pos)).map(Value::without_slash);
-                    }
-                }
-                // A bare slash-division argument collapses to its number when
-                // passed to a real Sass function (dart-sass `withoutSlash`);
-                // plain CSS functions (`foo(1/2)`) keep the slash verbatim.
-                if crate::builtins::is_builtin(name) {
-                    for v in &mut pos_args {
-                        *v = std::mem::replace(v, Value::Null).without_slash();
-                    }
-                    for (_, v) in &mut named {
-                        *v = std::mem::replace(v, Value::Null).without_slash();
-                    }
-                }
-                // A function call's RESULT is slash-free too (dart applies
-                // `withoutSlash()` to every call result): `list.nth(3 1/2 4,
-                // 2)` returns 0.5, not the slash form.
-                crate::builtins::call(name, &pos_args, &named, *pos).map(Value::without_slash)
+            ));
+        }
+        if let Some(v) = star_hits.into_iter().next() {
+            return Ok(v.without_slash());
+        }
+        // A built-in module variable exposed unprefixed via
+        // `@use "sass:…" as *` (e.g. `$pi` from `sass:math`).
+        for m in &self.star_modules {
+            if let Ok(v) = crate::builtins::module_var(m, name, pos) {
+                return Ok(v);
             }
         }
+        // The caret covers `$name` (the `$` plus the identifier).
+        Err(Error::at("Undefined variable.", pos).with_length(1 + name.len()))
+    }
+
+    fn eval_unary(&mut self, u: &'a ox::SassUnaryExpression<'a>) -> Result<Value, Error> {
+        let v = self.eval_value(&u.expr)?.without_slash();
+        match u.op.kind {
+            // Unary minus negates a number; on any other operand dart-sass
+            // produces an unquoted `-<value>` string (`- red` -> `-red`,
+            // `- "q"` -> `-"q"`). A calculation that could not reduce to a
+            // number has no negation operator, so dart-sass rejects it
+            // ("Undefined operation \"-calc(…)\".").
+            ox::SassUnaryOperatorKind::Minus => match v {
+                Value::Number(n) => Ok(Value::Number(n.copy_units(-n.value))),
+                Value::Calc(_) => Err(Error::unpositioned(format!(
+                    "Undefined operation \"-{}\".",
+                    v.to_css(false)
+                ))),
+                // A map or empty list cannot be serialized into the unquoted
+                // `-<value>` string dart-sass produces, so it errors before
+                // the join (`-(a: 1)`, `-()`).
+                other => match css_value_error_msg(&other) {
+                    Some(msg) => Err(Error::unpositioned(msg)),
+                    None => Ok(Value::Str(SassStr {
+                        text: format!("-{}", other.to_css(false)).into(),
+                        quoted: false,
+                    })),
+                },
+            },
+            // Unary plus is numeric identity; on any other operand it prepends
+            // `+` as an unquoted string (`+foo` -> `+foo`). A residual
+            // calculation has no unary-plus operator and is rejected the same
+            // way.
+            ox::SassUnaryOperatorKind::Plus => match v {
+                Value::Number(_) => Ok(v),
+                Value::Calc(_) => Err(Error::unpositioned(format!(
+                    "Undefined operation \"+{}\".",
+                    v.to_css(false)
+                ))),
+                other => match css_value_error_msg(&other) {
+                    Some(msg) => Err(Error::unpositioned(msg)),
+                    None => Ok(Value::Str(SassStr {
+                        text: format!("+{}", other.to_css(false)).into(),
+                        quoted: false,
+                    })),
+                },
+            },
+            ox::SassUnaryOperatorKind::Not => Ok(Value::Bool(!v.is_truthy())),
+        }
+    }
+
+    fn eval_binary_expr(
+        &mut self,
+        b: &'a ox::SassBinaryExpression<'a>,
+    ) -> Result<Value, Error> {
+        use ox::SassBinaryOperatorKind as K;
+        let pos = self.file.pos(b.op.span);
+
+        // `and`/`or` short-circuit and yield a value, so the right operand is
+        // only evaluated when needed.
+        if matches!(b.op.kind, K::And | K::Or) {
+            let l = self.eval_value(&b.left)?;
+            return match (b.op.kind, l.is_truthy()) {
+                (K::And, true) | (K::Or, false) => self.eval_value(&b.right),
+                _ => Ok(l),
+            };
+        }
+
+        if matches!(b.op.kind, K::Division) {
+            // `/` between number literals keeps the deprecated slash
+            // spelling; inside a calculation it is always real division.
+            let slash = self.calc_depth == 0
+                && is_slash_operand_node(&b.left)
+                && is_slash_operand_node(&b.right);
+            let l = self.eval_value(&b.left)?;
+            let r = self.eval_value(&b.right)?;
+            return eval_div(l, r, slash, pos);
+        }
+
+        let op = match b.op.kind {
+            K::Multiply => BinOp::Mul,
+            K::Modulo => BinOp::Mod,
+            K::Plus => BinOp::Add,
+            K::Minus => BinOp::Sub,
+            K::GreaterThan => BinOp::Gt,
+            K::GreaterThanOrEqual => BinOp::Ge,
+            K::LessThan => BinOp::Lt,
+            K::LessThanOrEqual => BinOp::Le,
+            K::EqualsEquals => BinOp::Eq,
+            K::ExclamationEquals => BinOp::Neq,
+            K::And | K::Or | K::Division => unreachable!("handled above"),
+        };
+        let l = self.eval_value(&b.left)?;
+        let r = self.eval_value(&b.right)?;
+        eval_binary(op, l.without_slash(), r.without_slash(), pos)
+    }
+
+    fn eval_sass_list(
+        &mut self,
+        l: &'a ox::SassList<'a>,
+        bracketed: bool,
+    ) -> Result<Value, Error> {
+        let mut vals = Vec::with_capacity(l.elements.len());
+        for e in &l.elements {
+            vals.push(self.eval_value(e)?);
+        }
+        let sep = if l.comma_spans.is_some() {
+            ListSep::Comma
+        } else if vals.len() > 1 {
+            ListSep::Space
+        } else {
+            ListSep::Undecided
+        };
+        Ok(Value::List(List {
+            items: vals.into(),
+            sep,
+            bracketed,
+            keywords: None,
+        }))
+    }
+
+    fn eval_map(&mut self, m: &'a ox::SassMap<'a>) -> Result<Value, Error> {
+        let mut map = Map {
+            entries: std::rc::Rc::new(Vec::new()),
+        };
+        for item in &m.items {
+            let key = self.eval_value(&item.key)?.without_slash();
+            let val = self.eval_value(&item.value)?;
+            // A duplicate literal key is an error in dart-sass, blamed on the
+            // SECOND key's own span.
+            if map.get(&key).is_some() {
+                return Err(Error::at("Duplicate key.", self.file.pos(*item.key.span())));
+            }
+            map.insert(key, val);
+        }
+        Ok(Value::Map(map))
+    }
+
+    /// A `url()` the parser read as a URL token: its contents are text, so the
+    /// call is preserved verbatim with only interpolation resolved. A `url()`
+    /// whose contents are SassScript (`url($a)`) is not a URL token — the
+    /// parser reports it as an ordinary function instead.
+    fn eval_url(&mut self, u: &'a ox::Url<'a>) -> Result<Value, Error> {
+        let inner = match &u.value {
+            None => String::new(),
+            Some(ox::UrlValue::Raw(raw)) => raw.raw.to_string(),
+            Some(ox::UrlValue::Str(s)) => self.interpolate(*s.span())?,
+            Some(ox::UrlValue::SassInterpolated(si)) => self.interpolate(si.span)?,
+            Some(other) => self.interpolate(*other.span())?,
+        };
+        let mut modifiers = String::new();
+        for m in &u.modifiers {
+            modifiers.push(' ');
+            modifiers.push_str(&self.interpolate(*m.span())?);
+        }
+        // dart-sass emits a plain URL under the bare lower-cased `url(`; a
+        // vendor prefix is dropped.
+        Ok(Value::Str(SassStr {
+            text: format!("url({inner}{modifiers})").into(),
+            quoted: false,
+        }))
+    }
+
+    // ---- calls -------------------------------------------------------
+
+    /// The name a call dispatches on, and the module namespace it is qualified
+    /// with. `None` means the name itself is interpolated, which makes the
+    /// call plain CSS.
+    fn call_name(
+        &mut self,
+        name: &'a ox::FunctionName<'a>,
+    ) -> Result<(Option<String>, Option<&'a str>), Error> {
+        match name {
+            ox::FunctionName::Ident(ox::InterpolableIdent::Literal(id)) => {
+                Ok((Some(id.name.to_string()), None))
+            }
+            ox::FunctionName::Ident(i) => {
+                // An interpolated name resolves at eval time and never
+                // dispatches to a real function.
+                let _ = self.eval_interp_ident(i)?;
+                Ok((None, None))
+            }
+            ox::FunctionName::SassQualifiedName(q) => {
+                let member = match &q.member {
+                    ox::SassModuleMemberName::Ident(id) => id.name,
+                    ox::SassModuleMemberName::Variable(v) => v.name.name,
+                };
+                Ok((Some(member.to_string()), Some(q.module.name)))
+            }
+            other => Ok((Some(self.interpolate(*other.span())?), None)),
+        }
+    }
+
+    fn eval_function(&mut self, f: &'a ox::Function<'a>) -> Result<Value, Error> {
+        let pos = self.file.pos(f.span);
+        let length = f.span.end.saturating_sub(f.span.start);
+
+        // An interpolated-name call is a *plain CSS* function (dart-sass
+        // `PlainCssCallable`): the resolved name is never dispatched to a
+        // built-in or user function; the arguments evaluate and the call
+        // serializes verbatim. Keyword arguments are rejected.
+        let (name, module) = self.call_name(&f.name)?;
+        let Some(name) = name else {
+            let fname = match &f.name {
+                ox::FunctionName::Ident(i) => self.eval_interp_ident(i)?,
+                other => self.interpolate(*other.span())?,
+            };
+            let args = args_of(&f.args, false);
+            if args.iter().any(|a| a.name.is_some()) {
+                return Err(Error::at(
+                    "Plain CSS functions don't support keyword arguments.",
+                    pos,
+                ));
+            }
+            let mut parts: Vec<String> = Vec::with_capacity(args.len());
+            for a in &args {
+                let v = self.eval_values(a.values)?;
+                parts.push(v.to_css(self.compressed()));
+            }
+            return Ok(Value::Str(SassStr {
+                text: format!("{fname}({})", parts.join(", ")).into(),
+                quoted: false,
+            }));
+        };
+
+        // A namespaced call `ns.fn(...)` resolves only against the module
+        // bound to `ns`.
+        if let Some(ns) = module {
+            let args = args_of(&f.args, false);
+            return self.eval_module_call(ns, &name, &args, pos, length);
+        }
+
+        // A plain-CSS function call is preserved verbatim, but a Sass-only
+        // global function (one with no plain-CSS meaning, e.g. `index`) is
+        // rejected.
+        if self.in_plain_css && is_sass_only_function(&name) {
+            return Err(Error::at("This function isn't allowed in plain CSS.", pos));
+        }
+
+        // `calc()` interiors are real arithmetic, simplified at evaluation
+        // time. The name is matched case-insensitively (`CaLc(1px)` -> `1px`);
+        // a vendor-prefixed `-webkit-calc(…)` does not match and stays a
+        // verbatim special function. An EMPTY `calc()` is not a calculation:
+        // it stays a regular call so a user `@function calc()` can be invoked.
+        if name.eq_ignore_ascii_case("calc") && !f.args.is_empty() {
+            return self.eval_calc_call(f, pos);
+        }
+
+        // Special CSS functions (`element()`, `expression()`, and a
+        // vendor-prefixed `calc()`; `type()` unprefixed) preserve their
+        // arguments verbatim — they may contain `%`, `@`, `=`, IE-hack syntax
+        // and other non-SassScript characters. Only `#{...}` interpolation is
+        // resolved; the function name is lower-cased.
+        if let Some(canonical) = special_function_name(&name) {
+            let args = self.interpolate(args_span(f))?;
+            return Ok(Value::Str(SassStr {
+                text: format!("{canonical}({args})").into(),
+                quoted: false,
+            }));
+        }
+
+        // `var()` and `env()` are plain CSS functions whose arguments are
+        // ordinary SassScript: dart-sass evaluates them, normalises
+        // surrounding whitespace, and expands a `var($args...)` splat. They
+        // route through the regular call path (neither is a Sass builtin, so
+        // the result is preserved verbatim). The single exception is `var`'s
+        // `allowEmptySecondArg`: `var(--c,)` keeps a trailing empty argument.
+        let lower = name.to_ascii_lowercase();
+        if lower == "var" || lower == "env" {
+            let args = args_of(&f.args, lower == "var");
+            return self.eval_plain_call(&name, &args, pos);
+        }
+
+        // The modern CSS `if()` uses `:`/`;` clause syntax and `css()`/
+        // `sass()` wrappers, which the comma-argument grouping cannot
+        // represent. Try the modern grammar first; a run with no top-level
+        // `;` and no `:` clause falls back to the legacy `if($c, $t, $f)`.
+        if name == "if"
+            && let Some(v) = self.try_eval_modern_if(&f.args)?
+        {
+            return Ok(v);
+        }
+
+        let args = args_of(&f.args, false);
+        self.eval_call(&name, &args, pos, length)
+    }
+
+    /// A `calc()` call: its interior is a calculation.
+    fn eval_calc_call(&mut self, f: &'a ox::Function<'a>, pos: Pos) -> Result<Value, Error> {
+        // dart resolves user functions BEFORE calculation semantics: a
+        // user-defined `@function calc(...)` shadows the CSS calculation
+        // (issue_1706), receiving the argument evaluated as an ordinary
+        // expression. Vendor-prefixed `-x-calc(` stays a parse-time special
+        // function and can't be overridden.
+        if !self.in_plain_css
+            && let Some(callable) = self.lookup_function("calc")
+        {
+            let arg = self.eval_values(&f.args)?.without_slash();
+            let func = crate::value::SassFunction {
+                name: "calc".to_string(),
+                css: false,
+                user: Some(callable as Rc<dyn std::any::Any>),
+            };
+            return self
+                .invoke_function_ref(&func, vec![arg], Vec::new(), Pos::NONE)
+                .map(Value::without_slash);
+        }
+        let node = self.eval_calc_values(&f.args)?;
+        // Inside a `@supports` declaration the calculation is kept
+        // unsimplified: the `calc()` wrapper is always preserved (even around
+        // a single number), matching dart-sass `simplify: false`.
+        if self.in_supports_declaration {
+            return Ok(Value::Calc(node));
+        }
+        let _ = pos;
+        match node {
+            // A calculation that reduces to a single number unwraps to it —
+            // including a non-finite result (dart-sass:
+            // `meta.type-of(calc(NaN)) == number`); the Number's own
+            // serialization restores the `calc(NaN)`/`calc(infinity * 1px)`
+            // spelling.
+            CalcNode::Number(n) => Ok(Value::Number(n)),
+            // `calc()` wrapping a single already-complete calculation
+            // (`calc(min(1%, 2px))`, `calc(clamp(…))`, etc.) is redundant:
+            // dart-sass drops the outer `calc()` and emits the inner
+            // calculation directly. (A non-calculation leaf such as
+            // `calc(var(--x))` keeps its wrapper.)
+            CalcNode::Str(s) if is_complete_calculation(&s) => Ok(Value::Str(SassStr {
+                text: s.into(),
+                quoted: false,
+            })),
+            other => Ok(Value::Calc(other)),
+        }
+    }
+
+    /// A `calc()`-interior operation node, evaluated as a calculation.
+    fn eval_calc_node_value(&mut self, c: &'a ox::Calc<'a>) -> Result<Value, Error> {
+        let node = self.eval_calc_op(c)?;
+        Ok(match node {
+            CalcNode::Number(n) => Value::Number(n),
+            other => Value::Calc(other),
+        })
+    }
+
+    /// A call whose result is preserved verbatim: the arguments evaluate but
+    /// no function is looked up.
+    fn eval_plain_call(
+        &mut self,
+        name: &str,
+        args: &[Arg<'a>],
+        pos: Pos,
+    ) -> Result<Value, Error> {
+        let _ = pos;
+        let mut parts: Vec<String> = Vec::with_capacity(args.len());
+        for a in args {
+            if a.values.is_empty() {
+                // `var(--c,)`'s explicit empty second argument.
+                parts.push(String::new());
+                continue;
+            }
+            parts.push(self.eval_values(a.values)?.to_css(self.compressed()));
+        }
+        Ok(Value::Str(SassStr {
+            text: format!("{name}({})", parts.join(", ")).into(),
+            quoted: false,
+        }))
     }
 }
 
-/// The position and caret byte length dart-sass blames for `expr` as a whole
-/// (`0` = draw a single caret). `None` for the node kinds that carry no
-/// position of their own, which then leave an unpositioned error alone for an
-/// enclosing node to blame.
-fn expr_span(expr: &Expr) -> Option<(Pos, usize)> {
-    let (pos, len) = match expr {
-        Expr::Func { pos, length, .. } => (*pos, *length),
-        Expr::Var { pos, name } => (*pos, 1 + name.len()),
-        Expr::NsVar { pos, module, name } => (*pos, module.len() + 2 + name.len()),
-        Expr::Binary { pos, .. } | Expr::Div { pos, .. } | Expr::InterpFunc { pos, .. } => (*pos, 0),
-        _ => return None,
-    };
-    pos.is_known().then_some((pos, len))
+/// A number's value, read from its source spelling rather than the parser's
+/// `f32` field: SassScript arithmetic is `f64`, and dart-sass's output
+/// precision depends on it.
+pub(super) fn number(n: &ox::Number<'_>) -> f64 {
+    n.raw.parse::<f64>().unwrap_or(n.value as f64)
+}
+
+/// A quoted string's contents, with the surrounding quotes removed. The raw
+/// text is otherwise kept verbatim: an escape inside a string is part of how
+/// it serializes.
+pub(super) fn unquote_raw(raw: &str) -> &str {
+    let b = raw.as_bytes();
+    match (b.first(), b.last()) {
+        (Some(b'"'), Some(b'"')) | (Some(b'\''), Some(b'\'')) if raw.len() >= 2 => {
+            &raw[1..raw.len() - 1]
+        }
+        // A chunk of an interpolated string carries only the one delimiter it
+        // touches, or none at all in the middle.
+        (Some(b'"' | b'\''), _) => &raw[1..],
+        (_, Some(b'"' | b'\'')) => &raw[..raw.len() - 1],
+        _ => raw,
+    }
+}
+
+/// The span of a call's argument text, between its parentheses.
+pub(super) fn args_span(f: &ox::Function<'_>) -> Span {
+    Span {
+        start: f.name.span().end + 1,
+        end: f.span.end.saturating_sub(1),
+    }
+}
+
+/// Whether a value run is eligible to keep the deprecated `/` slash spelling.
+///
+/// dart-sass keeps the slash only between number literals (including a
+/// unary-signed literal) and chains of such slash divisions; variables,
+/// function calls, parentheses, and other operations force real division.
+fn is_slash_operand(values: &[ox::ComponentValue<'_>]) -> bool {
+    matches!(values, [one] if is_slash_operand_node(one))
+}
+
+fn is_slash_operand_node(v: &ox::ComponentValue<'_>) -> bool {
+    use ox::ComponentValue as CV;
+    match v {
+        CV::Number(_) | CV::Percentage(_) | CV::Dimension(_) => true,
+        // dart-sass also keeps the slash spelling when an operand is a
+        // `calc()` (and the math-function family parsed as calculations):
+        // `calc(1)/2` -> `1/2`, `calc(2px)/calc(4px)` -> `2px/4px`. The calc
+        // operand folds to a number at eval time, so the slash repr is its
+        // serialized value.
+        CV::Function(f) => matches!(
+            &f.name,
+            ox::FunctionName::Ident(ox::InterpolableIdent::Literal(id))
+                if id.name.eq_ignore_ascii_case("calc")
+        ),
+        CV::SassUnaryExpression(u) => {
+            matches!(u.op.kind, ox::SassUnaryOperatorKind::Minus)
+                && is_slash_operand_node(&u.expr)
+        }
+        CV::SassBinaryExpression(b) => {
+            matches!(b.op.kind, ox::SassBinaryOperatorKind::Division)
+                && is_slash_operand_node(&b.left)
+                && is_slash_operand_node(&b.right)
+        }
+        CV::Ratio(_) => true,
+        _ => false,
+    }
+}
+
+/// Whether `name` is a global function with no plain-CSS meaning, which a
+/// plain-CSS (`.css`) module may not call.
+pub(super) fn is_sass_only_function(name: &str) -> bool {
+    matches!(
+        name,
+        // list
+        "index" | "nth" | "set-nth" | "join" | "append" | "zip" | "list-separator"
+            | "is-bracketed" | "length"
+            // map
+            | "map-get" | "map-merge" | "map-remove" | "map-keys" | "map-values" | "map-has-key"
+            // meta
+            | "type-of" | "unit" | "unitless" | "comparable" | "inspect" | "keywords"
+            | "feature-exists" | "variable-exists" | "global-variable-exists" | "function-exists"
+            | "mixin-exists" | "content-exists" | "get-function" | "call" | "get-mixin"
+            // string
+            | "str-length" | "str-insert" | "str-index" | "str-slice" | "to-upper-case"
+            | "to-lower-case" | "unique-id"
+            // color (Sass-only adjusters / getters, not CSS functions)
+            | "mix" | "adjust-hue" | "lighten" | "darken" | "desaturate" | "opacify"
+            | "transparentize" | "fade-in" | "fade-out" | "scale-color" | "adjust-color"
+            | "change-color" | "ie-hex-str"
+            // selector
+            | "selector-nest" | "selector-append" | "selector-replace" | "selector-unify"
+            | "is-superselector" | "simple-selectors" | "selector-parse" | "selector-extend"
+    )
+}
+
+/// Classify a function name as a "special" CSS function whose argument list is
+/// preserved verbatim rather than evaluated as SassScript. Matching is
+/// case-insensitive and the returned name is the dart-sass canonical
+/// (lower-cased) spelling that is emitted.
+///
+/// `element` and `expression` are special with or without a single vendor
+/// prefix, and so is `calc` — but only *with* one, since a bare `calc()` is a
+/// real calculation. `type` is special only when *un*prefixed. `url`, `var`
+/// and `env` are handled separately (they have their own raw paths).
+pub(super) fn special_function_name(name: &str) -> Option<String> {
+    let lower = name.to_ascii_lowercase();
+    let unprefixed = strip_vendor_prefix(&lower);
+    let prefixed = unprefixed != lower;
+    match unprefixed {
+        "element" | "expression" => Some(lower),
+        "calc" if prefixed => Some(lower),
+        "type" if !prefixed => Some(lower),
+        _ => None,
+    }
+}
+
+/// Strip a single leading `-<vendor>-` prefix from an already-lower-cased
+/// identifier, returning the remainder. A vendor prefix is `-`, one or more
+/// identifier characters, then `-` (e.g. `-webkit-`). If no such prefix is
+/// present the whole string is returned unchanged.
+pub(super) fn strip_vendor_prefix(lower: &str) -> &str {
+    if !lower.starts_with('-') {
+        return lower;
+    }
+    match lower[1..].find('-') {
+        Some(rel) if rel >= 1 => &lower[1 + rel + 1..],
+        _ => lower,
+    }
 }
