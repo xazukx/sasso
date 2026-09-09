@@ -30,7 +30,7 @@ overhaul, so it diverges from current dart-sass on, e.g., fractional color
 channels (`rgb(63.75, 127.5, 191.25)` vs rounded hex) and emits hex where
 dart-sass now keeps `rgb()`/`hsl()` forms. `sasso` targets **current**
 dart-sass exactly, with a span-first parser, a modern color model, and a
-zero-dependency, sandbox-friendly core. See
+sandbox-friendly core. See
 [`docs/GRASS_LANDSCAPE.md`](docs/GRASS_LANDSCAPE.md) for the full analysis.
 
 ## Features (this slice)
@@ -306,8 +306,9 @@ methodology, per-file numbers and the correctness diff are in
 
 ## WebAssembly
 
-Because the library is zero-dependency and pure `std`, it compiles to
-`wasm32-unknown-unknown` and `wasm32-wasip1` out of the box (built in CI). The
+Because the library is pure Rust — `oxc-css-parser` and a bump allocator, no
+native `-sys` crate anywhere — it compiles to `wasm32-unknown-unknown` and
+`wasm32-wasip1` out of the box (built in CI). The
 deployable `.wasm` cdylib ships in two variants, published to npm as
 [`sasso`](https://www.npmjs.com/package/sasso):
 

@@ -4,7 +4,7 @@ version = "0.9.1"
 edition = "2021"
 rust-version = "1.74"
 license = "MIT OR Apache-2.0"
-description = "A pure-Rust SCSS to CSS compiler (a dart-sass alternative). Zero dependencies, wasm-friendly, embeddable as a library and usable as a CLI."
+description = "A pure-Rust SCSS to CSS compiler (a dart-sass alternative). Wasm-friendly, embeddable as a library and usable as a CLI."
 repository = "https://github.com/momiji-rs/sasso"
 documentation = "https://docs.rs/sasso"
 readme = "README.md"
@@ -24,11 +24,12 @@ path = "src/lib.rs"
 name = "sasso"
 path = "src/main.rs"
 
-# Intentionally zero runtime dependencies: pure std, so the crate is
-# trivially wasm32-wasip1 / wasm32-unknown-unknown friendly and embeds
-# into a sandbox (rubyrs Tier-1) without pulling a single native -sys
-# crate. The whole pipeline (scan -> parse -> eval -> emit) and the CLI
-# (a hand-rolled arg parser) are std-only.
+# `oxc-css-parser` owns the SCSS grammar; the evaluator walks its AST
+# directly rather than lowering it into a tree of this crate's own. Its
+# dependencies are pure Rust (a bump allocator and hash maps), so the crate
+# stays trivially wasm32-wasip1 / wasm32-unknown-unknown friendly and embeds
+# into a sandbox without pulling a single native -sys crate. Everything after
+# the parse (eval -> emit) and the CLI's arg parser are std-only.
 [dependencies]
 oxc-css-parser = "0.0.14"
 
