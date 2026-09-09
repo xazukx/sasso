@@ -19,8 +19,10 @@
 
 use std::collections::BTreeMap;
 
-use sasso::ast::Stmt;
-use sasso::{Compiler, MemoryImporter, Options, OutNode, OutputStyle, RuleSelectors};
+use sasso::ast::{AtRulePrelude, InterpolableStr, Statement};
+use sasso::{
+    Allocator, Compiler, MemoryImporter, Options, OutNode, OutputStyle, RuleSelectors,
+};
 
 fn main() {
     let files = project();
@@ -220,8 +222,9 @@ $accent: a.$brand;
 // ---------------------------------------------------------------------------
 
 fn compile_entry(files: &MemoryImporter) {
+    let arena = Allocator::default();
     let options = Options::default().with_importer(files);
-    let compiler = Compiler::new("main.scss", &options).expect("entry resolves");
+    let compiler = Compiler::new(&arena, "main.scss", &options).expect("entry resolves");
 
     // The entry went through the importer like any other load, so it has a
     // canonical URL and a syntax of its own.
@@ -243,12 +246,13 @@ fn compile_entry(files: &MemoryImporter) {
 /// offset alongside the line/column — the resolved selector of the rule it sits
 /// in, and a file id that resolves back to that file's canonical URL.
 fn capture_variables(files: &MemoryImporter) {
+    let arena = Allocator::default();
     let options = Options::default()
         .with_importer(files)
         .record_variable_values(true);
-    let compiler = Compiler::new("main.scss", &options).expect("entry resolves");
+    let compiler = Compiler::new(&arena, "main.scss", &options).expect("entry resolves");
     let sheet = compiler.parse().expect("parses");
-    let run = compiler.evaluate(&sheet).expect("evaluates");
+    let run = compiler.evaluate(sheet).expect("evaluates");
 
     // Group by defining file. `variable_values()` iterates in source order
     // (file id, line, column), so each file's list is already ordered.
@@ -307,30 +311,46 @@ fn capture_variables(files: &MemoryImporter) {
 // 3. AST rewriting.
 // ---------------------------------------------------------------------------
 
-/// `parse` hands back the statement tree of the entry file, mutable. Here the
-/// vendored plain-CSS `@use` is dropped before evaluation, so its rule never
-/// reaches the output.
+/// `parse` hands back the parser's own statement tree, borrowed mutably from
+/// the arena. Here the vendored plain-CSS `@use` is dropped before evaluation,
+/// so its rule never reaches the output.
+///
+/// The tree is a *view over the source*: which statements run, and in what
+/// order, is editable here; what each one says is read back from its span, so
+/// rewriting that means rewriting the source. (Rewriting the *result* is step
+/// 4 below.)
 fn rewrite_ast(files: &MemoryImporter) {
+    let arena = Allocator::default();
     let options = Options::default().with_importer(files);
-    let compiler = Compiler::new("main.scss", &options).expect("entry resolves");
-    let mut sheet = compiler.parse().expect("parses");
+    let compiler = Compiler::new(&arena, "main.scss", &options).expect("entry resolves");
+    let parsed = compiler.parse().expect("parses");
 
-    let before = sheet.stmts.len();
-    sheet
-        .stmts
-        .retain(|s| !matches!(s, Stmt::Use { url, .. } if url.ends_with(".css")));
+    let before = parsed.sheet.statements.len();
+    parsed.sheet.statements.retain(|s| !is_css_use(s));
     println!(
         "top-level statements: {before} -> {} (dropped the vendored @use)",
-        sheet.stmts.len()
+        parsed.sheet.statements.len()
     );
 
-    let run = compiler.evaluate(&sheet).expect("evaluates");
+    let run = compiler.evaluate(parsed).expect("evaluates");
     let css = compiler.emit(&run.nodes);
     assert!(!css.contains("font-family: inherit"));
     println!(
         "vendor rule gone from the output: {}",
         !css.contains("font-family")
     );
+}
+
+/// Whether a statement is a `@use` of a plain-CSS file.
+fn is_css_use(stmt: &Statement<'_>) -> bool {
+    let Statement::AtRule(at) = stmt else {
+        return false;
+    };
+    let Some(AtRulePrelude::SassUse(load)) = &at.prelude else {
+        return false;
+    };
+    // An interpolated URL isn't legal in `@use`, so a literal is all there is.
+    matches!(&load.path, InterpolableStr::Literal(s) if s.value.ends_with(".css"))
 }
 
 // ---------------------------------------------------------------------------
@@ -341,10 +361,11 @@ fn rewrite_ast(files: &MemoryImporter) {
 /// all — which can be rewritten before serialization. One tree can then be
 /// emitted as many times as you like, under different options.
 fn rewrite_output(files: &MemoryImporter) {
+    let arena = Allocator::default();
     let expanded = Options::default().with_importer(files);
-    let compiler = Compiler::new("main.scss", &expanded).expect("entry resolves");
+    let compiler = Compiler::new(&arena, "main.scss", &expanded).expect("entry resolves");
     let sheet = compiler.parse().expect("parses");
-    let mut run = compiler.evaluate(&sheet).expect("evaluates");
+    let mut run = compiler.evaluate(sheet).expect("evaluates");
 
     // Namespace the whole stylesheet under `.v2`, the way a CSS-in-JS scoper
     // would — but on resolved selectors, after `@extend` has run. Each `@use`d
@@ -355,7 +376,7 @@ fn rewrite_output(files: &MemoryImporter) {
 
     // The same tree, serialized twice.
     let pretty = compiler.emit(&run.nodes);
-    let compressed = Compiler::new(
+    let compressed = Compiler::new(&arena, 
         "main.scss",
         &Options::default()
             .with_importer(files)
@@ -403,14 +424,15 @@ fn scope_rules(nodes: &mut [OutNode], prefix: &str) -> usize {
 /// are the project's real names — `themes/_tokens.scss` and
 /// `components/_tokens.scss` are two entries, each with its own text.
 fn source_map(files: &MemoryImporter) {
+    let arena = Allocator::default();
     let options = Options::default()
         .with_importer(files)
         .with_source_map_include_sources(true);
-    let compiler = Compiler::new("main.scss", &options)
+    let compiler = Compiler::new(&arena, "main.scss", &options)
         .expect("entry resolves")
         .with_source_map(true);
     let sheet = compiler.parse().expect("parses");
-    let mut run = compiler.evaluate(&sheet).expect("evaluates");
+    let mut run = compiler.evaluate(sheet).expect("evaluates");
     let result = compiler.emit_with_source_map(&run.nodes, &mut run.evaluator);
 
     let contents = result.source_map.sources_content.as_deref().unwrap_or_default();
@@ -430,6 +452,7 @@ fn source_map(files: &MemoryImporter) {
 /// `themes/_tokens.scss` it shares a basename with — and the snippet must be
 /// its own text.
 fn blame_the_right_file() {
+    let arena = Allocator::default();
     let mut broken = project();
     broken.insert(
         "components/_tokens.scss",
@@ -437,7 +460,7 @@ fn blame_the_right_file() {
     );
 
     let options = Options::default().with_importer(&broken);
-    let err = Compiler::new("main.scss", &options)
+    let err = Compiler::new(&arena, "main.scss", &options)
         .expect("entry resolves")
         .compile()
         .expect_err("the project no longer compiles");

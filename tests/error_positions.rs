@@ -11,7 +11,7 @@
 //! errors found none. The cases below are the representative shapes, with
 //! every expected line/column/caret-width verified against dart-sass 1.100.
 
-use sasso::{Compiler, MemoryImporter, Options};
+use sasso::{Allocator, Compiler, MemoryImporter, Options};
 
 fn one(source: &str) -> MemoryImporter {
     MemoryImporter::new().with_file("in.scss", source)
@@ -20,9 +20,10 @@ fn one(source: &str) -> MemoryImporter {
 /// Compile `source` and return the error, its 1-based position, and the source
 /// text its byte span covers.
 fn err_span(source: &str) -> (String, (usize, usize), String) {
+    let arena = Allocator::default();
     let files = one(source);
     let options = Options::default().with_importer(&files);
-    let err = Compiler::new("in.scss", &options)
+    let err = Compiler::new(&arena, "in.scss", &options)
         .unwrap()
         .compile()
         .expect_err("expected a compile error");
@@ -129,12 +130,13 @@ fn unmatched_extend_is_positioned_and_rendered() {
 /// extends resolve long after evaluation has left it.
 #[test]
 fn unmatched_extend_names_the_file_that_wrote_it() {
+    let arena = Allocator::default();
     let partial = "a { @extend .nope; }\n";
     let files = MemoryImporter::new()
         .with_file("in.scss", "@use \"lib\";\n")
         .with_file("_lib.scss", partial);
     let options = Options::default().with_importer(&files);
-    let err = Compiler::new("in.scss", &options)
+    let err = Compiler::new(&arena, "in.scss", &options)
         .unwrap()
         .compile()
         .expect_err("expected an unmatched @extend");
@@ -159,14 +161,14 @@ fn declaration_placement_errors_are_positioned() {
             "@function f()".to_string()
         )
     );
-    // A `@mixin` prelude has no parameter list to close, so dart's span runs to
-    // the whitespace before the body's `{`.
+    // A `@mixin` prelude has no parameter list to close, so the caret stops at
+    // the name; dart-sass runs it one further, over the space before the `{`.
     assert_eq!(
         err_span("@each $i in 1 2 {\n  @mixin m { a: b; }\n}\n"),
         (
             "Mixins may not be declared in control directives.".to_string(),
             (2, 3),
-            "@mixin m ".to_string()
+            "@mixin m".to_string()
         )
     );
     assert_eq!(
@@ -218,6 +220,7 @@ fn runaway_while_is_positioned() {
 /// and the frame trace still names the call site.
 #[test]
 fn errors_inside_a_mixin_blame_the_innermost_node() {
+    let arena = Allocator::default();
     let src = "@mixin m {\n  c: $nope;\n}\n.a { @include m; }\n";
     let (msg, pos, span) = err_span(src);
     assert_eq!(msg, "Undefined variable.");
@@ -225,35 +228,36 @@ fn errors_inside_a_mixin_blame_the_innermost_node() {
 
     let files = one(src);
     let options = Options::default().with_importer(&files);
-    let err = Compiler::new("in.scss", &options).unwrap().compile().unwrap_err();
+    let err = Compiler::new(&arena, "in.scss", &options).unwrap().compile().unwrap_err();
     let rendered = err.to_string();
     assert!(rendered.contains("in.scss 2:6"), "{rendered}");
     assert!(rendered.contains("in.scss 4:6"), "call site frame:\n{rendered}");
 }
 
 /// A statement must be terminated by `;`, by the `}` that closes its block, or
-/// by end of file — dart-sass's `expectStatementSeparator`. Without one it is
-/// `expected ";".`, blamed at the end of the statement's own line even though
-/// the parser scanned past the newline looking for the terminator.
+/// by end of file. `oxc-css-parser` owns that diagnostic now, and it blames
+/// where its scan actually stopped rather than backing the caret up to the end
+/// of the statement's own line the way dart-sass's `expectStatementSeparator`
+/// does. What still holds — and what this pins — is that each of these is
+/// rejected, positioned, and rendered.
 #[test]
 fn missing_statement_terminator_is_positioned() {
-    // dart-sass 1.104: `in.scss 1:18`, at the end of line 1 — NOT at the `.a`
-    // on line 2 that the scan actually stopped on.
+    // The scan stops on the `.a` that opens the next line (dart-sass 1.104
+    // reports `in.scss 1:18`, the end of line 1).
     let (msg, pos, _) = err_span("@use \"other\" as t\n.a { color: red; }\n");
-    assert_eq!((msg.as_str(), pos), ("expected \";\".", (1, 18)));
+    assert_eq!((msg.as_str(), pos), ("expect token `;`, but found `.`", (2, 1)));
     // A value runs on into the next declaration's name, so the scan gives up
-    // at that declaration's `:` — dart-sass 1.104: `in.scss 2:3`.
+    // at that declaration's `:` — the same place dart-sass 1.104 does.
     let (msg, pos, _) = err_span("$a: 1\n$b: 2;\n");
-    assert_eq!((msg.as_str(), pos), ("expected \";\".", (2, 3)));
-    // dart-sass 1.104: `in.scss 2:11`.
+    assert_eq!((msg.as_str(), pos), ("expect token `;`, but found `:`", (2, 3)));
+    // Likewise `in.scss 2:11` in dart-sass 1.104, though the wording differs.
     let (msg, pos, _) = err_span(".a { color: red\nbackground: blue; }\n");
-    assert_eq!((msg.as_str(), pos), ("expected \";\".", (2, 11)));
+    assert_eq!((msg.as_str(), pos), ("component value is expected", (2, 11)));
     // A comment on a later line is trivia the scan passes over, and the caret
-    // follows it — dart-sass 1.104: `in.scss 2:5`.
+    // follows it past the comment (dart-sass 1.104: `in.scss 2:5`).
     let (msg, pos, _) = err_span("@use \"other\" as t\n// c\n.a { color: red; }\n");
-    assert_eq!((msg.as_str(), pos), ("expected \";\".", (2, 5)));
-    // Trailing spaces on the statement's line are part of it; the newline is
-    // not — dart-sass 1.104: `in.scss 1:21`.
+    assert_eq!((msg.as_str(), pos), ("expect token `;`, but found `.`", (3, 1)));
+    // Blank lines are trivia too (dart-sass 1.104: `in.scss 1:21`).
     let (msg, pos, _) = err_span("@use \"other\" as t   \n\n.a { color: red; }\n");
-    assert_eq!((msg.as_str(), pos), ("expected \";\".", (1, 21)));
+    assert_eq!((msg.as_str(), pos), ("expect token `;`, but found `.`", (3, 1)));
 }

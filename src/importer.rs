@@ -98,13 +98,14 @@ pub trait Importer {
 /// [`CanonicalUrl`]s and stay distinct all the way through.
 ///
 /// ```
-/// use sasso::{Compiler, MemoryImporter, Options};
+/// use sasso::{Allocator, Compiler, MemoryImporter, Options};
 ///
 /// let files = MemoryImporter::new()
 ///     .with_file("main.scss", r#"@use "ui/button";"#)
 ///     .with_file("ui/_button.scss", ".btn { color: red; }");
+/// let arena = Allocator::default();
 /// let options = Options::default().with_importer(&files);
-/// let css = Compiler::new("main.scss", &options).unwrap().compile().unwrap();
+/// let css = Compiler::new(&arena, "main.scss", &options).unwrap().compile().unwrap();
 /// assert_eq!(css, ".btn {\n  color: red;\n}");
 /// ```
 ///

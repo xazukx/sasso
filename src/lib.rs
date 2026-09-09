@@ -1,10 +1,14 @@
 //! `sasso` — a pure-Rust SCSS → CSS compiler.
 //!
-//! A small, zero-dependency, embeddable Sass engine aiming at byte-exact
-//! parity with **current** dart-sass on the subset it implements (e.g.
-//! computed colors serialize as `rgb(25%, 50%, 75%)`, not rounded
-//! hex). It is sandbox-friendly: `@import` resolution goes through a
-//! caller-supplied [`Importer`], so an embedder controls all file access.
+//! A small, embeddable Sass engine aiming at byte-exact parity with
+//! **current** dart-sass on the subset it implements (e.g. computed colors
+//! serialize as `rgb(25%, 50%, 75%)`, not rounded hex). The grammar comes from
+//! [`oxc-css-parser`], this crate's one dependency; everything downstream of
+//! the parse — evaluation, the built-ins, `@extend`, emit — is its own. It is
+//! sandbox-friendly: `@import` resolution goes through a caller-supplied
+//! [`Importer`], so an embedder controls all file access.
+//!
+//! [`oxc-css-parser`]: https://docs.rs/oxc-css-parser
 //!
 //! # Example
 //!
@@ -22,11 +26,11 @@
 //! nesting and the `&` parent selector, `#{}` interpolation, `//` and
 //! `/* */` comments, unit arithmetic, the color functions, control flow,
 //! mixins/functions, `@extend`, `@import`, and the `@use`/`@forward` module
-//! system. Both input syntaxes are supported — the brace/semicolon SCSS
-//! syntax and the indented `.sass` syntax (selected via [`Options::with_syntax`]
-//! or, in the CLI, the input file's extension) — parsing into the same AST and
-//! sharing the evaluator and emitter. The north-star target is 100% of the
-//! official `sass-spec` suite, tracked by the harness in `spec/`.
+//! system. The input syntaxes are the brace/semicolon SCSS one and plain CSS
+//! (selected via [`Options::with_syntax`], or in the CLI by the input file's
+//! extension); the indented `.sass` syntax is not currently supported. The
+//! north-star target is 100% of the official `sass-spec` suite, tracked by the
+//! harness in `spec/`.
 //!
 //! ## Source positions
 //!
@@ -90,11 +94,14 @@ pub use sourcemap::SourceMap;
 /// tree of its own, so this is the type [`Compiler::parse`] hands back.
 pub use oxc_css_parser::ast;
 pub use oxc_css_parser::ast::Stylesheet;
+/// A byte range in the source text. Every node carries one, and it is how the
+/// tree points back at what it was parsed from.
+pub use oxc_css_parser::Span;
 /// The bump arena a staged compile parses into. Every tree and source
 /// text a [`Compiler`] produces lives here, so it must outlive them.
 pub use oxc_css_parser::Allocator;
 pub use eval::{EvalOptions, Evaluator, OutItem, OutNode, RuleSelectors, VarSpan, VariableValue};
-pub use lines::Pos;
+pub use lines::{Pos, SrcLines};
 pub use value::Value;
 
 /// Output formatting style.
@@ -109,9 +116,9 @@ pub enum OutputStyle {
 
 /// The input syntax flavour.
 ///
-/// Both flavours parse into the same AST and share the evaluator and emitter;
-/// only the *block structure* differs (`{}`/`;` for SCSS, indentation +
-/// newlines for the indented `.sass` syntax).
+/// Both parse into the same AST and share the evaluator and emitter; what
+/// differs is how much of it is *legal*, since a plain-CSS file may not use
+/// SassScript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Syntax {
     /// The brace/semicolon SCSS syntax (the default).
@@ -127,7 +134,7 @@ pub enum Syntax {
 pub struct Options<'a> {
     /// Output style.
     pub style: OutputStyle,
-    /// Input syntax (SCSS or indented `.sass`).
+    /// Input syntax (SCSS or plain CSS).
     pub syntax: Syntax,
     /// Importer used to resolve `@import`; `None` disables file imports.
     pub importer: Option<&'a dyn Importer>,
@@ -318,15 +325,16 @@ impl<'a> Options<'a> {
     /// staged [`Compiler`] API:
     ///
     /// ```
-    /// use sasso::{Compiler, MemoryImporter, Options};
+    /// use sasso::{Allocator, Compiler, MemoryImporter, Options};
     ///
     /// let files = MemoryImporter::new().with_file("in.scss", "a { $inner: 3px; width: $inner; }");
+    /// let arena = Allocator::default();
     /// let options = Options::default()
     ///     .record_variable_values(true)
     ///     .with_importer(&files);
-    /// let compiler = Compiler::new("in.scss", &options).unwrap();
-    /// let sheet = compiler.parse().unwrap();
-    /// let run = compiler.evaluate(&sheet).unwrap();
+    /// let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
+    /// let parsed = compiler.parse().unwrap();
+    /// let run = compiler.evaluate(parsed).unwrap();
     /// let names: Vec<&str> = run
     ///     .evaluator
     ///     .variable_values()
@@ -457,8 +465,9 @@ fn basename(url: &str) -> &str {
 /// `@import` resolve against — and hands each intermediate back so it can be
 /// inspected and *modified* before feeding the next one:
 ///
-/// - [`parse`](Self::parse) yields an [`ast::Stylesheet`] — the statement tree,
-///   with every node and its selector templates public and mutable.
+/// - [`parse`](Self::parse) yields a [`Parsed`], holding the parser's own
+///   [`ast::Stylesheet`] borrowed mutably from the arena: statements can be
+///   dropped, reordered, or moved between blocks before evaluation.
 /// - [`evaluate`](Self::evaluate) yields an [`Evaluation`]: the flattened
 ///   [`OutNode`] tree (resolved selectors, declarations, at-rules) plus the
 ///   [`Evaluator`] that produced it, for its environment and — with
@@ -469,13 +478,20 @@ fn basename(url: &str) -> &str {
 /// repeated: one node tree can be emitted twice under different styles, and one
 /// stylesheet can be evaluated more than once.
 ///
+/// The syntax tree is a *view over the source text*: a selector, a declaration
+/// value and an interpolation are all read back from their spans when they are
+/// evaluated, not from strings held in the node. So rewriting **what a rule
+/// says** means rewriting the source and parsing again; rewriting the
+/// **structure** (which statements run, and in what order) is what the tree is
+/// for, and rewriting the **result** is what the output tree is for.
+///
 /// Because every source has a name, every diagnostic, every [`VarSpan`] and
 /// every source-map entry is attributed to the file it actually came from —
 /// including two same-named partials in different directories, which are
 /// distinct [`CanonicalUrl`]s and therefore distinct interned file ids.
 ///
 /// ```
-/// use sasso::{Compiler, MemoryImporter, Options, OutNode, RuleSelectors};
+/// use sasso::{Allocator, Compiler, MemoryImporter, Options, OutNode, RuleSelectors};
 ///
 /// let files = MemoryImporter::new()
 ///     .with_file(
@@ -483,15 +499,16 @@ fn basename(url: &str) -> &str {
 ///         r#"@use "theme"; a { color: theme.$fg; } b { color: blue; }"#,
 ///     )
 ///     .with_file("_theme.scss", "$fg: red;");
+/// let arena = Allocator::default();
 /// let options = Options::default().with_importer(&files);
-/// let compiler = Compiler::new("main.scss", &options).unwrap();
+/// let compiler = Compiler::new(&arena, "main.scss", &options).unwrap();
 ///
-/// // Parse, then drop every rule but the `@use` and the first rule.
-/// let mut sheet = compiler.parse().unwrap();
-/// sheet.stmts.truncate(2);
+/// // Parse, then drop every statement but the `@use` and the first rule.
+/// let parsed = compiler.parse().unwrap();
+/// parsed.sheet.statements.truncate(2);
 ///
 /// // Evaluate, then rewrite the resolved selectors.
-/// let mut run = compiler.evaluate(&sheet).unwrap();
+/// let mut run = compiler.evaluate(parsed).unwrap();
 /// for node in &mut run.nodes {
 ///     if let OutNode::Rule { selectors, .. } = node {
 ///         let scoped = selectors.to_strings().iter().map(|s| format!(".theme {s}")).collect();
@@ -504,9 +521,12 @@ fn basename(url: &str) -> &str {
 ///
 /// # Allocator scope
 ///
-/// Unlike [`compile`], the staged API does not run inside the bump-arena scope
-/// (its intermediates outlive any one step), so every allocation goes to the
-/// global allocator even when [`ScopedAlloc`] is installed.
+/// The staged API parses into an [`Allocator`] the caller owns and passes to
+/// [`new`](Self::new), because its intermediates outlive any one step: the
+/// tree, the source text behind every span, and the evaluator's borrows all
+/// live there until the arena is dropped. (The one-shot [`compile`] owns an
+/// arena of its own for the length of the call.) Allocations outside the arena
+/// still go to the global allocator, even when [`ScopedAlloc`] is installed.
 pub struct Compiler<'a> {
     /// The bump arena every stage parses into. The parser's trees borrow
     /// from it, and the evaluator holds those borrows for the whole compile,
@@ -565,6 +585,18 @@ pub struct Parsed<'a> {
     pub(crate) file: &'a source::SourceFile<'a>,
     /// The parsed statements.
     pub sheet: &'a mut ast::Stylesheet<'a>,
+}
+
+/// Names the tree's extent and size; the nodes themselves are the parser's and
+/// print through [`ast::Stylesheet`]'s own `Debug`.
+impl std::fmt::Debug for Parsed<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Parsed")
+            .field("url", &self.file.url)
+            .field("span", &self.sheet.span)
+            .field("statements", &self.sheet.statements.len())
+            .finish()
+    }
 }
 
 impl<'a> Compiler<'a> {

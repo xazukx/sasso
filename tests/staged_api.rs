@@ -7,10 +7,12 @@
 //! staged compiler touches is a NAMED file whose diagnostics, spans and
 //! source-map entries are attributed to it and not to a same-named sibling.
 
-use sasso::ast::{Expr, Stmt, TplPiece};
+use sasso::ast::Statement;
 use sasso::selector::{Combinator, Complex, ComplexComponent, Compound, Simple};
 use sasso::value::Value;
-use sasso::{compile, Compiler, MemoryImporter, Options, OutNode, OutputStyle, RuleSelectors};
+use sasso::{
+    compile, Allocator, Compiler, MemoryImporter, Options, OutNode, OutputStyle, RuleSelectors,
+};
 
 /// A one-file virtual filesystem, the shape most of these tests need.
 fn one(source: &str) -> MemoryImporter {
@@ -20,6 +22,7 @@ fn one(source: &str) -> MemoryImporter {
 /// The staged pipeline reproduces `compile` byte-for-byte.
 #[test]
 fn staged_pipeline_matches_compile() {
+    let arena = Allocator::default();
     let src = "\
 $pad: 4px;
 .a { padding: $pad; &:hover { color: red; } }
@@ -30,9 +33,9 @@ $pad: 4px;
     let files = one(src);
     for style in [OutputStyle::Expanded, OutputStyle::Compressed] {
         let options = Options::default().with_style(style).with_importer(&files);
-        let compiler = Compiler::new("in.scss", &options).unwrap();
+        let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
         let sheet = compiler.parse().unwrap();
-        let run = compiler.evaluate(&sheet).unwrap();
+        let run = compiler.evaluate(sheet).unwrap();
         assert_eq!(compiler.emit(&run.nodes), compile(src, &options).unwrap());
     }
 }
@@ -41,11 +44,12 @@ $pad: 4px;
 /// the spelling passed in — becomes the compile's identity.
 #[test]
 fn entry_is_resolved_through_the_importer() {
+    let arena = Allocator::default();
     let files = MemoryImporter::new().with_file("ui/_button.scss", ".btn { color: red; }");
     let options = Options::default().with_importer(&files);
 
     // Partial resolution applies to the entry exactly as it does to a `@use`.
-    let compiler = Compiler::new("ui/button", &options).unwrap();
+    let compiler = Compiler::new(&arena, "ui/button", &options).unwrap();
     assert_eq!(compiler.entry().as_str(), "ui/_button.scss");
     assert_eq!(compiler.url(), "ui/button");
     assert_eq!(compiler.source(), ".btn { color: red; }");
@@ -56,8 +60,9 @@ fn entry_is_resolved_through_the_importer() {
 /// construction fails rather than silently compiling nothing.
 #[test]
 fn entry_requires_an_importer() {
+    let arena = Allocator::default();
     let options = Options::default();
-    let err = Compiler::new("in.scss", &options).expect_err("expected a missing-importer error");
+    let err = Compiler::new(&arena, "in.scss", &options).expect_err("expected a missing-importer error");
     assert!(err.message.contains("No importer configured"), "{err}");
 }
 
@@ -66,34 +71,40 @@ fn entry_requires_an_importer() {
 /// in hand says the file was found, never that it compiles.
 #[test]
 fn a_syntax_error_surfaces_at_parse_not_construction() {
+    let arena = Allocator::default();
     let files = one(".page {\n  padding: 2rem;\n  df\n  background: red;\n}\n");
     let options = Options::default().with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).expect("the entry loads without being parsed");
+    let compiler = Compiler::new(&arena, "in.scss", &options).expect("the entry loads without being parsed");
 
     let err = compiler.parse().expect_err("`df` is neither a declaration nor a selector");
-    // A stray identifier is not part of the next property's name: dart-sass
+    // A stray identifier is not part of the next property's name, so the parser
+    // runs on to `background` looking for the `:` that `df` never had. The
+    // wording and the caret are `oxc-css-parser`'s; dart-sass 1.104 instead
     // re-reads the text as a selector and blames where that scan gave up, the
-    // `;` (dart-sass 1.104: `in.scss 4:18`).
-    assert_eq!(err.message, "expected \"{\".");
-    assert_eq!((err.line, err.col), (4, 18));
+    // `;` at `in.scss 4:18`. What this test is for is the STAGE: construction
+    // only loads the file, and the syntax error surfaces at `parse`.
+    assert_eq!(err.message, "expect token `:`, but found `<ident>`");
+    assert_eq!((err.line, err.col), (4, 3));
     assert_eq!(err.file.as_deref(), Some("in.scss"));
 }
 
 /// A missing entry is an error, and it names the file that was asked for.
 #[test]
 fn missing_entry_is_reported() {
+    let arena = Allocator::default();
     let files = one("a { color: red; }");
     let options = Options::default().with_importer(&files);
-    let err = Compiler::new("nope.scss", &options).expect_err("expected a not-found error");
+    let err = Compiler::new(&arena, "nope.scss", &options).expect_err("expected a not-found error");
     assert!(err.message.contains("nope.scss"), "{err}");
 }
 
 /// The importer decides each file's syntax; a `.css` entry is plain CSS.
 #[test]
 fn entry_syntax_comes_from_the_importer() {
+    let arena = Allocator::default();
     let files = MemoryImporter::new().with_file("in.css", "a { color: red; }");
     let options = Options::default().with_importer(&files);
-    let compiler = Compiler::new("in.css", &options).unwrap();
+    let compiler = Compiler::new(&arena, "in.css", &options).unwrap();
     assert_eq!(compiler.syntax(), sasso::Syntax::Css);
     assert_eq!(compiler.compile().unwrap(), "a {\n  color: red;\n}");
 }
@@ -102,9 +113,10 @@ fn entry_syntax_comes_from_the_importer() {
 /// against the entry file's name without any `Options::url` being set.
 #[test]
 fn staged_parse_reports_syntax_errors() {
+    let arena = Allocator::default();
     let files = one("a { color: ");
     let options = Options::default().with_importer(&files);
-    let err = Compiler::new("in.scss", &options)
+    let err = Compiler::new(&arena, "in.scss", &options)
         .unwrap()
         .parse()
         .expect_err("expected a parse error");
@@ -116,21 +128,27 @@ fn staged_parse_reports_syntax_errors() {
 }
 
 /// The declaration-placement check runs on the sheet handed to `evaluate`, so a
-/// caller-built violation is still rejected.
+/// caller-built violation is still rejected. `@mixin` inside `@if` is legal
+/// text that only the validator forbids, so it has to be assembled by moving
+/// nodes — the parser would never hand it over.
 #[test]
 fn staged_evaluate_validates_modified_sheet() {
-    let files = one("@mixin m { a { b: c; } }");
+    let arena = Allocator::default();
+    let files = one("@mixin m { a { b: c; } }\n@if true { c { d: e; } }\n");
     let options = Options::default().with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
-    let mut sheet = compiler.parse().unwrap();
-    // Move the `@mixin` inside an `@if`, which Sass forbids.
-    let mixin = sheet.stmts.remove(0);
-    sheet.stmts.push(Stmt::If(vec![sasso::ast::IfBranch {
-        cond: Some(Expr::Bool(true)),
-        body: vec![mixin],
-    }]));
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
+    let parsed = compiler.parse().unwrap();
+    assert_eq!(compiler.compile().unwrap(), "c {\n  d: e;\n}");
+
+    // Move the `@mixin` inside the `@if`, which Sass forbids.
+    let mixin = parsed.sheet.statements.remove(0);
+    let Statement::SassIfAtRule(conditional) = &mut parsed.sheet.statements[0] else {
+        panic!("expected the @if to be the remaining statement");
+    };
+    conditional.if_clause.block.statements.push(mixin);
+
     let err = compiler
-        .evaluate(&sheet)
+        .evaluate(parsed)
         .err()
         .expect("expected a validation error");
     assert!(
@@ -140,37 +158,40 @@ fn staged_evaluate_validates_modified_sheet() {
     );
 }
 
-/// The parsed stylesheet is modifiable before evaluation: dropping a statement
-/// drops its output, and rewriting a selector template changes the CSS.
+/// The parsed stylesheet is modifiable before evaluation: reordering statements
+/// reorders the output, and dropping one drops its CSS.
+///
+/// What a statement *says* is not editable here — a selector, a value and an
+/// interpolation are all read back from the source text at their spans, so the
+/// tree is a view over the source, not a copy of it. Rewriting the resolved
+/// result is what the output tree (below) is for.
 #[test]
 fn stylesheet_is_modifiable_before_evaluation() {
+    let arena = Allocator::default();
     let files = one("a { color: red; }\nb { color: blue; }");
     let options = Options::default().with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
-    let mut sheet = compiler.parse().unwrap();
-    assert_eq!(sheet.stmts.len(), 2);
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
+    let parsed = compiler.parse().unwrap();
+    assert_eq!(parsed.sheet.statements.len(), 2);
 
-    // Rewrite the first rule's selector, drop the second rule entirely.
-    if let Stmt::Rule(rule) = &mut sheet.stmts[0] {
-        rule.selector = vec![TplPiece::Lit(".renamed".to_string())];
-    } else {
-        panic!("expected a style rule");
-    }
-    sheet.stmts.truncate(1);
+    // Put `b` first, then drop `a` entirely.
+    parsed.sheet.statements.swap(0, 1);
+    parsed.sheet.statements.truncate(1);
 
-    let run = compiler.evaluate(&sheet).unwrap();
-    assert_eq!(compiler.emit(&run.nodes), ".renamed {\n  color: red;\n}");
+    let run = compiler.evaluate(parsed).unwrap();
+    assert_eq!(compiler.emit(&run.nodes), "b {\n  color: blue;\n}");
 }
 
 /// The evaluated output tree is modifiable before emit — both its raw selector
 /// strings and its declarations.
 #[test]
 fn out_nodes_are_modifiable_before_emit() {
+    let arena = Allocator::default();
     let files = one("a { color: red; }");
     let options = Options::default().with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
     let sheet = compiler.parse().unwrap();
-    let mut run = compiler.evaluate(&sheet).unwrap();
+    let mut run = compiler.evaluate(sheet).unwrap();
 
     for node in &mut run.nodes {
         if let OutNode::Rule { selectors, items, .. } = node {
@@ -186,7 +207,7 @@ fn out_nodes_are_modifiable_before_emit() {
                 value: "0".to_string(),
                 important: false,
                 custom: false,
-                lines: sasso::ast::SrcLines::default(),
+                lines: sasso::SrcLines::default(),
                 value_span: sasso::VarSpan::default(),
             });
         }
@@ -202,11 +223,12 @@ fn out_nodes_are_modifiable_before_emit() {
 /// renders through the same path the `@extend` engine uses.
 #[test]
 fn out_node_selectors_accept_the_typed_model() {
+    let arena = Allocator::default();
     let files = one("a { color: red; }");
     let options = Options::default().with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
     let sheet = compiler.parse().unwrap();
-    let mut run = compiler.evaluate(&sheet).unwrap();
+    let mut run = compiler.evaluate(sheet).unwrap();
 
     // `.parent > a`, built by hand rather than parsed.
     let parsed = sasso::selector::parse_list("a").expect("selector parses");
@@ -238,19 +260,20 @@ fn out_node_selectors_accept_the_typed_model() {
 /// One evaluated tree can be emitted repeatedly under different options.
 #[test]
 fn one_tree_emits_under_several_styles() {
+    let arena = Allocator::default();
     let src = "a { color: red; }";
     let files = one(src);
     let expanded = Options::default().with_importer(&files);
-    let compiler = Compiler::new("in.scss", &expanded).unwrap();
+    let compiler = Compiler::new(&arena, "in.scss", &expanded).unwrap();
     let sheet = compiler.parse().unwrap();
-    let run = compiler.evaluate(&sheet).unwrap();
+    let run = compiler.evaluate(sheet).unwrap();
 
     let compressed = Options::default()
         .with_style(OutputStyle::Compressed)
         .with_importer(&files);
     assert_eq!(compiler.emit(&run.nodes), "a {\n  color: red;\n}");
     assert_eq!(
-        Compiler::new("in.scss", &compressed).unwrap().emit(&run.nodes),
+        Compiler::new(&arena, "in.scss", &compressed).unwrap().emit(&run.nodes),
         compile(src, &compressed).unwrap()
     );
 }
@@ -258,11 +281,12 @@ fn one_tree_emits_under_several_styles() {
 /// Nothing is recorded unless the option is set.
 #[test]
 fn variable_values_are_not_recorded_by_default() {
+    let arena = Allocator::default();
     let files = one("$a: 1px; b { c: $a; }");
     let options = Options::default().with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
     let sheet = compiler.parse().unwrap();
-    let run = compiler.evaluate(&sheet).unwrap();
+    let run = compiler.evaluate(sheet).unwrap();
     assert!(run.evaluator.variable_values().is_empty());
 }
 
@@ -270,6 +294,7 @@ fn variable_values_are_not_recorded_by_default() {
 /// compile, keyed by the declaration's own span, in source order.
 #[test]
 fn record_variable_values_captures_scoped_declarations() {
+    let arena = Allocator::default();
     let src = "\
 $top: 1px;
 .a {
@@ -284,9 +309,9 @@ $top: 1px;
     let options = Options::default()
         .record_variable_values(true)
         .with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
     let sheet = compiler.parse().unwrap();
-    let run = compiler.evaluate(&sheet).unwrap();
+    let run = compiler.evaluate(sheet).unwrap();
 
     let recorded: Vec<(&str, u32, u32, String)> = run
         .evaluator
@@ -325,13 +350,14 @@ $top: 1px;
 /// value it resolves to, flagged as not self-evaluated.
 #[test]
 fn record_variable_values_marks_short_circuited_defaults() {
+    let arena = Allocator::default();
     let files = one("$a: 1px;\n$a: 2px !default;\n$b: 3px !default;\n");
     let options = Options::default()
         .record_variable_values(true)
         .with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
     let sheet = compiler.parse().unwrap();
-    let run = compiler.evaluate(&sheet).unwrap();
+    let run = compiler.evaluate(sheet).unwrap();
 
     let recorded: Vec<(&str, bool, bool, String)> = run
         .evaluator
@@ -353,6 +379,7 @@ fn record_variable_values_marks_short_circuited_defaults() {
 /// Recording a declaration does not disturb the CSS it produces.
 #[test]
 fn record_variable_values_does_not_change_output() {
+    let arena = Allocator::default();
     let src = "$a: 1px !default;\n.x { $b: 2px; width: $a + $b; }\n";
     let files = one(src);
     let plain = Options::default();
@@ -360,7 +387,7 @@ fn record_variable_values_does_not_change_output() {
         .record_variable_values(true)
         .with_importer(&files);
     assert_eq!(
-        Compiler::new("in.scss", &recording).unwrap().compile().unwrap(),
+        Compiler::new(&arena, "in.scss", &recording).unwrap().compile().unwrap(),
         compile(src, &plain).unwrap()
     );
 }
@@ -369,13 +396,14 @@ fn record_variable_values_does_not_change_output() {
 /// structurally.
 #[test]
 fn recorded_values_are_typed() {
+    let arena = Allocator::default();
     let files = one("$list: 1px 2px;\n$c: #336699;\n");
     let options = Options::default()
         .record_variable_values(true)
         .with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
     let sheet = compiler.parse().unwrap();
-    let run = compiler.evaluate(&sheet).unwrap();
+    let run = compiler.evaluate(sheet).unwrap();
 
     let mut values = run.evaluator.variable_values().values();
     assert!(matches!(values.next().map(|v| &v.value), Some(Value::List(_))));
@@ -386,15 +414,16 @@ fn recorded_values_are_typed() {
 /// interned id — which `file_url` resolves back to its canonical URL.
 #[test]
 fn record_variable_values_spans_several_files() {
+    let arena = Allocator::default();
     let files = MemoryImporter::new()
         .with_file("in.scss", "@use \"lib\";\n$here: 1px;\n")
         .with_file("_lib.scss", "$from-lib: 7px;\n");
     let options = Options::default()
         .record_variable_values(true)
         .with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
     let sheet = compiler.parse().unwrap();
-    let run = compiler.evaluate(&sheet).unwrap();
+    let run = compiler.evaluate(sheet).unwrap();
 
     let mut by_file: Vec<(Option<&str>, &str)> = run
         .evaluator
@@ -414,6 +443,7 @@ fn record_variable_values_spans_several_files() {
 /// source-map entries collapse into one.
 #[test]
 fn same_named_partials_in_different_directories_stay_distinct() {
+    let arena = Allocator::default();
     let files = MemoryImporter::new()
         .with_file(
             "in.scss",
@@ -424,9 +454,9 @@ fn same_named_partials_in_different_directories_stay_distinct() {
     let options = Options::default()
         .record_variable_values(true)
         .with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
     let sheet = compiler.parse().unwrap();
-    let run = compiler.evaluate(&sheet).unwrap();
+    let run = compiler.evaluate(sheet).unwrap();
 
     assert_eq!(compiler.emit(&run.nodes), "a {\n  x: red;\n  y: blue;\n}");
 
@@ -454,6 +484,7 @@ fn same_named_partials_in_different_directories_stay_distinct() {
 /// one: the frame prints its full relative URL and the snippet is ITS text.
 #[test]
 fn errors_name_the_file_they_came_from() {
+    let arena = Allocator::default();
     let files = MemoryImporter::new()
         .with_file(
             "in.scss",
@@ -462,7 +493,7 @@ fn errors_name_the_file_they_came_from() {
         .with_file("theme/_colors.scss", "$c: red;\n")
         .with_file("base/_colors.scss", "$b: 2px;\n$x: $undefined-here;\n");
     let options = Options::default().with_importer(&files);
-    let err = Compiler::new("in.scss", &options)
+    let err = Compiler::new(&arena, "in.scss", &options)
         .unwrap()
         .compile()
         .expect_err("expected an evaluation error");
@@ -485,6 +516,7 @@ fn errors_name_the_file_they_came_from() {
 /// text under `sourcesContent` — same-named partials included.
 #[test]
 fn source_map_sources_are_per_file() {
+    let arena = Allocator::default();
     let files = MemoryImporter::new()
         .with_file(
             "in.scss",
@@ -495,9 +527,9 @@ fn source_map_sources_are_per_file() {
     let options = Options::default()
         .with_importer(&files)
         .with_source_map_include_sources(true);
-    let compiler = Compiler::new("in.scss", &options).unwrap().with_source_map(true);
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap().with_source_map(true);
     let sheet = compiler.parse().unwrap();
-    let mut run = compiler.evaluate(&sheet).unwrap();
+    let mut run = compiler.evaluate(sheet).unwrap();
     let result = compiler.emit_with_source_map(&run.nodes, &mut run.evaluator);
 
     let sources = &result.source_map.sources;
@@ -517,6 +549,7 @@ fn source_map_sources_are_per_file() {
 /// stamped inside the imported file interns under ITS canonical URL.
 #[test]
 fn imported_files_keep_their_own_identity() {
+    let arena = Allocator::default();
     let files = MemoryImporter::new()
         .with_file("in.scss", "@import \"a/vars\";\n@import \"b/vars\";\n")
         .with_file("a/_vars.scss", "$from-a: 1px;\n")
@@ -524,9 +557,9 @@ fn imported_files_keep_their_own_identity() {
     let options = Options::default()
         .record_variable_values(true)
         .with_importer(&files);
-    let compiler = Compiler::new("in.scss", &options).unwrap();
+    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
     let sheet = compiler.parse().unwrap();
-    let run = compiler.evaluate(&sheet).unwrap();
+    let run = compiler.evaluate(sheet).unwrap();
 
     let mut captured: Vec<(&str, &str)> = run
         .evaluator
@@ -545,12 +578,13 @@ fn imported_files_keep_their_own_identity() {
 /// `@use "./x"` finds its sibling rather than the entry's.
 #[test]
 fn relative_loads_resolve_against_the_containing_file() {
+    let arena = Allocator::default();
     let files = MemoryImporter::new()
         .with_file("in.scss", "@use \"pkg/entry\" as p;\na { x: p.$v; }\n")
         .with_file("pkg/_entry.scss", "@use \"local\" as l;\n$v: l.$v;\n")
         .with_file("pkg/_local.scss", "$v: from-pkg;\n")
         .with_file("_local.scss", "$v: from-root;\n");
     let options = Options::default().with_importer(&files);
-    let css = Compiler::new("in.scss", &options).unwrap().compile().unwrap();
+    let css = Compiler::new(&arena, "in.scss", &options).unwrap().compile().unwrap();
     assert_eq!(css, "a {\n  x: from-pkg;\n}");
 }

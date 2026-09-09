@@ -166,8 +166,14 @@ impl<'a> Evaluator<'a> {
                 if let ox::Statement::Declaration(d) = stmt {
                     // dart reaches this by re-reading the declaration as a
                     // selector and failing to find the `{`, so the caret lands
-                    // where that scan gave up — see `Declaration::value_end`.
-                    let pos = self.file.pos_at(d.span.end);
+                    // where that scan gave up: the end of the value, or the `!`
+                    // of a flag — no selector may contain one, so the scan stops
+                    // there rather than running on to the terminator.
+                    let give_up = match &d.important {
+                        Some(flag) => flag.span.start,
+                        None => d.span.end,
+                    };
+                    let pos = self.file.pos_at(give_up);
                     return Err(self.finalize_error(Error::at("expected \"{\".", pos)));
                 }
             }
@@ -766,7 +772,17 @@ impl<'a> Evaluator<'a> {
         let saved = std::mem::replace(&mut self.at_root_excluding_style_rule, true);
         let result = self.eval_style_rule_at(selector.span, block, parents, sink);
         self.at_root_excluding_style_rule = saved;
-        result
+        result?;
+        // dart marks the root's last child `isGroupEnd` once a style rule
+        // finishes with no ENCLOSING style rule in scope — and `@at-root`
+        // excludes the enclosing one, so this rule qualifies. The blank only
+        // shows if something resumes after it, which is why a nested chain
+        // (`@at-root .b { @at-root .c {…} }`) still packs tight: the markers
+        // land next to each other at the root and collapse into one.
+        if !parents.is_empty() {
+            sink.push_at_rule(OutNode::GroupEnd);
+        }
+        Ok(())
     }
 
     /// The optional query is accepted but not yet honoured (the common

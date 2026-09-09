@@ -2298,7 +2298,7 @@ impl<'a> Evaluator<'a> {
     /// node that has one, which is where dart-sass — attaching a span to every
     /// AST node it visits — blames it too.
     fn blame_stmt(&self, e: Error, stmt: &'a ox::Statement<'a>) -> Error {
-        let span = *stmt.span();
+        let span = blame_span(stmt);
         let e = e.or_at(
             self.file.pos(span),
             span.end.saturating_sub(span.start),
@@ -2544,6 +2544,7 @@ impl<'a> Evaluator<'a> {
                 result?;
             }
             (Some(P::SassFunction(f)), Some(block)) => {
+                check_duplicate_params(self.file, Some(&f.parameters))?;
                 let callable = Rc::new(Callable {
                     name: f.name.name,
                     params: Some(&f.parameters),
@@ -2555,6 +2556,7 @@ impl<'a> Evaluator<'a> {
                 self.define_function(f.name.name, captured);
             }
             (Some(P::SassMixin(m)), Some(block)) => {
+                check_duplicate_params(self.file, m.parameters.as_ref())?;
                 let callable = Rc::new(Callable {
                     name: m.name.name,
                     params: m.parameters.as_ref(),
@@ -4113,7 +4115,7 @@ fn validate_decl_scope<'a>(
         // rule: the innermost statement that has a span wins, which is the one
         // dart-sass points at.
         if let Err(e) = validate_decl_stmt(file, stmt, ctx) {
-            let span = *stmt.span();
+            let span = blame_span(stmt);
             return Err(e.or_at(file.pos(span), span.end.saturating_sub(span.start)));
         }
     }
@@ -7713,6 +7715,48 @@ fn forward_visibility<'a>(
     match v.modifier.kind {
         ox::SassForwardVisibilityModifierKind::Show => (Some(members), None),
         ox::SassForwardVisibilityModifierKind::Hide => (None, Some(members)),
+    }
+}
+
+/// Reject a parameter list that names the same parameter twice
+/// (`@mixin m($a, $a)`), with `-` and `_` interchangeable as everywhere else.
+///
+/// dart-sass catches this while parsing the list, so it fires on the
+/// DECLARATION — whether or not the callable is ever invoked — and blames the
+/// second spelling.
+fn check_duplicate_params<'a>(
+    file: &SourceFile<'a>,
+    params: Option<&'a ox::SassParameters<'a>>,
+) -> Result<(), Error> {
+    let list = value_read::params_of(params);
+    let mut seen: Vec<Cow<'a, str>> = Vec::with_capacity(list.len());
+    for p in list {
+        let name = normalize_arg_name(p.name.name.name);
+        if seen.contains(&name) {
+            return Err(Error::at("Duplicate parameter.", file.pos(p.span))
+                .with_length(p.span.end.saturating_sub(p.span.start)));
+        }
+        seen.push(name);
+    }
+    Ok(())
+}
+
+/// The span an error carrying no position of its own is blamed on.
+///
+/// For most statements that is the statement itself; for an at-rule it is the
+/// HEADER alone — `@content`, `@include m`, `@function f()` — because dart-sass
+/// blames the at-rule it was reading, and at the point the error is raised it
+/// has not read the block (nor, for a childless rule, the `;`).
+fn blame_span<'a>(stmt: &'a ox::Statement<'a>) -> Span {
+    match stmt {
+        ox::Statement::AtRule(at) => Span {
+            start: at.span.start,
+            end: at
+                .prelude
+                .as_ref()
+                .map_or(at.name.span.end, |p| p.span().end),
+        },
+        other => *other.span(),
     }
 }
 
