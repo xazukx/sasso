@@ -1,4 +1,6 @@
-use super::value_read::{Arg, params_of, rest_of};
+use super::value_read::{
+    Arg, is_colon, params_of, rest_of, split_clause, split_clauses, values_span,
+};
 use super::*;
 
 /// Iteration source for `@each`. A list is held as its shared `Rc<[Value]>`
@@ -196,11 +198,11 @@ impl<'a> Evaluator<'a> {
             Ok(())
         };
         for a in args {
-            let v = self.eval_values(a.valuess)?;
+            let v = self.eval_values(a.values)?;
             // dart resolves each argument's node right after evaluating it
             // (evaluate.dart:3814), so a bare `$x` argument carries `$x`'s
             // DEFINITION rather than the call site.
-            let sp = self.expression_node_values(a.valuess);
+            let sp = self.expression_node_values(a.values);
             if a.splat {
                 // A splat list spreads into positional args; a map spreads
                 // into keyword args (string keys only). A single non-list/map
@@ -371,7 +373,7 @@ impl<'a> Evaluator<'a> {
             // (evaluate.dart:3609), which is not a value position sasso maps;
             // record "unknown" so no segment is emitted for it.
             if let Some(frame) = self.var_spans.last() {
-                frame.borrow_mut().insert(rest.clone(), VarSpan::default());
+                frame.borrow_mut().insert(rest.to_string(), VarSpan::default());
             }
         } else if pos_iter.next().is_some() {
             return Err(Error::unpositioned(format!(
@@ -478,7 +480,7 @@ impl<'a> Evaluator<'a> {
             );
             // As in `bind_evaled_into_scope`: a `$rest...` arglist has no value
             // position to point at, so it gets the "unknown" span.
-            span_frame.insert(rest.clone(), VarSpan::default());
+            span_frame.insert(rest.to_string(), VarSpan::default());
         } else if pos_iter.next().is_some() {
             return Err(Error::unpositioned(format!(
                 "{name} was passed too many arguments."
@@ -531,7 +533,7 @@ impl<'a> Evaluator<'a> {
         let saved_env_modules = self.install_env_modules(&func.env_modules);
         self.push_scope(false);
         let result = self
-            .bind_evaled_into_scope(&func.def.params, evaled, &arg_spans, &func.def.name)
+            .bind_evaled_into_scope(func.def.params, evaled, &arg_spans, &func.def.name)
             .and_then(|()| {
                 // A function body is not a mixin body: `meta.content-exists()`
                 // called from a function (even one invoked by a mixin) errors.
@@ -569,24 +571,30 @@ impl<'a> Evaluator<'a> {
         &mut self,
         block: &'a ox::SimpleBlock<'a>,
     ) -> Result<Option<Value>, Error> {
-        for stmt in stmts {
+        use ox::AtRulePrelude as P;
+        for stmt in &block.statements {
             match stmt {
-                Stmt::VarDecl(v) => self.apply_var(v)?,
-                Stmt::Comment(..) => {}
-                Stmt::Return { value, .. } => return Ok(Some(self.eval_value(value)?)),
-                Stmt::FunctionDef(c) => {
-                    let captured = self.capture_callable(c);
-                    self.define_function(&c.name, captured);
-                }
-                Stmt::If(branches) => {
-                    for branch in branches {
-                        let take = match &branch.cond {
+                ox::Statement::SassVariableDeclaration(v) => self.apply_var(v)?,
+                ox::Statement::SassIfAtRule(node) => {
+                    let mut clauses: Vec<(
+                        Option<&'a ox::ComponentValue<'a>>,
+                        &'a ox::SimpleBlock<'a>,
+                    )> = Vec::with_capacity(2 + node.else_if_clauses.len());
+                    clauses.push((Some(&node.if_clause.condition), &node.if_clause.block));
+                    for c in &node.else_if_clauses {
+                        clauses.push((Some(&c.condition), &c.block));
+                    }
+                    if let Some(b) = &node.else_clause {
+                        clauses.push((None, b));
+                    }
+                    for (cond, body) in clauses {
+                        let take = match cond {
                             None => true,
                             Some(c) => self.eval_value(c)?.is_truthy(),
                         };
                         if take {
                             self.push_scope(true);
-                            let result = self.run_fn_body(&branch.body);
+                            let result = self.run_fn_body(body);
                             self.pop_scope();
                             if let Some(v) = result? {
                                 return Ok(Some(v));
@@ -595,95 +603,129 @@ impl<'a> Evaluator<'a> {
                         }
                     }
                 }
-                Stmt::For {
-                    var,
-                    from,
-                    to,
-                    inclusive,
-                    body,
-                    from_pos,
-                } => {
-                    let (start_i, end_i, unit) = self.for_bounds(from, to)?;
-                    self.push_scope(true);
-                    // dart resolves the loop variable's node INSIDE the loop
-                    // scope (evaluate.dart:1666) — but `@for` pushes a fresh
-                    // frame, so the lookup still sees the outer bindings.
-                    let span = self.expression_node_value(from, *from_pos);
-                    let mut result = Ok(None);
-                    for i in for_indices(start_i, end_i, *inclusive) {
-                        self.set_local(
-                            var,
-                            Value::Number(Number::with_unit(i as f64, unit.clone())),
-                            span,
-                        );
-                        result = self.run_fn_body(body);
-                        if matches!(result, Ok(None)) {
-                            continue;
+                ox::Statement::AtRule(at) => {
+                    let name = at.name.name;
+                    match (&at.prelude, &at.block) {
+                        (Some(P::SassExpr(e)), None) if name.eq_ignore_ascii_case("return") => {
+                            return Ok(Some(self.eval_value(e)?));
                         }
-                        break;
-                    }
-                    self.pop_scope();
-                    if let Some(v) = result? {
-                        return Ok(Some(v));
-                    }
-                }
-                Stmt::Each {
-                    vars,
-                    list,
-                    body,
-                    list_pos,
-                } => {
-                    let items = self.eval_each_items(list)?;
-                    // Resolved BEFORE the loop scope is pushed, like dart
-                    // (evaluate.dart:1441 precedes `_environment.scope`).
-                    let span = self.expression_node_value(list, *list_pos);
-                    self.push_scope(true);
-                    let mut result = Ok(None);
-                    for i in 0..items.len() {
-                        self.bind_each(vars, items.get(i), span);
-                        result = self.run_fn_body(body);
-                        if matches!(result, Ok(None)) {
-                            continue;
+                        (Some(P::SassFunction(f)), Some(body)) => {
+                            let callable = Rc::new(Callable {
+                                name: f.name.name,
+                                params: Some(&f.parameters),
+                                body,
+                                file: self.file,
+                                span: at.span,
+                            });
+                            let captured = self.capture_callable(&callable);
+                            self.define_function(f.name.name, captured);
                         }
-                        break;
-                    }
-                    self.pop_scope();
-                    if let Some(v) = result? {
-                        return Ok(Some(v));
-                    }
-                }
-                Stmt::While { cond, body, .. } => {
-                    self.push_scope(true);
-                    let mut result: Result<Option<Value>, Error> = Ok(None);
-                    let mut guard = 0u32;
-                    loop {
-                        match self.eval_value(cond) {
-                            Ok(v) if v.is_truthy() => {}
-                            Ok(_) => break,
-                            Err(e) => {
-                                result = Err(e);
+                        (Some(P::SassFor(f)), Some(body)) => {
+                            let (start_i, end_i, unit) = self.for_bounds(&f.start, &f.end)?;
+                            self.push_scope(true);
+                            // dart resolves the loop variable's node INSIDE the
+                            // loop scope (evaluate.dart:1666) — but `@for`
+                            // pushes a fresh frame, so the lookup still sees
+                            // the outer bindings.
+                            let span = self.expression_node_value(&f.start);
+                            let inclusive =
+                                matches!(f.boundary.kind, ox::SassForBoundaryKind::Inclusive);
+                            let var = f.binding.name.name;
+                            let mut result = Ok(None);
+                            for i in for_indices(start_i, end_i, inclusive) {
+                                self.set_local(
+                                    var,
+                                    Value::Number(Number::with_unit(i as f64, unit.clone())),
+                                    span,
+                                );
+                                result = self.run_fn_body(body);
+                                if matches!(result, Ok(None)) {
+                                    continue;
+                                }
                                 break;
                             }
+                            self.pop_scope();
+                            if let Some(v) = result? {
+                                return Ok(Some(v));
+                            }
                         }
-                        result = self.run_fn_body(body);
-                        if !matches!(result, Ok(None)) {
-                            break;
+                        (Some(P::SassEach(each)), Some(body)) => {
+                            let items = self.eval_each_items(&each.expr)?;
+                            // Resolved BEFORE the loop scope is pushed, like
+                            // dart (evaluate.dart:1441 precedes
+                            // `_environment.scope`).
+                            let span = self.expression_node_value(&each.expr);
+                            let vars: Vec<String> = each
+                                .bindings
+                                .iter()
+                                .map(|b| b.name.name.to_string())
+                                .collect();
+                            self.push_scope(true);
+                            let mut result = Ok(None);
+                            for i in 0..items.len() {
+                                self.bind_each(&vars, items.get(i), span);
+                                result = self.run_fn_body(body);
+                                if matches!(result, Ok(None)) {
+                                    continue;
+                                }
+                                break;
+                            }
+                            self.pop_scope();
+                            if let Some(v) = result? {
+                                return Ok(Some(v));
+                            }
                         }
-                        guard += 1;
-                        if guard >= 100_000 {
-                            result = Err(Error::unpositioned("@while exceeded 100000 iterations"));
-                            break;
+                        (Some(P::SassExpr(cond)), Some(body))
+                            if name.eq_ignore_ascii_case("while") =>
+                        {
+                            self.push_scope(true);
+                            let mut result: Result<Option<Value>, Error> = Ok(None);
+                            let mut guard = 0u32;
+                            loop {
+                                match self.eval_value(cond) {
+                                    Ok(v) if v.is_truthy() => {}
+                                    Ok(_) => break,
+                                    Err(e) => {
+                                        result = Err(e);
+                                        break;
+                                    }
+                                }
+                                result = self.run_fn_body(body);
+                                if !matches!(result, Ok(None)) {
+                                    break;
+                                }
+                                guard += 1;
+                                if guard >= 100_000 {
+                                    result = Err(Error::unpositioned(
+                                        "@while exceeded 100000 iterations",
+                                    ));
+                                    break;
+                                }
+                            }
+                            self.pop_scope();
+                            if let Some(v) = result? {
+                                return Ok(Some(v));
+                            }
+                        }
+                        (Some(P::SassExpr(e)), None) if name.eq_ignore_ascii_case("warn") => {
+                            let pos = self.file.pos(at.span);
+                            self.emit_warn(e, pos)?
+                        }
+                        (Some(P::SassExpr(e)), None) if name.eq_ignore_ascii_case("debug") => {
+                            let pos = self.file.pos(at.span);
+                            self.emit_debug(e, pos)?
+                        }
+                        (Some(P::SassExpr(e)), None) if name.eq_ignore_ascii_case("error") => {
+                            let pos = self.file.pos(at.span);
+                            let length = at.span.end.saturating_sub(at.span.start);
+                            return Err(self.build_error(e, pos, length));
+                        }
+                        _ => {
+                            return Err(Error::unpositioned(
+                                "only variable assignments, control flow and @return are allowed in a function.",
+                            ));
                         }
                     }
-                    self.pop_scope();
-                    if let Some(v) = result? {
-                        return Ok(Some(v));
-                    }
-                }
-                Stmt::Warn { value, pos } => self.emit_warn(value, *pos)?,
-                Stmt::Debug { value, pos } => self.emit_debug(value, *pos)?,
-                Stmt::Error { value, pos, length } => {
-                    return Err(self.build_error(value, *pos, *length));
                 }
                 _ => {
                     return Err(Error::unpositioned(
@@ -780,8 +822,9 @@ impl<'a> Evaluator<'a> {
         let content_block = content.map(|stmts| {
             let snapshot = self.snapshot_env();
             ContentBlock {
-                stmts,
-                params: content_params.clone(),
+                block: stmts,
+                file: self.file,
+                params: content_params,
                 caller_env: Some(Box::new(snapshot)),
             }
         });
@@ -793,11 +836,16 @@ impl<'a> Evaluator<'a> {
         let saved_env_modules = self.install_env_modules(&mixin.env_modules);
         self.push_scope(false);
         let result = self
-            .bind_evaled_into_scope(&mixin.def.params, evaled, &arg_spans, &mixin.def.name)
+            .bind_evaled_into_scope(mixin.def.params, evaled, &arg_spans, &mixin.def.name)
             .and_then(|()| {
                 self.content_stack.push(content_block);
                 self.in_mixin.push(true);
-                let r = self.exec(&mixin.def.body, parents, sink);
+                let r = self.exec(
+                    &mixin.def.body.statements,
+                    mixin.def.body.span,
+                    parents,
+                    sink,
+                );
                 self.in_mixin.pop();
                 self.content_stack.pop();
                 r
@@ -837,8 +885,9 @@ impl<'a> Evaluator<'a> {
         let content_block = content.map(|stmts| {
             let snapshot = self.snapshot_env();
             ContentBlock {
-                stmts,
-                params: content_params.clone(),
+                block: stmts,
+                file: self.file,
+                params: content_params,
                 caller_env: Some(Box::new(snapshot)),
             }
         });
@@ -852,10 +901,15 @@ impl<'a> Evaluator<'a> {
         let saved_env_modules = self.install_env_modules(&mixin.env_modules);
         self.push_scope(false);
         let result = self
-            .bind_evaled_into_scope(&mixin.def.params, evaled, &arg_spans, &mixin.def.name)
+            .bind_evaled_into_scope(mixin.def.params, evaled, &arg_spans, &mixin.def.name)
             .and_then(|()| {
                 self.content_stack.push(content_block);
-                let r = self.exec(&mixin.def.body, parents, sink);
+                let r = self.exec(
+                    &mixin.def.body.statements,
+                    mixin.def.body.span,
+                    parents,
+                    sink,
+                );
                 self.content_stack.pop();
                 r
             });
@@ -957,8 +1011,9 @@ impl<'a> Evaluator<'a> {
         let content_block = content.map(|stmts| {
             let snapshot = self.snapshot_env();
             ContentBlock {
-                stmts,
-                params: content_params.clone(),
+                block: stmts,
+                file: self.file,
+                params: content_params,
                 caller_env: Some(Box::new(snapshot)),
             }
         });
@@ -991,7 +1046,7 @@ impl<'a> Evaluator<'a> {
         // mapping segment, rather than a plausible-but-wrong one.
         let result = self
             .bind_evaled_into_scope(
-                &callable.def.params,
+                callable.def.params,
                 (pos_args, named, ListSep::Comma),
                 &ArgSpans::default(),
                 &callable.def.name,
@@ -999,7 +1054,12 @@ impl<'a> Evaluator<'a> {
             .and_then(|()| {
                 self.content_stack.push(content_block);
                 self.in_mixin.push(true);
-                let r = self.exec(&callable.def.body, parents, sink);
+                let r = self.exec(
+                    &callable.def.body.statements,
+                    callable.def.body.span,
+                    parents,
+                    sink,
+                );
                 self.in_mixin.pop();
                 self.content_stack.pop();
                 r
@@ -1030,19 +1090,20 @@ impl<'a> Evaluator<'a> {
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
-        let (stmts, params, caller_env) = match self.content_stack.last() {
-            Some(Some(block)) => (
-                Rc::clone(&block.stmts),
-                block.params.clone(),
-                block.caller_env.as_ref().map(|e| (**e).clone()),
+        let (block, file, params, caller_env) = match self.content_stack.last() {
+            Some(Some(cb)) => (
+                cb.block,
+                cb.file,
+                cb.params,
+                cb.caller_env.as_ref().map(|e| (**e).clone()),
             ),
             _ => return Ok(()),
         };
         // `@content(args)` evaluates its arguments at the call site (the mixin
         // body), then binds them to the content block's `using (params)`, which
         // become visible inside the block.
-        let frame = match &params {
-            Some(p) => Some(self.bind_args(p, args, "@content")?),
+        let frame = match params {
+            Some(_) => Some(self.bind_args(params, args, "@content")?),
             None => {
                 // A content block with no `using (params)` accepts no
                 // arguments; passing any is an error (dart-sass).
@@ -1068,7 +1129,11 @@ impl<'a> Evaluator<'a> {
         // `@content` inside it forwards to the block one level up, not to
         // itself (a recursive mixin chaining `@content` must terminate).
         let running = self.content_stack.pop();
-        let result = self.exec(&stmts, parents, sink);
+        // The block's own file is the diagnostics/position context while it
+        // runs: it was written where the `@include` is, not where the mixin is.
+        let saved_file = std::mem::replace(&mut self.file, file);
+        let result = self.exec(&block.statements, block.span, parents, sink);
+        self.file = saved_file;
         if let Some(top) = running {
             self.content_stack.push(top);
         }
@@ -1087,7 +1152,7 @@ impl<'a> Evaluator<'a> {
         // the splat eagerly and reconstitutes its elements (and an argument
         // list's keywords) as already-evaluated arguments.
         enum IfArg<'a> {
-            Lazy(&'a Expr),
+            Lazy(&'a [ox::ComponentValue<'a>]),
             Eager(Value),
         }
         fn slot_index(name: &str) -> Option<usize> {
@@ -1103,7 +1168,7 @@ impl<'a> Evaluator<'a> {
         let mut named: [Option<IfArg<'_>>; 3] = [None, None, None];
         for a in args {
             if a.splat {
-                match self.eval_value(&a.values)? {
+                match self.eval_values(a.values)? {
                     Value::List(l) => {
                         if let Some(kw) = &l.keywords {
                             for (k, v) in kw {
@@ -1171,14 +1236,14 @@ impl<'a> Evaluator<'a> {
         match (cond, t_val, f_val) {
             (Some(c), Some(t), Some(f)) => {
                 let truthy = match c {
-                    IfArg::Lazy(e) => self.eval_value(e)?.is_truthy(),
+                    IfArg::Lazy(e) => self.eval_values(e)?.is_truthy(),
                     IfArg::Eager(v) => v.is_truthy(),
                 };
                 // if() is a function boundary: a bare slash-division branch
                 // collapses to its number (dart-sass `withoutSlash`).
                 let branch = if truthy { t } else { f };
                 match branch {
-                    IfArg::Lazy(e) => Ok(self.eval_value(e)?.without_slash()),
+                    IfArg::Lazy(e) => Ok(self.eval_values(e)?.without_slash()),
                     IfArg::Eager(v) => Ok(v.without_slash()),
                 }
             }
@@ -1193,123 +1258,178 @@ impl<'a> Evaluator<'a> {
     /// `<condition>: <value>` (or `else: <value>`). Conditions mix evaluated
     /// `sass(<expr>)` with non-evaluable `css(...)` / arbitrary substitution
     /// pieces. If every reachable condition resolves statically, the matching
-    /// value is returned; otherwise the whole `if()` is re-serialized
-    /// verbatim (with statically-true/false conditions folded away) as an
-    /// unquoted string.
-    pub(super) fn eval_modern_if(&mut self, clauses: &[IfClause]) -> Result<Value, Error> {
+    /// value is returned; otherwise the whole `if()` is re-serialized verbatim
+    /// (with statically-true/false conditions folded away) as an unquoted
+    /// string.
+    ///
+    /// Returns `Ok(None)` when the arguments are not in clause form, so the
+    /// caller falls back to the legacy `if($condition, $if-true, $if-false)`.
+    pub(super) fn try_eval_modern_if(
+        &mut self,
+        args: &'a [ox::ComponentValue<'a>],
+    ) -> Result<Option<Value>, Error> {
+        let clauses = split_clauses(args);
+        // A run with no `:` anywhere is the legacy comma-argument form.
+        if !clauses.iter().any(|c| c.iter().any(is_colon)) {
+            return Ok(None);
+        }
         let mut verbatim: Option<Vec<String>> = None;
         for clause in clauses {
+            let Some((cond, value)) = split_clause(clause) else {
+                return Ok(None);
+            };
             // The `else` clause has no condition: it always matches.
-            let result = match &clause.condition {
-                None => CondEval::Bool(true),
-                Some(cond) => self.eval_if_cond(cond)?,
+            let is_else = matches!(
+                cond,
+                [ox::ComponentValue::InterpolableIdent(ox::InterpolableIdent::Literal(id))]
+                    if id.name.eq_ignore_ascii_case("else")
+            );
+            let result = if is_else {
+                CondEval::Bool(true)
+            } else {
+                self.eval_if_cond(cond)?
             };
             match (&mut verbatim, result) {
                 // Not yet verbatim: a static-true (or `else`) clause wins.
                 (None, CondEval::Bool(true)) => {
-                    return Ok(self.eval_value(&clause.value)?.without_slash());
+                    return Ok(Some(self.eval_values(value)?.without_slash()));
                 }
                 // Not yet verbatim: a static-false clause is skipped.
                 (None, CondEval::Bool(false)) => {}
                 // First non-evaluable condition: enter verbatim mode.
                 (None, CondEval::Css(rc)) => {
-                    let value = self.eval_if_value(&clause.value)?;
-                    verbatim = Some(vec![format!("{}: {}", rc.to_css(), value)]);
+                    let v = self.eval_if_value(value)?;
+                    verbatim = Some(vec![format!("{}: {}", rc.to_css(), v)]);
                 }
                 // Already verbatim: fold each remaining clause.
-                (Some(out), CondEval::Bool(true)) => {
-                    let value = self.eval_if_value(&clause.value)?;
-                    out.push(format!("else: {value}"));
+                (Some(_), CondEval::Bool(true)) => {
+                    let v = self.eval_if_value(value)?;
+                    if let Some(out) = &mut verbatim {
+                        out.push(format!("else: {v}"));
+                    }
                 }
                 (Some(_), CondEval::Bool(false)) => {}
-                (Some(out), CondEval::Css(rc)) => {
-                    let value = self.eval_if_value(&clause.value)?;
-                    out.push(format!("{}: {}", rc.to_css(), value));
+                (Some(_), CondEval::Css(rc)) => {
+                    let v = self.eval_if_value(value)?;
+                    if let Some(out) = &mut verbatim {
+                        out.push(format!("{}: {}", rc.to_css(), v));
+                    }
                 }
             }
         }
-        match verbatim {
-            Some(parts) => Ok(Value::Str(SassStr {
+        Ok(Some(match verbatim {
+            Some(parts) => Value::Str(SassStr {
                 text: format!("if({})", parts.join("; ")).into(),
                 quoted: false,
-            })),
+            }),
             // No clause matched and no `else`: the modern `if()` is null.
-            None => Ok(Value::Null),
-        }
+            None => Value::Null,
+        }))
     }
 
     /// Evaluate an `if()` clause value. dart-sass emits it in plain CSS
     /// serialization format (since 1.101.4), not `meta.inspect()` format.
-    fn eval_if_value(&mut self, expr: &Expr) -> Result<String, Error> {
+    fn eval_if_value(&mut self, values: &'a [ox::ComponentValue<'a>]) -> Result<String, Error> {
         // No without_slash: dart serializes the clause value as-is, so a
         // preserved slash-division (`20/10`) keeps its slash form.
-        let v = self.eval_value(expr)?;
+        let v = self.eval_values(values)?;
         serialize_if_value(&v)
     }
 
     /// Evaluate a modern `if()` condition into a tri-state result: a static
     /// boolean (from `sass(...)` atoms) or a residual non-evaluable CSS
     /// condition that must be re-serialized verbatim.
-    fn eval_if_cond(&mut self, cond: &IfCond) -> Result<CondEval, Error> {
-        match cond {
-            IfCond::Sass(expr) => Ok(CondEval::Bool(self.eval_value(expr)?.is_truthy())),
-            IfCond::Raw { pieces, .. } => {
-                let text = self.eval_template(pieces)?;
-                // dart re-serializes the raw token run with collapsed
-                // whitespace and no space inside empty parens
-                // (`css(\n)` is `css()`).
-                let mut collapsed = String::with_capacity(text.len());
-                let mut prev_ws = false;
-                for c in text.chars() {
-                    if c.is_whitespace() {
-                        prev_ws = true;
-                        continue;
+    ///
+    /// The parser already read `and`/`or`/`not`/parentheses as its own
+    /// operators, so this walks that tree rather than re-splitting text.
+    fn eval_if_cond(
+        &mut self,
+        values: &'a [ox::ComponentValue<'a>],
+    ) -> Result<CondEval, Error> {
+        match values {
+            [one] => self.eval_if_cond_value(one),
+            // A run the operator grammar did not join is arbitrary
+            // substitution: keep it verbatim.
+            _ => Ok(CondEval::Css(RCond::Css(collapse_if_cond(
+                &self.interpolate(values_span(values))?,
+            )))),
+        }
+    }
+
+    fn eval_if_cond_value(
+        &mut self,
+        value: &'a ox::ComponentValue<'a>,
+    ) -> Result<CondEval, Error> {
+        use ox::ComponentValue as CV;
+        match value {
+            CV::SassBinaryExpression(b)
+                if matches!(
+                    b.op.kind,
+                    ox::SassBinaryOperatorKind::And | ox::SassBinaryOperatorKind::Or
+                ) =>
+            {
+                let and = matches!(b.op.kind, ox::SassBinaryOperatorKind::And);
+                let mut residuals: Vec<RCond> = Vec::new();
+                for side in [&b.left, &b.right] {
+                    match self.eval_if_cond_value(side)? {
+                        // A statically-false operand makes the whole `and`
+                        // false (and a statically-true one the whole `or`
+                        // true), short-circuiting the rest.
+                        CondEval::Bool(b) if b != and => return Ok(CondEval::Bool(b)),
+                        // The identity operand drops out.
+                        CondEval::Bool(_) => {}
+                        CondEval::Css(rc) => residuals.push(rc),
                     }
-                    if prev_ws && !collapsed.is_empty() && c != ')' {
-                        collapsed.push(' ');
-                    }
-                    prev_ws = false;
-                    collapsed.push(c);
                 }
-                let collapsed = collapsed.replace("( ", "(");
-                Ok(CondEval::Css(RCond::Css(collapsed)))
+                Ok(combine_residuals(residuals, and))
             }
-            IfCond::Not(inner) => match self.eval_if_cond(inner)? {
-                CondEval::Bool(b) => Ok(CondEval::Bool(!b)),
-                CondEval::Css(rc) => Ok(CondEval::Css(RCond::Not(Box::new(rc)))),
-            },
-            IfCond::Paren(inner) => match self.eval_if_cond(inner)? {
+            CV::SassUnaryExpression(u)
+                if matches!(u.op.kind, ox::SassUnaryOperatorKind::Not) =>
+            {
+                match self.eval_if_cond_value(&u.expr)? {
+                    CondEval::Bool(b) => Ok(CondEval::Bool(!b)),
+                    CondEval::Css(rc) => Ok(CondEval::Css(RCond::Not(Box::new(rc)))),
+                }
+            }
+            CV::SassParenthesizedExpression(p) => match self.eval_if_cond_value(&p.expr)? {
                 CondEval::Bool(b) => Ok(CondEval::Bool(b)),
                 CondEval::Css(rc) => Ok(CondEval::Css(RCond::Paren(Box::new(rc)))),
             },
-            IfCond::And(items) => {
-                let mut residuals: Vec<RCond> = Vec::new();
-                for item in items {
-                    match self.eval_if_cond(item)? {
-                        // A statically-false operand makes the whole `and`
-                        // false and short-circuits the rest.
-                        CondEval::Bool(false) => return Ok(CondEval::Bool(false)),
-                        // A statically-true operand drops out of the `and`.
-                        CondEval::Bool(true) => {}
-                        CondEval::Css(rc) => residuals.push(rc),
-                    }
-                }
-                Ok(combine_residuals(residuals, true))
+            // `sass(<expr>)` is the one atom that is evaluated.
+            CV::Function(f)
+                if matches!(
+                    &f.name,
+                    ox::FunctionName::Ident(ox::InterpolableIdent::Literal(id))
+                        if id.name.eq_ignore_ascii_case("sass")
+                ) =>
+            {
+                Ok(CondEval::Bool(self.eval_values(&f.args)?.is_truthy()))
             }
-            IfCond::Or(items) => {
-                let mut residuals: Vec<RCond> = Vec::new();
-                for item in items {
-                    match self.eval_if_cond(item)? {
-                        // A statically-true operand makes the whole `or`
-                        // true and short-circuits the rest.
-                        CondEval::Bool(true) => return Ok(CondEval::Bool(true)),
-                        // A statically-false operand drops out of the `or`.
-                        CondEval::Bool(false) => {}
-                        CondEval::Css(rc) => residuals.push(rc),
-                    }
-                }
-                Ok(combine_residuals(residuals, false))
-            }
+            // Everything else — `css(...)`, `var(...)`, a nested `if(...)`,
+            // an interpolation — is kept verbatim.
+            other => Ok(CondEval::Css(RCond::Css(collapse_if_cond(
+                &self.interpolate(*other.span())?,
+            )))),
         }
     }
 }
+
+/// dart re-serializes a raw `if()` condition with collapsed whitespace and no
+/// space inside empty parens (`css(\n)` is `css()`).
+fn collapse_if_cond(text: &str) -> String {
+    let mut collapsed = String::with_capacity(text.len());
+    let mut prev_ws = false;
+    for c in text.chars() {
+        if c.is_whitespace() {
+            prev_ws = true;
+            continue;
+        }
+        if prev_ws && !collapsed.is_empty() && c != ')' {
+            collapsed.push(' ');
+        }
+        prev_ws = false;
+        collapsed.push(c);
+    }
+    collapsed.replace("( ", "(")
+}
+

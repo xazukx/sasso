@@ -8,6 +8,7 @@
 //! Nothing here builds a tree: [`Arg`] and [`Group`] are borrowed *views* onto
 //! the parser's own nodes, so evaluation always reads the parse directly.
 
+use oxc_css_parser::token::Token;
 use oxc_css_parser::{Span, ast as ox};
 
 use crate::value::ListSep;
@@ -196,4 +197,23 @@ pub(crate) fn params_of<'a>(
 /// The name of a callable's `$rest...` parameter, if it declares one.
 pub(crate) fn rest_of<'a>(params: Option<&'a ox::SassParameters<'a>>) -> Option<&'a str> {
     params?.arbitrary_param.as_ref().map(|a| a.name.name.name)
+}
+
+/// Whether a component value is a bare `:` token.
+///
+/// The modern CSS `if()` separates a clause's condition from its value with
+/// one, and the parser keeps it as a raw token because `<condition>: <value>`
+/// is not an argument shape the value grammar owns.
+pub(crate) fn is_colon(v: &ox::ComponentValue<'_>) -> bool {
+    matches!(v, ox::ComponentValue::TokenWithSpan(t) if matches!(t.token, Token::Colon(..)))
+}
+
+/// Split a modern `if()` clause into its condition and value around the first
+/// top-level `:`. `None` when the run has none, which means the arguments are
+/// not in clause form at all.
+pub(crate) fn split_clause<'a>(
+    clause: &'a [ox::ComponentValue<'a>],
+) -> Option<(&'a [ox::ComponentValue<'a>], &'a [ox::ComponentValue<'a>])> {
+    let i = clause.iter().position(is_colon)?;
+    Some((&clause[..i], &clause[i + 1..]))
 }
