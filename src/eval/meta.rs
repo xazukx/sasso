@@ -294,7 +294,7 @@ impl<'a> Evaluator<'a> {
         // A mixin exposed unprefixed via `@use … as *`. Its body runs in the
         // owning module's environment, so capture that module too.
         if !self.star_user_modules.is_empty() && !is_private_member(&name) {
-            let hits: Vec<&Rc<Module>> = self
+            let hits: Vec<&Rc<Module<'a>>> = self
                 .star_user_modules
                 .iter()
                 .filter(|m| m.mixin(&name).is_some())
@@ -855,7 +855,7 @@ impl<'a> Evaluator<'a> {
     /// `@forward "sass:x"` (honouring an `as p-*` prefix).
     fn try_forwarded_builtin_call(
         &mut self,
-        module: &Rc<Module>,
+        module: &Rc<Module<'a>>,
         member: &str,
         args: &[super::value_read::Arg<'a>],
         pos: Pos,
@@ -889,7 +889,7 @@ impl<'a> Evaluator<'a> {
     /// functions/mixins/used-modules so the body resolves against the module.
     pub(super) fn call_user_module_function(
         &mut self,
-        module: &Rc<Module>,
+        module: &Rc<Module<'a>>,
         func: &Rc<UserCallable>,
         args: &[super::value_read::Arg<'a>],
         call: Option<(Pos, usize)>,

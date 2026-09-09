@@ -117,7 +117,7 @@ impl<'a> Evaluator<'a> {
     /// Capture the current variable and function/mixin scope chains as a
     /// callable's lexical closure (dart `Environment.closure()` — shared
     /// frames, not snapshots).
-    pub(super) fn capture_callable(&self, def: &Rc<Callable>) -> Rc<UserCallable> {
+    pub(super) fn capture_callable(&self, def: &Rc<Callable<'a>>) -> Rc<UserCallable<'a>> {
         Rc::new(UserCallable {
             def: Rc::clone(def),
             env: self.scopes.clone(),
@@ -136,7 +136,7 @@ impl<'a> Evaluator<'a> {
 
     /// Install a callable's captured `@use` namespace tables for the duration
     /// of its body, returning the caller's tables for [`Self::restore_env_modules`].
-    pub(super) fn install_env_modules(&mut self, m: &EnvModules) -> EnvModules {
+    pub(super) fn install_env_modules(&mut self, m: &EnvModules<'a>) -> EnvModules<'a> {
         EnvModules {
             used_modules: std::mem::replace(&mut self.used_modules, m.used_modules.clone()),
             star_modules: std::mem::replace(&mut self.star_modules, m.star_modules.clone()),
@@ -218,7 +218,7 @@ impl<'a> Evaluator<'a> {
 
     /// Look up a user `@function` (dash/underscore-insensitively, like dart),
     /// innermost frame first.
-    pub(super) fn lookup_function(&self, name: &str) -> Option<Rc<UserCallable>> {
+    pub(super) fn lookup_function(&self, name: &str) -> Option<Rc<UserCallable<'a>>> {
         let key = normalize_arg_name(name);
         for frame in self.functions.iter().rev() {
             if let Some(f) = frame.borrow().get(key.as_ref()) {
@@ -230,7 +230,7 @@ impl<'a> Evaluator<'a> {
 
     /// Look up a user `@mixin` (dash/underscore-insensitively), innermost
     /// frame first.
-    pub(super) fn lookup_mixin(&self, name: &str) -> Option<Rc<UserCallable>> {
+    pub(super) fn lookup_mixin(&self, name: &str) -> Option<Rc<UserCallable<'a>>> {
         let key = normalize_arg_name(name);
         for frame in self.mixins.iter().rev() {
             if let Some(m) = frame.borrow().get(key.as_ref()) {
@@ -242,7 +242,7 @@ impl<'a> Evaluator<'a> {
 
     /// Look up a user `@function` dash/underscore-insensitively (for the
     /// `meta` introspection functions), innermost frame first.
-    pub(super) fn lookup_function_norm(&self, key: &str) -> Option<Rc<UserCallable>> {
+    pub(super) fn lookup_function_norm(&self, key: &str) -> Option<Rc<UserCallable<'a>>> {
         for frame in self.functions.iter().rev() {
             let frame = frame.borrow();
             if let Some((_, f)) = frame.iter().find(|(k, _)| normalize_arg_name(k) == key) {
@@ -253,7 +253,7 @@ impl<'a> Evaluator<'a> {
     }
 
     /// Look up a user `@mixin` dash/underscore-insensitively, innermost first.
-    pub(super) fn lookup_mixin_norm(&self, key: &str) -> Option<Rc<UserCallable>> {
+    pub(super) fn lookup_mixin_norm(&self, key: &str) -> Option<Rc<UserCallable<'a>>> {
         for frame in self.mixins.iter().rev() {
             let frame = frame.borrow();
             if let Some((_, m)) = frame.iter().find(|(k, _)| normalize_arg_name(k) == key) {

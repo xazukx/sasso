@@ -417,8 +417,8 @@ impl<'a> Evaluator<'a> {
 
     /// Install a saved environment snapshot, returning the displaced one to
     /// restore afterwards.
-    pub(super) fn install_env(&mut self, env: SavedModuleEnv) -> SavedModuleEnv {
-        SavedModuleEnv {
+    pub(super) fn install_env(&mut self, env: SavedModuleEnv<'a>) -> SavedModuleEnv<'a> {
+        SavedModuleEnv<'a> {
             scopes: std::mem::replace(&mut self.scopes, env.scopes),
             var_spans: std::mem::replace(&mut self.var_spans, env.var_spans),
             scope_semi_global: std::mem::replace(&mut self.scope_semi_global, env.scope_semi_global),
@@ -434,8 +434,8 @@ impl<'a> Evaluator<'a> {
 
     /// Clone the current per-module environment (for capturing a content block's
     /// call-site closure).
-    pub(super) fn snapshot_env(&self) -> SavedModuleEnv {
-        SavedModuleEnv {
+    pub(super) fn snapshot_env(&self) -> SavedModuleEnv<'a> {
+        SavedModuleEnv<'a> {
             scopes: self.scopes.clone(),
             var_spans: self.var_spans.clone(),
             scope_semi_global: self.scope_semi_global.clone(),
@@ -1600,7 +1600,7 @@ impl<'a> Evaluator<'a> {
 
     /// Swap in `module`'s source file for diagnostics during a cross-module
     /// member invocation. Returns the previous `(url, source)` to restore.
-    pub(super) fn enter_module_file(&mut self, module: &Rc<Module>) -> Option<SavedModuleFile> {
+    pub(super) fn enter_module_file(&mut self, module: &Rc<Module<'a>>) -> Option<SavedModuleFile> {
         self.enter_file_context(&module.diag_url, &module.file_dir, &module.canonical)
     }
 
@@ -1699,7 +1699,7 @@ impl<'a> Evaluator<'a> {
 
     /// Install `module`'s environment for a cross-module member invocation,
     /// returning the previous environment to restore with [`leave_module`].
-    pub(super) fn enter_module(&mut self, module: &Rc<Module>) -> SavedModuleEnv {
+    pub(super) fn enter_module(&mut self, module: &Rc<Module<'a>>) -> SavedModuleEnv<'a> {
         // The module's global scope is SHARED (the same Rc its callables
         // captured), so writes inside the module are immediately visible to
         // its closures and to later cross-module reads.
@@ -1709,7 +1709,7 @@ impl<'a> Evaluator<'a> {
         } else {
             Vec::new()
         };
-        SavedModuleEnv {
+        SavedModuleEnv<'a> {
             scopes: std::mem::replace(&mut self.scopes, vec![module_scope]),
             var_spans: std::mem::replace(&mut self.var_spans, module_spans),
             scope_semi_global: std::mem::replace(&mut self.scope_semi_global, vec![true]),
@@ -1732,7 +1732,7 @@ impl<'a> Evaluator<'a> {
     /// Restore the environment captured by [`enter_module`]. If the saved env
     /// recorded a module, its (possibly mutated) global scope is written back so
     /// a `!global` assignment inside the module persists.
-    pub(super) fn leave_module(&mut self, saved: SavedModuleEnv) {
+    pub(super) fn leave_module(&mut self, saved: SavedModuleEnv<'a>) {
         // The module scope is shared by Rc; writes already land in
         // module.vars without an explicit copy-back.
         let _ = &saved.write_back;
