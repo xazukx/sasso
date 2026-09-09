@@ -42,7 +42,7 @@ mod plain_css;
 mod scope;
 mod value_read;
 
-use interp::Chunk;
+use interp::{Chunk, InterpSpan};
 
 use binop::*;
 // `eval_div` is part of the crate-internal surface (`crate::eval::eval_div`,
@@ -1450,7 +1450,11 @@ struct PendingExtend {
 }
 
 impl<'a> Evaluator<'a> {
-    pub fn new(options: EvalOptions<'a>) -> Self {
+    pub fn new(
+        arena: &'a Allocator,
+        file: &'a SourceFile<'a>,
+        options: EvalOptions<'a>,
+    ) -> Self {
         let url = options.url.to_string();
         // The entry's IDENTITY. A file-based compile hands the importer's
         // canonical URL in; the source-string path has none, so its display url
@@ -1466,6 +1470,9 @@ impl<'a> Evaluator<'a> {
         let file_sources: HashMap<String, Rc<str>> =
             [(key.clone(), Rc::clone(&source))].into_iter().collect();
         Evaluator {
+            arena,
+            file,
+            interp_cache: HashMap::default(),
             member: "root stylesheet".to_string(),
             record_parents: None,
             call_stack: Vec::new(),
@@ -1919,13 +1926,12 @@ impl<'a> Evaluator<'a> {
     /// by shifting across the interpolations before it.
     fn interp_selector_error(
         &self,
-        selector: Span,
+        spans: &[InterpSpan],
         sel_str: &str,
         interp_bounds: &[(usize, usize)],
         at_idx: usize,
     ) -> Error {
         const MSG: &str = "expected selector.";
-        let spans = selector_interp_spans;
         let single_line = !sel_str.contains('\n');
         // Inside an interpolation's output -> dual-span rendering, positioned
         // at the interpolation expression's start.
@@ -2695,6 +2701,95 @@ impl<'a> Evaluator<'a> {
         Ok(())
     }
 
+    /// A keyframe block (`from {…}`, `50% {…}`): its selectors are keyframe
+    /// stops, not CSS selectors, so there is no `&`/parent resolution. The
+    /// parser gives them their own statement kind inside a `@keyframes` body.
+    fn eval_keyframe_block(
+        &mut self,
+        k: &'a ox::KeyframeBlock<'a>,
+        parents: &[String],
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        let selectors = k
+            .selectors
+            .iter()
+            .map(|sel| self.interpolate(*sel.span()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let selectors: Vec<String> = selectors
+            .into_iter()
+            .map(|s| normalize_keyframe_selector(s.trim()))
+            .collect();
+        let lines = self.stamp(SrcLines {
+            start: self.file.line_at(k.block.span.start),
+            end: self.file.line_at(k.block.span.end),
+            start_col: self.file.pos(k.span).col as u32,
+            ..SrcLines::default()
+        });
+        let mut items: Vec<OutItem> = Vec::new();
+        let mut nested: Vec<OutNode> = Vec::new();
+        let mut flushed: Option<usize> = None;
+        let at_depth = self.at_rule_ctx.len();
+        self.push_scope(false);
+        let result = {
+            let mut child = Sink::Rule {
+                selectors: &selectors,
+                linebreaks: &[],
+                lines,
+                items: &mut items,
+                nested: &mut nested,
+                at_depth,
+                flushed: &mut flushed,
+                extend_base: usize::MAX,
+            };
+            let r = self.exec(&k.block.statements, k.block.span, parents, &mut child);
+            if r.is_ok() {
+                child.flush_rule_block();
+            }
+            r
+        };
+        self.pop_scope();
+        result?;
+        sink.emit_style_rule(nested, true);
+        self.last_child_invisible = false;
+        Ok(())
+    }
+
+    /// A single-path `@import`: a quoted path with no modifiers that does not
+    /// name a CSS file is a Sass import (inlined); everything else — a `url()`,
+    /// a `.css` path, a path with media/supports modifiers — is plain CSS and
+    /// is emitted verbatim.
+    fn eval_import_prelude(
+        &mut self,
+        imp: &'a ox::ImportPrelude<'a>,
+        parents: &[String],
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        let bare = imp.layer.is_none() && imp.supports.is_none() && imp.media.is_none()
+            && imp.modifiers.is_none();
+        if bare {
+            if let ox::ImportPreludeHref::Str(s) = &imp.href {
+                let path = self.eval_interp_str(s)?;
+                if !is_css_import(&path) {
+                    return self.eval_imports(&[(path, *s.span())], parents, sink);
+                }
+            }
+        }
+        let text = self.serialize_css_import(imp)?;
+        // Inside a style rule the plain-CSS @import stays in the rule's block
+        // (dart keeps it nested: `foo { @import url(...); }`); at the top level
+        // it is a Raw node subject to import hoisting.
+        if matches!(sink, Sink::Rule { .. }) {
+            sink.push_item(OutItem::ChildlessAtRule {
+                name: "import".to_string(),
+                prelude: text,
+                lines: SrcLines::default(),
+            });
+        } else {
+            sink.push_at_rule(OutNode::Raw(format!("@import {text};")));
+        }
+        Ok(())
+    }
+
     /// The `{`/`}` source lines of an at-rule's block, for the serializer's
     /// trailing-comment rule and source-map output.
     fn block_lines(&self, at: &ox::AtRule<'a>, block: &ox::SimpleBlock<'a>) -> SrcLines {
@@ -2754,8 +2849,9 @@ impl<'a> Evaluator<'a> {
         // from an interpolation (todo_single_escape).
         if !self.in_keyframes {
             if let Some(at_idx) = find_unquoted_at(&sel_str) {
+                let spans = self.interp_spans(rule.selector.span)?;
                 return Err(self.interp_selector_error(
-                    rule.selector.span,
+                    &spans,
                     &sel_str,
                     &interp_bounds,
                     at_idx,
@@ -7561,5 +7657,45 @@ fn serialize_if_value(v: &Value) -> Result<String, Error> {
             ))),
             None => Ok(other.to_css(false)),
         },
+    }
+}
+
+/// An `@include`'s target: the mixin name and, for `@include ns.mixin(...)`,
+/// the namespace it is qualified with.
+fn include_target<'a>(name: &'a ox::FunctionName<'a>) -> (String, Option<&'a str>) {
+    match name {
+        ox::FunctionName::Ident(ox::InterpolableIdent::Literal(id)) => (id.name.to_string(), None),
+        ox::FunctionName::SassQualifiedName(q) => {
+            let member = match &q.member {
+                ox::SassModuleMemberName::Ident(id) => id.name,
+                ox::SassModuleMemberName::Variable(v) => v.name.name,
+            };
+            (member.to_string(), Some(q.module.name))
+        }
+        // An interpolated `@include` name is not a shape dart-sass accepts;
+        // the parser only produces it for an unknown at-rule.
+        other => (String::new(), None),
+    }
+}
+
+/// A `@forward`'s `show`/`hide` lists, whichever it declared.
+#[allow(clippy::type_complexity)]
+fn forward_visibility<'a>(
+    v: Option<&'a ox::SassForwardVisibility<'a>>,
+) -> (Option<Vec<ForwardMember>>, Option<Vec<ForwardMember>>) {
+    let Some(v) = v else {
+        return (None, None);
+    };
+    let members: Vec<ForwardMember> = v
+        .members
+        .iter()
+        .map(|m| match m {
+            ox::SassForwardMember::Ident(id) => ForwardMember::Name(id.name.to_string()),
+            ox::SassForwardMember::Variable(var) => ForwardMember::Var(var.name.name.to_string()),
+        })
+        .collect();
+    match v.modifier.kind {
+        ox::SassForwardVisibilityModifierKind::Show => (Some(members), None),
+        ox::SassForwardVisibilityModifierKind::Hide => (None, Some(members)),
     }
 }

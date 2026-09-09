@@ -7,7 +7,7 @@ impl<'a> Evaluator<'a> {
         &mut self,
         ns: &str,
         member: &str,
-        args: &[CallArg],
+        args: &[super::value_read::Arg<'a>],
         pos: Pos,
         length: usize,
     ) -> Result<Value, Error> {
@@ -857,7 +857,7 @@ impl<'a> Evaluator<'a> {
         &mut self,
         module: &Rc<Module>,
         member: &str,
-        args: &[CallArg],
+        args: &[super::value_read::Arg<'a>],
         pos: Pos,
     ) -> Result<Option<Value>, Error> {
         for fb in &module.forwarded_builtins {
@@ -891,7 +891,7 @@ impl<'a> Evaluator<'a> {
         &mut self,
         module: &Rc<Module>,
         func: &Rc<UserCallable>,
-        args: &[CallArg],
+        args: &[super::value_read::Arg<'a>],
         call: Option<(Pos, usize)>,
     ) -> Result<Value, Error> {
         let (evaled, arg_spans) = self.eval_call_args_spanned(args)?;

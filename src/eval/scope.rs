@@ -443,7 +443,7 @@ impl<'a> Evaluator<'a> {
     /// Assign to a `@use`d module's variable (`ns.$name: value`). The variable
     /// must already exist in the module and be public; `!default` only assigns
     /// when the existing value is null; built-in modules are immutable.
-    pub(super) fn assign_module_var(&mut self, ns: &str, v: &VarDecl) -> Result<(), Error> {
+    pub(super) fn assign_module_var(&mut self, ns: &str, v: &'a ox::SassVariableDeclaration<'a>) -> Result<(), Error> {
         if is_private_member(v.name.name.name) {
             return Err(Error::unpositioned(
                 "Private members can't be accessed from outside their modules.",

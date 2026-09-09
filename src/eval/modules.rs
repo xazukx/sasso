@@ -15,7 +15,10 @@ pub enum ForwardMember {
 #[derive(Debug, Clone)]
 pub struct ConfigEntry {
     pub name: String,
-    pub value: Expr,
+    /// The already-evaluated override. A `with (…)` clause is evaluated at
+    /// the load site, in the loading file's environment, before the module
+    /// runs — so the value, not the expression, is what travels.
+    pub value: Value,
     /// `!default` on a `@forward ... with` entry: the override only applies if
     /// the downstream module does not configure the variable itself.
     pub is_default: bool,
@@ -34,7 +37,7 @@ impl<'a> Evaluator<'a> {
     /// error.
     pub(super) fn register_extend(
         &mut self,
-        selector: &[TplPiece],
+        selector: Span,
         optional: bool,
         pos: Pos,
         length: usize,
@@ -46,7 +49,7 @@ impl<'a> Evaluator<'a> {
             return Err(Error::at("@extend may only be used within style rules.", pos));
         }
         let extenders = self.current_selector.clone().unwrap_or_else(|| parents.to_vec());
-        let target = self.eval_template(selector)?;
+        let target = self.interpolate(selector)?;
         if target.trim().is_empty() {
             return Err(Error::at("expected selector.", pos));
         }
@@ -299,8 +302,8 @@ impl<'a> Evaluator<'a> {
     /// reuses the shared `load_module` machinery (cache, cycle guard, CSS emit).
     pub(super) fn exec_load_css(
         &mut self,
-        args: &[CallArg],
-        content: Option<Rc<Vec<Stmt>>>,
+        args: &[super::value_read::Arg<'a>],
+        content: Option<&'a ox::SimpleBlock<'a>>,
         pos: Pos,
         parents: &[String],
         sink: &mut Sink<'_>,
@@ -562,7 +565,7 @@ impl<'a> Evaluator<'a> {
     ) -> Result<HashMap<String, (Value, bool)>, Error> {
         let mut map = HashMap::default();
         for entry in config {
-            let v = self.eval_expr(&entry.value)?.without_slash();
+            let v = self.eval_value(&entry.value)?.without_slash();
             // Variable names are dash/underscore-insensitive: store the
             // canonical (dashed) form so `$a_b` and `$a-b` configure the same
             // variable. A duplicate key is an error.

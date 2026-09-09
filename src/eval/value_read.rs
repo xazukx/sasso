@@ -136,7 +136,7 @@ fn split_on<'a>(
     let mut out = Vec::new();
     let mut start = 0usize;
     for (i, v) in values.iter().enumerate() {
-        if matches!(v, ox::ComponentValue::Delimiter(d) if d.kind == kind) {
+        if matches!(v, ox::ComponentValue::Delimiter(d) if same_kind(&d.kind, &kind)) {
             out.push(&values[start..i]);
             start = i + 1;
         }
@@ -145,14 +145,19 @@ fn split_on<'a>(
     out
 }
 
+/// `DelimiterKind` carries no `PartialEq`, so compare by discriminant.
+fn same_kind(a: &ox::DelimiterKind, b: &ox::DelimiterKind) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
+}
+
 /// Whether a component value is a top-level `/`.
 pub(crate) fn is_solidus(v: &ox::ComponentValue<'_>) -> bool {
-    matches!(v, ox::ComponentValue::Delimiter(d) if d.kind == ox::DelimiterKind::Solidus)
+    matches!(v, ox::ComponentValue::Delimiter(d) if matches!(d.kind, ox::DelimiterKind::Solidus))
 }
 
 /// Whether a component value is a top-level `;`.
 pub(crate) fn is_semicolon(v: &ox::ComponentValue<'_>) -> bool {
-    matches!(v, ox::ComponentValue::Delimiter(d) if d.kind == ox::DelimiterKind::Semicolon)
+    matches!(v, ox::ComponentValue::Delimiter(d) if matches!(d.kind, ox::DelimiterKind::Semicolon))
 }
 
 /// Split a run on top-level `;`, which only the modern CSS `if()` uses to

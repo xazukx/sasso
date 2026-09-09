@@ -203,3 +203,45 @@ fn match_close(s: &str, from: usize) -> Option<usize> {
     }
     None
 }
+
+/// The source span of one `#{…}` inside a selector, recorded so an error
+/// blamed on the interpolation's *output* can also point at the expression
+/// that produced it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct InterpSpan {
+    /// 1-based line of the interpolated expression's first character.
+    pub line: u32,
+    /// 1-based column of the expression's first character (just past `#{`).
+    pub col_start: u32,
+    /// 1-based column of the closing `}`.
+    pub col_end: u32,
+    /// 0-based byte offset of the expression's first character.
+    pub offset: u32,
+}
+
+impl<'a> Evaluator<'a> {
+    /// The source spans of `span`'s top-level interpolations, in order — the
+    /// second half of the dual-span "error in interpolated output" diagnostic.
+    pub(super) fn interp_spans(&mut self, span: Span) -> Result<Vec<InterpSpan>, Error> {
+        let file = self.file;
+        let chunks = self.chunks(span)?;
+        Ok(chunks
+            .iter()
+            .filter_map(|c| match c {
+                Chunk::Lit(_) => None,
+                Chunk::Expr { values, span } => {
+                    // The chunk's span covers the whole `#{…}`; the expression
+                    // starts just past `#{` and the caret ends at the `}`.
+                    let start = file.pos_at(values.span.start);
+                    let end = file.pos_at(span.end.saturating_sub(1));
+                    Some(InterpSpan {
+                        line: start.line as u32,
+                        col_start: start.col as u32,
+                        col_end: end.col as u32,
+                        offset: start.offset as u32,
+                    })
+                }
+            })
+            .collect())
+    }
+}
