@@ -984,13 +984,13 @@ impl<'a> Evaluator<'a> {
                 .borrow_mut()
                 .insert(key.clone(), Rc::from(src.as_str()));
         }
-        let sheet = match SourceFile::parse(
+        let (module_file, sheet) = match SourceFile::parse(
             self.arena,
             &self.module_diag_url(url, &key),
             &src,
             oxc_syntax(syntax),
         ) {
-            Ok(sheet) => sheet,
+            Ok(parsed) => (parsed.0, &*parsed.1),
             Err(e) => {
                 // A parse error names the LOADED file: render eagerly under
                 // its url/source (the caller's `@use`/`@forward` frame is
@@ -1036,7 +1036,8 @@ impl<'a> Evaluator<'a> {
             self.eval_module(
                 &key,
                 &diag_url,
-                &sheet,
+                module_file,
+                sheet,
                 config,
                 config_id,
                 pos,
@@ -1114,15 +1115,18 @@ impl<'a> Evaluator<'a> {
         &mut self,
         key: &str,
         diag_url: &str,
-        sheet: &Stylesheet,
+        file: &'a SourceFile<'a>,
+        sheet: &'a ox::Stylesheet<'a>,
         config: HashMap<String, (Value, bool)>,
         config_id: usize,
         pos: Pos,
         sink: &mut Sink<'_>,
         css: bool,
-    ) -> Result<(Module, Vec<String>), Error> {
+    ) -> Result<(Module<'a>, Vec<String>), Error> {
         // Save and reset the per-module environment, then restore on the way out.
-        // The module's body runs against its own source file for diagnostics.
+        // The module's body runs against its own source file for diagnostics —
+        // and against its own line table, so a span inside it resolves there.
+        let saved_file = std::mem::replace(&mut self.file, file);
         let module_source = self.source_for(key);
         // Relative URLs inside the module resolve against ITS directory.
         let module_dir = dirname_of(key);
@@ -1172,7 +1176,7 @@ impl<'a> Evaluator<'a> {
         // evaluated (dart-sass).
         if !css {
             let mut slots: Vec<String> = Vec::new();
-            collect_global_var_decls(&sheet.stmts, &mut slots);
+            collect_global_var_decls(&sheet.statements, &mut slots);
             if let Some(g) = self.scopes.first() {
                 let mut g = g.borrow_mut();
                 for name in slots {
@@ -1184,9 +1188,9 @@ impl<'a> Evaluator<'a> {
         // A plain-CSS module preserves its nesting (no Sass flattening, `&` kept
         // literal); a Sass module runs the normal evaluator.
         let result = if css {
-            self.exec_css(&sheet.stmts, &[], sink)
+            self.exec_css_sheet(sheet, &[], sink)
         } else {
-            self.exec(&sheet.stmts, &[], sink)
+            self.exec(&sheet.statements, sheet.span, &[], sink)
         };
         // Render a body error NOW, while the module's url/source and the
         // loader's `@use`/`@forward` frame are still current — after the
@@ -1194,6 +1198,7 @@ impl<'a> Evaluator<'a> {
         let result = result.map_err(|e| self.finalize_error(e));
 
         self.loading.pop();
+        self.file = saved_file;
         // Capture this module's evaluated members before restoring the caller's
         // environment.
         let vars_scope = std::mem::take(&mut self.scopes)

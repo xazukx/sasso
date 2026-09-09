@@ -145,7 +145,7 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    pub(super) fn restore_env_modules(&mut self, saved: EnvModules) {
+    pub(super) fn restore_env_modules(&mut self, saved: EnvModules<'a>) {
         self.used_modules = saved.used_modules;
         self.star_modules = saved.star_modules;
         self.used_user_modules = saved.used_user_modules;

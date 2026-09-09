@@ -2577,7 +2577,7 @@ impl<'a> Evaluator<'a> {
                     .map(|p| &p.params);
                 // Push a diagnostic call frame so an error/warning raised in
                 // the mixin body unwinds through this `@include` call site.
-                let saved = self.enter_call(pos, length, &mixin_frame_name(&member, module));
+                let saved = self.enter_call(pos, length, &mixin_frame_name(&member, &module.map(str::to_string)));
                 let r = self.exec_include(
                     &member,
                     &args,
@@ -3351,7 +3351,7 @@ impl<'a> Evaluator<'a> {
                                         }
                                     };
                                     let e = (resolved_key, file, sheet);
-                                    self.import_cache.insert(cache_key, e);
+                                    self.import_cache.insert(cache_key, e.clone());
                                     Some(e)
                                 }
                                 None => None,
@@ -7676,7 +7676,7 @@ fn forward_visibility<'a>(
     let Some(v) = v else {
         return (None, None);
     };
-    let members: Vec<ForwardMember> = v
+    let members: Vec<modules::ForwardMember> = v
         .members
         .iter()
         .map(|m| match m {

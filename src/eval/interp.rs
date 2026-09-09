@@ -20,6 +20,10 @@ use super::{Evaluator, interp_checked};
 
 /// One chunk of interpolated text: a literal run, or an expression to
 /// evaluate and splice in.
+///
+/// `Copy`, so a resolved chunk list can live in the arena alongside the tree
+/// it came from rather than being rebuilt per evaluation.
+#[derive(Clone, Copy)]
 pub(crate) enum Chunk<'a> {
     /// A byte range of the file's text, taken verbatim.
     Lit(Span),
@@ -120,8 +124,8 @@ impl<'a> Evaluator<'a> {
             }));
         }
 
-        // `Chunk` needs no drop, so the arena can own the slice outright.
-        let chunks: &'a [Chunk<'a>] = self.arena.alloc(chunks).as_slice();
+        // `Chunk` is `Copy`, so the arena can own the slice outright.
+        let chunks: &'a [Chunk<'a>] = self.arena.alloc_slice_copy(&chunks);
         self.interp_cache
             .insert((file.text.as_ptr() as usize, span.start, span.end), chunks);
         Ok(chunks)

@@ -312,7 +312,7 @@ impl<'a> Evaluator<'a> {
                 return Ok(Value::Mixin(Box::new(SassMixin {
                     name,
                     user: Some(self.capture_fn(&m)),
-                    module: Some(self.capture_module(module)),
+                    module: Some(self.capture_module(&module)),
                     // Cross-module capture resolves via the module's own file.
                     origin: None,
                 })));
@@ -378,7 +378,7 @@ impl<'a> Evaluator<'a> {
                 return Ok(Value::Mixin(Box::new(SassMixin {
                     name: name.to_string(),
                     user: Some(self.capture_fn(&m)),
-                    module: Some(self.capture_module(module)),
+                    module: Some(self.capture_module(&module)),
                     // Cross-module capture resolves via the module's own file.
                     origin: None,
                 })));
@@ -463,7 +463,7 @@ impl<'a> Evaluator<'a> {
                 // span survives. Bind with none rather than guess.
                 let result = self
                     .bind_evaled_into_scope(
-                        &callable.def.params,
+                        callable.def.params,
                         (pos_args, named, ListSep::Comma),
                         &ArgSpans::default(),
                         &callable.def.name,
@@ -694,7 +694,7 @@ impl<'a> Evaluator<'a> {
                     MemberKind::Mixin => Value::Mixin(Box::new(SassMixin {
                         name: name.clone(),
                         user: module.mixin(&name).map(|m| self.capture_fn(&m)),
-                        module: Some(self.capture_module(module)),
+                        module: Some(self.capture_module(&module)),
                         // Cross-module capture resolves via the module's file.
                         origin: None,
                     })),
@@ -909,7 +909,7 @@ impl<'a> Evaluator<'a> {
         let saved_env_modules = self.install_env_modules(&func.env_modules);
         self.push_scope(false);
         let result = self
-            .bind_evaled_into_scope(&func.def.params, evaled, &arg_spans, &func.def.name)
+            .bind_evaled_into_scope(func.def.params, evaled, &arg_spans, &func.def.name)
             .and_then(|()| self.run_fn_body(&func.def.body));
         self.pop_scope();
         self.scopes = saved_scopes;
