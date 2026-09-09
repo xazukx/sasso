@@ -308,7 +308,7 @@ impl<'a> Evaluator<'a> {
     ) -> Result<(), Error> {
         // A namespaced assignment `ns.$name: value` updates the variable in the
         // `@use`d module bound to `ns`.
-        if let Some(ns) = v.name.name.namespace {
+        if let Some(ns) = v.namespace.as_ref().map(|i| i.name) {
             return self.assign_module_var(ns, v);
         }
         // A top-level `!default` declaration whose name is exposed by more than

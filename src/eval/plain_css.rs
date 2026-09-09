@@ -6,6 +6,19 @@ impl<'a> Evaluator<'a> {
     /// only `#{…}` interpolation. The parser read the file under
     /// [`Syntax::Css`](oxc_css_parser::Syntax), so the Sass-only constructs are
     /// already rejected and the remaining statements are plain CSS.
+    /// [`Self::exec_css`] for a whole stylesheet (an imported `.css` file).
+    pub(super) fn exec_css_sheet(
+        &mut self,
+        sheet: &'a ox::Stylesheet<'a>,
+        parents: &[String],
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        let saved = std::mem::replace(&mut self.in_plain_css, true);
+        let result = self.exec_css_stmts(&sheet.statements, sheet.span, parents, sink);
+        self.in_plain_css = saved;
+        result
+    }
+
     pub(super) fn exec_css(
         &mut self,
         block: &'a ox::SimpleBlock<'a>,
@@ -13,14 +26,15 @@ impl<'a> Evaluator<'a> {
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
         let saved = std::mem::replace(&mut self.in_plain_css, true);
-        let result = self.exec_css_inner(block, parents, sink);
+        let result = self.exec_css_stmts(&block.statements, block.span, parents, sink);
         self.in_plain_css = saved;
         result
     }
 
-    fn exec_css_inner(
+    fn exec_css_stmts(
         &mut self,
-        block: &'a ox::SimpleBlock<'a>,
+        statements: &'a [ox::Statement<'a>],
+        span: Span,
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
@@ -32,7 +46,7 @@ impl<'a> Evaluator<'a> {
         // join below.
         if !parents.is_empty() {
             let mut preserved: Vec<OutItem> = Vec::new();
-            for stmt in &block.statements {
+            for stmt in statements {
                 if let ox::Statement::QualifiedRule(r) = stmt {
                     let (own, _) = self.css_selectors(r.selector.span, true)?;
                     if own.iter().any(|s| part_has_parent_ref(s)) {
@@ -55,7 +69,7 @@ impl<'a> Evaluator<'a> {
             }
         }
 
-        for item in interleave(self.file, &block.statements, block.span) {
+        for item in interleave(self.file, statements, span) {
             match item {
                 Item::Comment(c) => {
                     let (text, lines) = self.css_comment(c)?;

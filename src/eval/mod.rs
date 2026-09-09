@@ -1929,6 +1929,7 @@ impl<'a> Evaluator<'a> {
     fn interp_selector_error(
         &self,
         spans: &[InterpSpan],
+        sel_pos: Pos,
         sel_str: &str,
         interp_bounds: &[(usize, usize)],
         at_idx: usize,
@@ -1975,7 +1976,7 @@ impl<'a> Evaluator<'a> {
         // interpolations that precede the offending index.
         if single_line
             && spans.len() == interp_bounds.len()
-            && spans.iter().all(|sp| sp.line as usize == self.file.pos(selector).line)
+            && spans.iter().all(|sp| sp.line as usize == sel_pos.line)
         {
             let mut shift: i64 = 0;
             for (k, &(start, len)) in interp_bounds.iter().enumerate() {
@@ -1987,14 +1988,14 @@ impl<'a> Evaluator<'a> {
                     shift += src_total - len as i64;
                 }
             }
-            let col = (self.file.pos(selector).col as i64 + at_idx as i64 + shift).max(1) as usize;
+            let col = (sel_pos.col as i64 + at_idx as i64 + shift).max(1) as usize;
             // The column was recovered arithmetically, so the byte offset has
             // to be resolved against the source rather than carried along.
-            let line = self.file.pos(selector).line;
+            let line = sel_pos.line;
             let offset = crate::diag::byte_offset_of(&self.source_for(&self.current_key.clone()), line, col);
             return Error::at(MSG, Pos { line, col, offset });
         }
-        Error::at(MSG, self.file.pos(selector))
+        Error::at(MSG, sel_pos)
     }
 
     /// Render `Error: <msg>` + the snippet pointing at the innermost frame +
@@ -2852,8 +2853,10 @@ impl<'a> Evaluator<'a> {
         if !self.in_keyframes {
             if let Some(at_idx) = find_unquoted_at(&sel_str) {
                 let spans = self.interp_spans(rule.selector.span)?;
+                let sel_pos = self.file.pos(rule.selector.span);
                 return Err(self.interp_selector_error(
                     &spans,
+                    sel_pos,
                     &sel_str,
                     &interp_bounds,
                     at_idx,
@@ -3399,13 +3402,8 @@ impl<'a> Evaluator<'a> {
                             // preserved, no Sass evaluation (same as `@use`).
                             if matches!(syntax, Syntax::Css) {
                                 self.loading.push(path.clone());
-                                let block = ox::SimpleBlock {
-                                    span: sheet.span,
-                                    statements: sheet.statements.clone_in(self.arena),
-                                };
-                                let block = &*self.arena.alloc(block);
                                 let result = self
-                                    .exec_css(block, parents, sink)
+                                    .exec_css_sheet(sheet, parents, sink)
                                     .map_err(|e| self.finalize_error(e));
                                 self.loading.pop();
                                 self.current_url = saved_import_url;
@@ -3516,26 +3514,16 @@ impl<'a> Evaluator<'a> {
                             // (see `Declaration::value_end`), in the IMPORTED
                             // file, which is already the diagnostic context
                             // here (the `@import` frame is on the stack).
-                            fn top_decl_pos(stmts: &[Stmt]) -> Option<Pos> {
-                                stmts.iter().find_map(|s| match s {
-                                    Stmt::Decl(d) => Some(d.value_end),
-                                    Stmt::CustomDecl(d) => Some(d.value_end),
-                                    Stmt::PropertySet(ps) => Some(ps.value_end),
-                                    Stmt::If(branches) => branches.iter().find_map(|b| top_decl_pos(&b.body)),
-                                    Stmt::For { body, .. }
-                                    | Stmt::Each { body, .. }
-                                    | Stmt::While { body, .. } => top_decl_pos(body),
-                                    _ => None,
-                                })
-                            }
-                            if let Some(pos) = top_decl_pos(&sheet.stmts) {
-                                return Err(self.finalize_error(Error::at("expected \"{\".", pos)));
+                            if let Some(span) = top_decl_span(&sheet.statements) {
+                                let pos = self.file.pos_at(span.end);
+                                return Err(self
+                                    .finalize_error(Error::at("expected \"{\".", pos)));
                             }
                             // Render any error before the context restores
                             // below strip its attribution (the `@import`
                             // frame from above is still on the stack).
                             let result = self
-                                .exec(&sheet.stmts, parents, sink)
+                                .exec(&sheet.statements, sheet.span, parents, sink)
                                 .map_err(|e| self.finalize_error(e));
                             self.leave_call(saved_member);
                             self.current_url = saved_import_url;
@@ -7702,4 +7690,37 @@ fn forward_visibility<'a>(
         ox::SassForwardVisibilityModifierKind::Show => (Some(members), None),
         ox::SassForwardVisibilityModifierKind::Hide => (None, Some(members)),
     }
+}
+
+/// The span of the first declaration at a block's top level, if any.
+///
+/// A declaration at the top level of an `@import`ed file is illegal, and
+/// dart-sass blames the point its selector scan gives up — the end of the
+/// declaration's text.
+fn top_decl_span<'a>(stmts: &'a [ox::Statement<'a>]) -> Option<Span> {
+    stmts.iter().find_map(|s| match s {
+        ox::Statement::Declaration(d) => Some(d.span),
+        ox::Statement::SassIfAtRule(node) => top_decl_span(&node.if_clause.block.statements)
+            .or_else(|| {
+                node.else_if_clauses
+                    .iter()
+                    .find_map(|c| top_decl_span(&c.block.statements))
+            })
+            .or_else(|| {
+                node.else_clause
+                    .as_ref()
+                    .and_then(|b| top_decl_span(&b.statements))
+            }),
+        ox::Statement::AtRule(at) => match (&at.prelude, &at.block) {
+            (Some(ox::AtRulePrelude::SassEach(_)), Some(b))
+            | (Some(ox::AtRulePrelude::SassFor(_)), Some(b)) => top_decl_span(&b.statements),
+            (Some(ox::AtRulePrelude::SassExpr(_)), Some(b))
+                if at.name.name.eq_ignore_ascii_case("while") =>
+            {
+                top_decl_span(&b.statements)
+            }
+            _ => None,
+        },
+        _ => None,
+    })
 }

@@ -984,7 +984,12 @@ impl<'a> Evaluator<'a> {
                 .borrow_mut()
                 .insert(key.clone(), Rc::from(src.as_str()));
         }
-        let sheet = match SourceFile::parse(self.arena, &diag, &src, oxc_syntax(syntax)) {
+        let sheet = match SourceFile::parse(
+            self.arena,
+            &self.module_diag_url(url, &key),
+            &src,
+            oxc_syntax(syntax),
+        ) {
             Ok(sheet) => sheet,
             Err(e) => {
                 // A parse error names the LOADED file: render eagerly under
