@@ -61,6 +61,7 @@ mod musl_math;
 mod parser;
 mod ryu;
 mod scanner;
+mod source;
 pub mod selector;
 // Source Map v3 generation: the encoding primitives + JSON model (Phase A),
 // wired into emit (Phase B/C) and surfaced through `compile_with_source_map`.

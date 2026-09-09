@@ -30,6 +30,7 @@ path = "src/main.rs"
 # crate. The whole pipeline (scan -> parse -> eval -> emit) and the CLI
 # (a hand-rolled arg parser) are std-only.
 [dependencies]
+oxc-css-parser = "0.0.14"
 
 [features]
 default = []
