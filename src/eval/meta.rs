@@ -470,7 +470,10 @@ impl<'a> Evaluator<'a> {
                     )
                     .and_then(|()| {
                         self.in_mixin.push(false);
-                        let r = self.run_fn_body(&callable.def.body);
+                        let saved_file =
+                            std::mem::replace(&mut self.file, callable.def.file);
+                        let r = self.run_fn_body(callable.def.body);
+                        self.file = saved_file;
                         self.in_mixin.pop();
                         r
                     });
@@ -910,7 +913,12 @@ impl<'a> Evaluator<'a> {
         self.push_scope(false);
         let result = self
             .bind_evaled_into_scope(func.def.params, evaled, &arg_spans, &func.def.name)
-            .and_then(|()| self.run_fn_body(&func.def.body));
+            .and_then(|()| {
+                let saved_file = std::mem::replace(&mut self.file, func.def.file);
+                let r = self.run_fn_body(func.def.body);
+                self.file = saved_file;
+                r
+            });
         self.pop_scope();
         self.scopes = saved_scopes;
         self.var_spans = saved_var_spans;

@@ -538,7 +538,9 @@ impl<'a> Evaluator<'a> {
                 // A function body is not a mixin body: `meta.content-exists()`
                 // called from a function (even one invoked by a mixin) errors.
                 self.in_mixin.push(false);
-                let r = self.run_fn_body(&func.def.body);
+                let saved_file = std::mem::replace(&mut self.file, func.def.file);
+                let r = self.run_fn_body(func.def.body);
+                self.file = saved_file;
                 self.in_mixin.pop();
                 r
             });
@@ -840,12 +842,14 @@ impl<'a> Evaluator<'a> {
             .and_then(|()| {
                 self.content_stack.push(content_block);
                 self.in_mixin.push(true);
+                let saved_file = std::mem::replace(&mut self.file, mixin.def.file);
                 let r = self.exec(
                     &mixin.def.body.statements,
                     mixin.def.body.span,
                     parents,
                     sink,
                 );
+                self.file = saved_file;
                 self.in_mixin.pop();
                 self.content_stack.pop();
                 r
@@ -904,12 +908,14 @@ impl<'a> Evaluator<'a> {
             .bind_evaled_into_scope(mixin.def.params, evaled, &arg_spans, &mixin.def.name)
             .and_then(|()| {
                 self.content_stack.push(content_block);
+                let saved_file = std::mem::replace(&mut self.file, mixin.def.file);
                 let r = self.exec(
                     &mixin.def.body.statements,
                     mixin.def.body.span,
                     parents,
                     sink,
                 );
+                self.file = saved_file;
                 self.content_stack.pop();
                 r
             });
@@ -1054,12 +1060,14 @@ impl<'a> Evaluator<'a> {
             .and_then(|()| {
                 self.content_stack.push(content_block);
                 self.in_mixin.push(true);
+                let saved_file = std::mem::replace(&mut self.file, callable.def.file);
                 let r = self.exec(
                     &callable.def.body.statements,
                     callable.def.body.span,
                     parents,
                     sink,
                 );
+                self.file = saved_file;
                 self.in_mixin.pop();
                 self.content_stack.pop();
                 r
