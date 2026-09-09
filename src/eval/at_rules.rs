@@ -760,12 +760,11 @@ impl<'a> Evaluator<'a> {
         block: &'a ox::SimpleBlock<'a>,
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
-        // No parent: the rule sits at the document root.
+        // No implicit parent join — but `&` still resolves against the
+        // enclosing rule, so `current_selector` stays put.
         let saved = std::mem::replace(&mut self.at_root_excluding_style_rule, true);
-        let saved_parent = self.current_selector.take();
         let result = self.eval_style_rule_at(selector.span, block, &[], sink);
         self.at_root_excluding_style_rule = saved;
-        self.current_selector = saved_parent;
         result
     }
 

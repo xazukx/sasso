@@ -2426,13 +2426,6 @@ impl<'a> Evaluator<'a> {
                 self.file.pos(d.span),
             ));
         }
-        // A nested property set is a declaration whose value ends in a block.
-        if let Some(ox::ComponentValue::SassNestingDeclaration(nested)) = d.value.last() {
-            let value = &d.value[..d.value.len() - 1];
-            self.eval_property_set(d, value, nested, parents, sink)?;
-            self.last_child_invisible = false;
-            return Ok(());
-        }
         if d.name.is_custom_property() {
             // A literal `--` name may never be nested inside a property set
             // (dart-sass parse-time error).
@@ -2446,6 +2439,13 @@ impl<'a> Evaluator<'a> {
                 sink.push_item(oi);
                 self.last_child_invisible = false;
             }
+            return Ok(());
+        }
+        // A nested property set is a declaration whose value ends in a block.
+        if let Some(ox::ComponentValue::SassNestingDeclaration(nested)) = d.value.last() {
+            let value = &d.value[..d.value.len() - 1];
+            self.eval_property_set(d, value, nested, parents, sink)?;
+            self.last_child_invisible = false;
             return Ok(());
         }
         if let Some(oi) = self.eval_decl(d)? {
