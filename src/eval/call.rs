@@ -107,10 +107,13 @@ impl<'a> Evaluator<'a> {
         // erroring. When every argument reduces to a plain number the normal
         // builtin path computes the result (and applies its unit checks), so
         // this only changes the two calc-specific behaviours above.
-        if is_pure_calc_math_function(name) && !has_user_fn && args.iter().all(|a| a.is_plain())
-            && let Some(v) = self.try_eval_calc_math_call(name, args, pos)?
+        if is_pure_calc_math_function(name)
+            && !has_user_fn
+            && args.iter().all(|a| a.is_plain())
         {
-            return Ok(v);
+            if let Some(v) = self.try_eval_calc_math_call(name, args, pos)? {
+                return Ok(v);
+            }
         }
         // `calc-size()` is a two-argument calculation: a sizing keyword (or
         // `var()`/calculation) plus a calculation, always preserved.
@@ -215,18 +218,21 @@ impl<'a> Evaluator<'a> {
             && !args.is_empty()
             && args.iter().all(|a| a.is_plain())
             && !args.iter().any(|a| self.values_have_non_calc_op(a.values))
-            && let Ok(nodes) = args
+        {
+            if let Ok(nodes) = args
                 .iter()
                 .map(|a| self.eval_calc_values(a.values))
                 .collect::<Result<Vec<CalcNode>, Error>>()
-            && !nodes.iter().all(|n| matches!(n, CalcNode::Number(_)))
-        {
-            // A preserved min/max is a first-class Calculation
-            // (`meta.calc-name`/`calc-args` see it).
-            return Ok(Value::Calc(CalcNode::Func {
-                name: name.to_ascii_lowercase(),
-                args: nodes,
-            }));
+            {
+                if !nodes.iter().all(|n| matches!(n, CalcNode::Number(_))) {
+                    // A preserved min/max is a first-class Calculation
+                    // (`meta.calc-name`/`calc-args` see it).
+                    return Ok(Value::Calc(CalcNode::Func {
+                        name: name.to_ascii_lowercase(),
+                        args: nodes,
+                    }));
+                }
+            }
         }
 
         // Evaluate args, expanding any `...` splat into positional / keyword

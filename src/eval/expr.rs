@@ -684,10 +684,10 @@ impl<'a> Evaluator<'a> {
         // `sass()` wrappers, which the comma-argument grouping cannot
         // represent. Try the modern grammar first; a run with no top-level
         // `;` and no `:` clause falls back to the legacy `if($c, $t, $f)`.
-        if name == "if"
-            && let Some(v) = self.try_eval_modern_if(&f.args)?
-        {
-            return Ok(v);
+        if name == "if" {
+            if let Some(v) = self.try_eval_modern_if(&f.args)? {
+                return Ok(v);
+            }
         }
 
         let args = args_of(&f.args, false);
@@ -701,18 +701,18 @@ impl<'a> Evaluator<'a> {
         // (issue_1706), receiving the argument evaluated as an ordinary
         // expression. Vendor-prefixed `-x-calc(` stays a parse-time special
         // function and can't be overridden.
-        if !self.in_plain_css
-            && let Some(callable) = self.lookup_function("calc")
-        {
-            let arg = self.eval_values(&f.args)?.without_slash();
-            let func = crate::value::SassFunction {
-                name: "calc".to_string(),
-                css: false,
-                user: Some(callable as Rc<dyn std::any::Any>),
-            };
-            return self
-                .invoke_function_ref(&func, vec![arg], Vec::new(), Pos::NONE)
-                .map(Value::without_slash);
+        if !self.in_plain_css {
+            if let Some(callable) = self.lookup_function("calc") {
+                let arg = self.eval_values(&f.args)?.without_slash();
+                let func = crate::value::SassFunction {
+                    name: "calc".to_string(),
+                    css: false,
+                    user: Some(callable as Rc<dyn std::any::Any>),
+                };
+                return self
+                    .invoke_function_ref(&func, vec![arg], Vec::new(), Pos::NONE)
+                    .map(Value::without_slash);
+            }
         }
         let node = self.eval_calc_values(&f.args)?;
         // Inside a `@supports` declaration the calculation is kept

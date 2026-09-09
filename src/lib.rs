@@ -86,7 +86,13 @@ pub use sourcemap::SourceMap;
 // The intermediate representations the staged [`Compiler`] API hands out, at
 // the crate root so an embedder that inspects or rewrites them does not have to
 // know which module they live in.
-pub use ast::Stylesheet;
+/// The parser's own syntax tree, re-exported: sasso evaluates
+/// `oxc-css-parser`'s nodes directly rather than lowering them into a
+/// tree of its own, so this is the type [`Compiler::parse`] hands back.
+pub use oxc_css_parser::ast::Stylesheet;
+/// The bump arena a staged compile parses into. Every tree and source
+/// text a [`Compiler`] produces lives here, so it must outlive them.
+pub use oxc_css_parser::Allocator;
 pub use eval::{EvalOptions, Evaluator, OutItem, OutNode, RuleSelectors, VarSpan, VariableValue};
 pub use scanner::Pos;
 pub use value::Value;

@@ -347,11 +347,12 @@ impl<'a> Evaluator<'a> {
                 // (case-insensitive) resolve to their numeric values inside a
                 // calculation, so `calc(infinity * 2)` folds to
                 // `calc(infinity)` and `calc(NaN)` canonicalizes its spelling.
-                if let Value::Str(s) = &v
-                    && !s.quoted
-                    && let Some(value) = calc_constant(&s.text)
-                {
-                    return Ok(CalcNode::Number(Number::unitless(value)));
+                if let Value::Str(s) = &v {
+                    if !s.quoted {
+                        if let Some(value) = calc_constant(&s.text) {
+                            return Ok(CalcNode::Number(Number::unitless(value)));
+                        }
+                    }
                 }
                 // Only a number, a nested calculation, or an unquoted string
                 // (a `var()`, interpolation, ident, or other special CSS

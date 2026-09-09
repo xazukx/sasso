@@ -34,8 +34,6 @@ pub(crate) struct SourceFile<'a> {
     /// Comments are not statements in the parser's AST; the evaluator
     /// re-interleaves these into each block by span (see [`interleave`]).
     pub comments: &'a [Comment<'a>],
-    /// The parsed tree.
-    pub sheet: &'a ox::Stylesheet<'a>,
     /// The grammar the file was parsed under. Re-parsing an interpolation
     /// body out of it has to use the same one.
     syntax: OxcSyntax,
@@ -46,12 +44,15 @@ impl<'a> SourceFile<'a> {
     ///
     /// `text` and `url` are interned into the arena, so the caller's copies do
     /// not have to outlive the result.
+    /// The tree is returned separately, and mutably: it is the caller's to
+    /// rewrite before evaluation (the staged API's whole point), while the
+    /// file metadata around it stays shared and [`Copy`].
     pub(crate) fn parse(
         arena: &'a Allocator,
         url: &str,
         text: &str,
         syntax: OxcSyntax,
-    ) -> Result<&'a SourceFile<'a>, Error> {
+    ) -> Result<(&'a SourceFile<'a>, &'a mut ox::Stylesheet<'a>), Error> {
         // The parser strips a leading BOM and reports offsets into the
         // stripped text; sasso's positions index the text as the embedder
         // passed it, so the stripped bytes are added back in `pos`.
@@ -102,15 +103,17 @@ impl<'a> SourceFile<'a> {
                 .copied()
                 .collect::<Vec<_>>(),
         );
-        Ok(arena.alloc(SourceFile {
-            url,
-            text,
-            bom,
-            line_starts,
-            comments,
-            sheet: arena.alloc(sheet),
-            syntax,
-        }))
+        Ok((
+            arena.alloc(SourceFile {
+                url,
+                text,
+                bom,
+                line_starts,
+                comments,
+                syntax,
+            }),
+            arena.alloc(sheet),
+        ))
     }
 
     /// The 1-based line/column and byte offset of `offset`.
