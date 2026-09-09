@@ -758,12 +758,13 @@ impl<'a> Evaluator<'a> {
         &mut self,
         selector: &'a ox::SelectorList<'a>,
         block: &'a ox::SimpleBlock<'a>,
+        parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
-        // No implicit parent join — but `&` still resolves against the
-        // enclosing rule, so `current_selector` stays put.
+        // Only the IMPLICIT parent join is disabled: an explicit `&` still
+        // resolves against the enclosing rule, so its selectors come along.
         let saved = std::mem::replace(&mut self.at_root_excluding_style_rule, true);
-        let result = self.eval_style_rule_at(selector.span, block, &[], sink);
+        let result = self.eval_style_rule_at(selector.span, block, parents, sink);
         self.at_root_excluding_style_rule = saved;
         result
     }

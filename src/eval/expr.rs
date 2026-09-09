@@ -273,6 +273,12 @@ impl<'a> Evaluator<'a> {
             // A keyword or splat argument outside an argument list, and every
             // remaining node kind — raw tokens, unicode ranges, an id selector
             // used as a value (`nav-up: #a`) — read as their own text.
+            // dart-sass normalizes the annotation's spelling: `! Important`
+            // and `!IMPORTANT` both serialize as `!important`.
+            CV::ImportantAnnotation(_) => Ok(Value::Str(SassStr {
+                text: "!important".to_string().into(),
+                quoted: false,
+            })),
             CV::SassKeywordArgument(k) => self.eval_value(&k.value),
             CV::SassArbitraryArgument(a) => self.eval_value(&a.value),
             other => self.eval_text_value(*other.span()),

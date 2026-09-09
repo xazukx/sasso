@@ -2668,7 +2668,7 @@ impl<'a> Evaluator<'a> {
                             self.eval_at_root(Some(q.span), block, parents, sink)?
                         }
                         ox::SassAtRootKind::Selector(sel) => {
-                            self.eval_at_root_selector(sel, block, sink)?
+                            self.eval_at_root_selector(sel, block, parents, sink)?
                         }
                     },
                     _ => self.eval_at_root(None, block, parents, sink)?,
@@ -3158,7 +3158,9 @@ impl<'a> Evaluator<'a> {
         // serializer relies on, adding none of its own) survives.
         let value_span = Span {
             start: d.colon_span.end,
-            end: value_read::values_span(&d.value).end.max(d.colon_span.end),
+            // Through the end of the declaration, so an `!important` flag —
+            // which is text here, not a parsed flag — comes with it.
+            end: d.span.end.max(d.colon_span.end),
         };
         let value = self.interpolate(value_span)?;
         let pos = self.file.pos(d.span);
