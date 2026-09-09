@@ -1,3 +1,4 @@
+use super::value_read::{Arg, params_of, rest_of};
 use super::*;
 
 /// Iteration source for `@each`. A list is held as its shared `Rc<[Value]>`
@@ -29,8 +30,8 @@ impl EachItems {
 impl<'a> Evaluator<'a> {
     /// Evaluate a `@for` bound to a [`Number`], preserving its unit (the loop
     /// variable inherits the `from` bound's unit).
-    fn eval_for_number(&mut self, e: &Expr) -> Result<Number, Error> {
-        match self.eval_expr(e)? {
+    fn eval_for_number(&mut self, e: &'a ox::ComponentValue<'a>) -> Result<Number, Error> {
+        match self.eval_value(e)? {
             Value::Number(n) => Ok(n),
             other => Err(Error::unpositioned(format!(
                 "{} is not a number.",
@@ -43,7 +44,11 @@ impl<'a> Evaluator<'a> {
     /// bound converted to the FROM bound's unit), and the loop variable's unit
     /// (taken from FROM). Errors on incompatible units or a non-integer bound,
     /// matching dart-sass.
-    pub(super) fn for_bounds(&mut self, from: &Expr, to: &Expr) -> Result<(i64, i64, String), Error> {
+    pub(super) fn for_bounds(
+        &mut self,
+        from: &'a ox::ComponentValue<'a>,
+        to: &'a ox::ComponentValue<'a>,
+    ) -> Result<(i64, i64, String), Error> {
         let start = self.eval_for_number(from)?;
         let end = self.eval_for_number(to)?;
         // The loop variable takes FROM's unit; TO is converted to match. A
@@ -83,8 +88,8 @@ impl<'a> Evaluator<'a> {
     /// `Rc<[Value]>` handle directly (a refcount bump) so the loop can clone
     /// one element per iteration instead of deep-copying the whole collection
     /// up front; maps and scalars build a small owned set.
-    pub(super) fn eval_each_items(&mut self, e: &Expr) -> Result<EachItems, Error> {
-        match self.eval_expr(e)? {
+    pub(super) fn eval_each_items(&mut self, e: &'a ox::ComponentValue<'a>) -> Result<EachItems, Error> {
+        match self.eval_value(e)? {
             Value::List(l) => Ok(EachItems::Shared(l.items)),
             // `@each` over a map yields each `key value` pair as a two-element
             // space list, so `@each $k, $v in $map` destructures correctly.
@@ -147,7 +152,7 @@ impl<'a> Evaluator<'a> {
     ///
     /// This form discards the source-map definition spans; callers that bind
     /// the results to user parameters want [`Self::eval_call_args_spanned`].
-    pub(super) fn eval_call_args(&mut self, args: &[CallArg]) -> Result<EvaledArgs, Error> {
+    pub(super) fn eval_call_args(&mut self, args: &[Arg<'a>]) -> Result<EvaledArgs, Error> {
         Ok(self.eval_call_args_spanned(args)?.0)
     }
 
@@ -156,7 +161,7 @@ impl<'a> Evaluator<'a> {
     /// parameter can inherit the span of the argument it was bound to.
     pub(super) fn eval_call_args_spanned(
         &mut self,
-        args: &[CallArg],
+        args: &[Arg<'a>],
     ) -> Result<(EvaledArgs, ArgSpans), Error> {
         // Explicit positional args are gathered first; positionals spread from
         // a `...` splat are appended after them, so `f([1, 2]..., 3)` binds
@@ -191,11 +196,11 @@ impl<'a> Evaluator<'a> {
             Ok(())
         };
         for a in args {
-            let v = self.eval_expr(&a.value)?;
+            let v = self.eval_values(a.values)?;
             // dart resolves each argument's node right after evaluating it
             // (evaluate.dart:3814), so a bare `$x` argument carries `$x`'s
             // DEFINITION rather than the call site.
-            let sp = self.expression_node(&a.value, a.value_pos);
+            let sp = self.expression_node_values(a.values);
             if a.splat {
                 // A splat list spreads into positional args; a map spreads
                 // into keyword args (string keys only). A single non-list/map
@@ -246,9 +251,9 @@ impl<'a> Evaluator<'a> {
                 }
                 continue;
             }
-            match &a.name {
+            match a.name {
                 Some(n) => {
-                    push_named(&mut keyword, &mut keyword_spans, n.clone(), v, sp)?;
+                    push_named(&mut keyword, &mut keyword_spans, n.to_string(), v, sp)?;
                     seen_named = true;
                 }
                 None => {
@@ -279,7 +284,7 @@ impl<'a> Evaluator<'a> {
     /// name, then declared defaults; extra positionals collect into a
     /// `$rest...` parameter or are an error. The parallel definition-span frame
     /// comes along for the source map.
-    fn bind_args(&mut self, params: &ParamList, args: &[CallArg], name: &str) -> Result<ArgFrame, Error> {
+    fn bind_args(&mut self, params: Option<&'a ox::SassParameters<'a>>, args: &[Arg<'a>], name: &str) -> Result<ArgFrame, Error> {
         let (evaled, spans) = self.eval_call_args_spanned(args)?;
         self.bind_evaled(params, evaled, &spans, name)
     }
@@ -295,7 +300,7 @@ impl<'a> Evaluator<'a> {
     /// (dart evaluate.dart:3572-3592). Source-map only.
     pub(super) fn bind_evaled_into_scope(
         &mut self,
-        params: &ParamList,
+        params: Option<&'a ox::SassParameters<'a>>,
         evaled: EvaledArgs,
         spans: &ArgSpans,
         name: &str,
@@ -311,28 +316,31 @@ impl<'a> Evaluator<'a> {
             keyword.insert(norm, v);
         }
         let mut pos_iter = positional.into_iter().enumerate();
-        for param in &params.params {
+        for param in params_of(params) {
             let (val, span) = if let Some((i, v)) = pos_iter.next() {
                 (v, spans.positional(i))
-            } else if let Some(v) = keyword.remove(normalize_arg_name(&param.name).as_ref()) {
-                (v, spans.named(&param.name))
-            } else if let Some(def) = &param.default {
-                let v = self.eval_expr(def)?;
+            } else if let Some(v) = keyword.remove(normalize_arg_name(param.name.name.name).as_ref()) {
+                (v, spans.named(param.name.name.name))
+            } else if let Some(def) = param.default_value.as_ref().map(|d| &d.value) {
+                let v = self.eval_value(def)?;
                 // A default is resolved through `_expressionNode` too, so
                 // `@mixin m($a, $b: $a)` gives `$b` whatever `$a` points at.
-                let sp = self.expression_node(def, param.default_pos);
+                let sp = self.expression_node_value(def);
                 (v, sp)
             } else {
-                return Err(Error::unpositioned(format!("Missing argument ${}.", param.name)));
+                return Err(Error::unpositioned(format!(
+                    "Missing argument ${}.",
+                    param.name.name.name
+                )));
             };
             if let Some(sc) = self.scopes.last() {
-                sc.borrow_mut().insert(param.name.clone(), val);
+                sc.borrow_mut().insert(param.name.name.name.to_string(), val);
             }
             if let Some(frame) = self.var_spans.last() {
-                frame.borrow_mut().insert(param.name.clone(), span);
+                frame.borrow_mut().insert(param.name.name.name.to_string(), span);
             }
         }
-        if let Some(rest) = &params.rest {
+        if let Some(rest) = rest_of(params) {
             let remaining: Vec<Value> = pos_iter.map(|(_, v)| v).collect();
             let kw: Vec<(Value, Value)> = keyword_order
                 .iter()
@@ -350,7 +358,7 @@ impl<'a> Evaluator<'a> {
                 .collect();
             if let Some(sc) = self.scopes.last() {
                 sc.borrow_mut().insert(
-                    rest.clone(),
+                    rest.to_string(),
                     Value::List(List {
                         items: remaining.into(),
                         sep: rest_sep,
@@ -400,7 +408,7 @@ impl<'a> Evaluator<'a> {
     /// [`Self::push_scope_frame`] installs alongside it (source-map only).
     fn bind_evaled(
         &mut self,
-        params: &ParamList,
+        params: Option<&'a ox::SassParameters<'a>>,
         evaled: EvaledArgs,
         spans: &ArgSpans,
         name: &str,
@@ -420,24 +428,27 @@ impl<'a> Evaluator<'a> {
         let mut frame = HashMap::default();
         let mut span_frame: HashMap<String, VarSpan> = HashMap::default();
         let mut pos_iter = positional.into_iter().enumerate();
-        for param in &params.params {
+        for param in params_of(params) {
             let (val, span) = if let Some((i, v)) = pos_iter.next() {
                 (v, spans.positional(i))
-            } else if let Some(v) = keyword.remove(normalize_arg_name(&param.name).as_ref()) {
-                (v, spans.named(&param.name))
-            } else if let Some(def) = &param.default {
-                let v = self.eval_expr(def)?;
-                let sp = self.expression_node(def, param.default_pos);
+            } else if let Some(v) = keyword.remove(normalize_arg_name(param.name.name.name).as_ref()) {
+                (v, spans.named(param.name.name.name))
+            } else if let Some(def) = param.default_value.as_ref().map(|d| &d.value) {
+                let v = self.eval_value(def)?;
+                let sp = self.expression_node_value(def);
                 (v, sp)
             } else {
-                return Err(Error::unpositioned(format!("Missing argument ${}.", param.name)));
+                return Err(Error::unpositioned(format!(
+                    "Missing argument ${}.",
+                    param.name.name.name
+                )));
             };
-            frame.insert(param.name.clone(), val);
+            frame.insert(param.name.name.name.to_string(), val);
             if self.options.source_map {
-                span_frame.insert(param.name.clone(), span);
+                span_frame.insert(param.name.name.name.to_string(), span);
             }
         }
-        if let Some(rest) = &params.rest {
+        if let Some(rest) = rest_of(params) {
             let remaining: Vec<Value> = pos_iter.map(|(_, v)| v).collect();
             // Any keyword args left after binding the declared params become the
             // arglist's keywords, in caller order and keyed by their
@@ -457,7 +468,7 @@ impl<'a> Evaluator<'a> {
                 })
                 .collect();
             frame.insert(
-                rest.clone(),
+                rest.to_string(),
                 Value::List(List {
                     items: remaining.into(),
                     sep: rest_sep,
@@ -504,8 +515,8 @@ impl<'a> Evaluator<'a> {
     /// expression, recorded as a diagnostic stack frame around the body.
     pub(super) fn call_function(
         &mut self,
-        func: &Rc<UserCallable>,
-        args: &[CallArg],
+        func: &Rc<UserCallable<'a>>,
+        args: &[Arg<'a>],
         call: Option<(Pos, usize)>,
     ) -> Result<Value, Error> {
         // Arguments evaluate in the CALLER's environment; the body (and the
@@ -687,9 +698,9 @@ impl<'a> Evaluator<'a> {
     pub(super) fn exec_include(
         &mut self,
         name: &str,
-        args: &[CallArg],
+        args: &[Arg<'a>],
         content: Option<Rc<Vec<Stmt>>>,
-        content_params: Option<Rc<ParamList>>,
+        content_params: Option<&'a ox::SassParameters<'a>>,
         module: Option<&str>,
         pos: Pos,
         parents: &[String],
@@ -737,7 +748,7 @@ impl<'a> Evaluator<'a> {
         // via `@use … as *`.
         if self.lookup_mixin(name).is_none() && !self.star_user_modules.is_empty() && !is_private_member(name)
         {
-            let hits: Vec<(Rc<Module>, Rc<UserCallable>)> = self
+            let hits: Vec<(Rc<Module<'a>>, Rc<UserCallable<'a>>)> = self
                 .star_user_modules
                 .iter()
                 .filter_map(|m| m.mixin(name).map(|mx| (Rc::clone(m), mx)))
@@ -804,11 +815,11 @@ impl<'a> Evaluator<'a> {
     #[allow(clippy::too_many_arguments)]
     fn run_module_mixin(
         &mut self,
-        module: &Rc<Module>,
-        mixin: &Rc<UserCallable>,
-        args: &[CallArg],
+        module: &Rc<Module<'a>>,
+        mixin: &Rc<UserCallable<'a>>,
+        args: &[Arg<'a>],
         content: Option<Rc<Vec<Stmt>>>,
-        content_params: Option<Rc<ParamList>>,
+        content_params: Option<&'a ox::SassParameters<'a>>,
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
@@ -863,9 +874,9 @@ impl<'a> Evaluator<'a> {
     /// block).
     fn exec_apply(
         &mut self,
-        args: &[CallArg],
+        args: &[Arg<'a>],
         content: Option<Rc<Vec<Stmt>>>,
-        content_params: Option<Rc<ParamList>>,
+        content_params: Option<&'a ox::SassParameters<'a>>,
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
@@ -918,13 +929,13 @@ impl<'a> Evaluator<'a> {
         pos_args: Vec<Value>,
         named: Vec<(String, Value)>,
         content: Option<Rc<Vec<Stmt>>>,
-        content_params: Option<Rc<ParamList>>,
+        content_params: Option<&'a ox::SassParameters<'a>>,
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
         // A captured user `@mixin`: recover the type-erased `Callable`.
         let callable = match &mixin.user {
-            Some(any) => match Rc::clone(any).downcast::<UserCallable>() {
+            Some(any) => match Rc::clone(any).downcast::<UserCallable<'a>>() {
                 Ok(c) => c,
                 Err(_) => return Err(Error::unpositioned("Undefined mixin.")),
             },
@@ -1015,7 +1026,7 @@ impl<'a> Evaluator<'a> {
     /// module.
     pub(super) fn exec_content(
         &mut self,
-        args: &[CallArg],
+        args: &[Arg<'a>],
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
@@ -1070,7 +1081,7 @@ impl<'a> Evaluator<'a> {
 
     /// The lazy `if($condition, $if-true, $if-false)` function: evaluates
     /// the condition, then only the selected branch.
-    pub(super) fn eval_if_function(&mut self, args: &[CallArg], pos: Pos) -> Result<Value, Error> {
+    pub(super) fn eval_if_function(&mut self, args: &[Arg<'a>], pos: Pos) -> Result<Value, Error> {
         // An argument is lazy (an unevaluated branch expression) unless it
         // came from a `...` splat: dart's macro-argument handling evaluates
         // the splat eagerly and reconstitutes its elements (and an argument

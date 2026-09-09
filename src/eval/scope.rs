@@ -45,19 +45,46 @@ impl<'a> Evaluator<'a> {
     /// Note the asymmetry this bakes in, and which dart's boundary confirms:
     /// only a BARE `$x` resolves. `$x * 2`, `f($x)`, `#{$x}` and `$x $x` are
     /// `Binary`/`Func`/`Interp`/`List` nodes, so they keep their own span.
-    pub(super) fn expression_node(&mut self, expr: &Expr, fallback: Pos) -> VarSpan {
+    pub(super) fn expression_node_value(&mut self, value: &ox::ComponentValue<'a>) -> VarSpan {
         if !self.options.source_map {
             return VarSpan::default();
         }
-        let resolved = match expr {
-            Expr::Var { name, .. } => self.lookup_var_span(name),
-            Expr::NsVar { module, name, .. } => self.module_var_span(module, name),
+        let resolved = match value {
+            ox::ComponentValue::SassVariable(v) => self.lookup_var_span(v.name.name),
+            ox::ComponentValue::SassQualifiedName(q) => match &q.member {
+                ox::SassModuleMemberName::Variable(v) => {
+                    self.module_var_span(q.module.name, v.name.name)
+                }
+                ox::SassModuleMemberName::Ident(_) => None,
+            },
             _ => None,
         };
         match resolved {
             Some(sp) => sp,
-            None => self.span_at(fallback),
+            None => {
+                let pos = self.file.pos(*value.span());
+                self.span_at(pos)
+            }
         }
+    }
+
+    /// [`Self::expression_node_value`] for a whole value run: a run that is a
+    /// single value resolves through it, and anything else takes its own span.
+    pub(super) fn expression_node_values(
+        &mut self,
+        values: &[ox::ComponentValue<'a>],
+    ) -> VarSpan {
+        if !self.options.source_map {
+            return VarSpan::default();
+        }
+        if let [one] = values {
+            return self.expression_node_value(one);
+        }
+        let pos = match values.first() {
+            Some(v) => self.file.pos(*v.span()),
+            None => Pos::NONE,
+        };
+        self.span_at(pos)
     }
 
     /// The definition span of a `ns.$name` module variable, following a

@@ -203,9 +203,9 @@ fn new_span_scope() -> SpanScope {
 /// One function/mixin scope frame, parallel to the variable chain (dart's
 /// `Environment._functions`/`_mixins` are lists of maps pushed and popped in
 /// lockstep with `_variables`).
-pub type FnScope = std::rc::Rc<std::cell::RefCell<HashMap<String, Rc<UserCallable>>>>;
+pub type FnScope<'a> = std::rc::Rc<std::cell::RefCell<HashMap<String, Rc<UserCallable<'a>>>>>;
 
-fn new_fn_scope() -> FnScope {
+fn new_fn_scope<'a>() -> FnScope<'a> {
     std::rc::Rc::new(std::cell::RefCell::new(HashMap::default()))
 }
 
@@ -218,24 +218,42 @@ fn new_fn_scope() -> FnScope {
 pub struct EnvModules {
     pub(self) used_modules: HashMap<String, String>,
     pub(self) star_modules: Vec<String>,
-    pub(self) used_user_modules: HashMap<String, Rc<Module>>,
-    pub(self) star_user_modules: Vec<Rc<Module>>,
+    pub(self) used_user_modules: HashMap<String, Rc<Module<'a>>>,
+    pub(self) star_user_modules: Vec<Rc<Module<'a>>>,
+}
+
+/// A user `@function`/`@mixin` definition, held as the parser's own nodes.
+///
+/// The body is never copied: it is the `@function`/`@mixin` at-rule's block,
+/// still in the arena, together with the file it came from — which the
+/// evaluator swaps in as the current file while the body runs, so a
+/// diagnostic raised inside a mixin points at the file that DEFINED it.
+pub struct Callable<'a> {
+    pub name: &'a str,
+    /// The declared parameters. `None` for a `@mixin` written with no `(…)`.
+    pub params: Option<&'a ox::SassParameters<'a>>,
+    pub body: &'a ox::SimpleBlock<'a>,
+    /// The file the definition came from.
+    pub file: &'a SourceFile<'a>,
+    /// The `@function name(params)` / `@mixin name(params)` prelude span — the
+    /// caret dart draws when the definition is illegal where it sits.
+    pub span: Span,
 }
 
 /// A user `@function`/`@mixin` with its LEXICAL environment: the variable and
 /// function/mixin scope chains captured at the definition site (shared
 /// frames, dart's `Environment.closure()`). The body runs against these
 /// chains, not the caller's stack.
-pub struct UserCallable {
-    pub def: Rc<Callable>,
+pub struct UserCallable<'a> {
+    pub def: Rc<Callable<'a>>,
     pub env: Vec<Scope>,
     /// The variable-definition-span chain captured alongside `env`, frame for
     /// frame (dart closes over `_variableNodes` with the rest of the
     /// environment).
     pub env_spans: Vec<SpanScope>,
     pub env_semi: Vec<bool>,
-    pub env_fns: Vec<FnScope>,
-    pub env_mixins: Vec<FnScope>,
+    pub env_fns: Vec<FnScope<'a>>,
+    pub env_mixins: Vec<FnScope<'a>>,
     pub env_modules: EnvModules,
 }
 
@@ -896,8 +914,8 @@ pub struct Evaluator<'a> {
     /// `Environment._functions`/`_mixins`): a definition always lands in the
     /// innermost frame, so a nested `@function`/`@mixin` shadows an outer one
     /// only within its block.
-    functions: Vec<FnScope>,
-    mixins: Vec<FnScope>,
+    functions: Vec<FnScope<'a>>,
+    mixins: Vec<FnScope<'a>>,
     /// Stack of `@content` blocks, one per active `@include`.
     content_stack: Vec<Option<ContentBlock>>,
     /// Whether we are *directly* executing a mixin body (dart-sass `_inMixin`).
@@ -1063,13 +1081,13 @@ pub struct Evaluator<'a> {
     star_modules: Vec<String>,
     /// User stylesheet modules brought into scope via `@use "<file>" [as ns]`,
     /// keyed by the in-scope namespace.
-    used_user_modules: HashMap<String, Rc<Module>>,
+    used_user_modules: HashMap<String, Rc<Module<'a>>>,
     /// User modules brought into scope unprefixed via `@use "<file>" as *`.
-    star_user_modules: Vec<Rc<Module>>,
+    star_user_modules: Vec<Rc<Module<'a>>>,
     /// All user modules loaded so far, keyed by the importer's canonical key so
     /// each file is evaluated once and shared between every `@use`/`@forward`.
     /// Shared so a module's own forwarded sub-modules see the same cache.
-    module_cache: Rc<RefCell<HashMap<String, Rc<Module>>>>,
+    module_cache: Rc<RefCell<HashMap<String, Rc<Module<'a>>>>>,
     /// Members re-exported from the module currently being evaluated, collected
     /// from its `@forward` rules. Empty when not evaluating a module.
     forwarded: Forwarded,
@@ -1155,7 +1173,7 @@ struct DiagFrame {
 
 /// An evaluated user module: its public members plus the bindings it itself
 /// `@use`d (so a `ns.member` lookup can recurse through forwards).
-struct Module {
+struct Module<'a> {
     /// Top-level variables (the module's global scope). Shared and mutable so an
     /// outside `ns.$var: value` assignment updates the module and its own
     /// functions/mixins observe the new value on their next call.
@@ -1170,8 +1188,8 @@ struct Module {
     mixins: FnScope,
     /// Namespaced user modules this module `@use`d (for transitive `ns.fn()`
     /// calls evaluated inside this module's own functions/mixins).
-    used_user_modules: HashMap<String, Rc<Module>>,
-    star_user_modules: Vec<Rc<Module>>,
+    used_user_modules: HashMap<String, Rc<Module<'a>>>,
+    star_user_modules: Vec<Rc<Module<'a>>>,
     /// Built-in modules this module `@use`d, by namespace, and unprefixed.
     used_builtin_modules: HashMap<String, String>,
     star_builtin_modules: Vec<String>,
@@ -1181,13 +1199,13 @@ struct Module {
     /// For members re-exported via `@forward`, the module they actually live
     /// in (the variable entry also carries the ORIGINAL name): reads, writes
     /// and calls route there so the defining module's environment is live.
-    var_origins: HashMap<String, (Rc<Module>, String)>,
+    var_origins: HashMap<String, (Rc<Module<'a>>, String)>,
     /// Like `var_origins`, but kept even when the module's own same-named
     /// variable SHADOWS the forwarded one: dart reads the own variable but a
     /// namespaced *assignment* still writes through to the forwarded module.
-    var_write_origins: HashMap<String, (Rc<Module>, String)>,
-    fn_origins: HashMap<String, Rc<Module>>,
-    mixin_origins: HashMap<String, Rc<Module>>,
+    var_write_origins: HashMap<String, (Rc<Module<'a>>, String)>,
+    fn_origins: HashMap<String, Rc<Module<'a>>>,
+    mixin_origins: HashMap<String, Rc<Module<'a>>>,
     /// The path/URL of this module's file, for diagnostic snippets pointing
     /// into the module (empty when diagnostics are disabled / unknown).
     diag_url: String,
@@ -1217,7 +1235,7 @@ struct Module {
     phantom_css: bool,
 }
 
-impl Module {
+impl<'a> Module<'a> {
     /// Look up a public variable. Names are dash/underscore-insensitive, so an
     /// exact miss falls back to comparing the canonical (dashed) form against
     /// every key. Private members (leading `-`/`_`) are the caller's
@@ -1238,7 +1256,7 @@ impl Module {
     }
     /// The defining module (and original variable name) of a forwarded
     /// variable, dash/underscore-insensitively.
-    fn var_origin(&self, name: &str) -> Option<(Rc<Module>, String)> {
+    fn var_origin(&self, name: &str) -> Option<(Rc<Module<'a>>, String)> {
         if let Some((m, o)) = self.var_origins.get(name) {
             return Some((Rc::clone(m), o.clone()));
         }
@@ -1250,7 +1268,7 @@ impl Module {
     }
     /// The write-through target of a forwarded variable (kept even when
     /// shadowed by the module's own same-named variable).
-    fn var_write_origin(&self, name: &str) -> Option<(Rc<Module>, String)> {
+    fn var_write_origin(&self, name: &str) -> Option<(Rc<Module<'a>>, String)> {
         if let Some((m, o)) = self.var_write_origins.get(name) {
             return Some((Rc::clone(m), o.clone()));
         }
@@ -1261,7 +1279,7 @@ impl Module {
             .map(|(_, (m, o))| (Rc::clone(m), o.clone()))
     }
     /// The defining module of a forwarded function/mixin.
-    fn fn_origin(&self, name: &str) -> Option<Rc<Module>> {
+    fn fn_origin(&self, name: &str) -> Option<Rc<Module<'a>>> {
         if let Some(m) = self.fn_origins.get(name) {
             return Some(Rc::clone(m));
         }
@@ -1271,7 +1289,7 @@ impl Module {
             .find(|(k, _)| normalize_var_name(k) == norm)
             .map(|(_, m)| Rc::clone(m))
     }
-    fn mixin_origin(&self, name: &str) -> Option<Rc<Module>> {
+    fn mixin_origin(&self, name: &str) -> Option<Rc<Module<'a>>> {
         if let Some(m) = self.mixin_origins.get(name) {
             return Some(Rc::clone(m));
         }
@@ -1281,7 +1299,7 @@ impl Module {
             .find(|(k, _)| normalize_var_name(k) == norm)
             .map(|(_, m)| Rc::clone(m))
     }
-    fn function(&self, name: &str) -> Option<Rc<UserCallable>> {
+    fn function(&self, name: &str) -> Option<Rc<UserCallable<'a>>> {
         let fns = self.functions.borrow();
         if let Some(f) = fns.get(name) {
             return Some(Rc::clone(f));
@@ -1291,7 +1309,7 @@ impl Module {
             .find(|(k, _)| normalize_var_name(k) == norm)
             .map(|(_, f)| Rc::clone(f))
     }
-    fn mixin(&self, name: &str) -> Option<Rc<UserCallable>> {
+    fn mixin(&self, name: &str) -> Option<Rc<UserCallable<'a>>> {
         let mixins = self.mixins.borrow();
         if let Some(m) = mixins.get(name) {
             return Some(Rc::clone(m));
@@ -1326,16 +1344,16 @@ struct SavedModuleEnv {
     /// Definition spans parallel to `scopes` (source-map only).
     var_spans: Vec<SpanScope>,
     scope_semi_global: Vec<bool>,
-    functions: Vec<FnScope>,
-    mixins: Vec<FnScope>,
+    functions: Vec<FnScope<'a>>,
+    mixins: Vec<FnScope<'a>>,
     used_modules: HashMap<String, String>,
     star_modules: Vec<String>,
-    used_user_modules: HashMap<String, Rc<Module>>,
-    star_user_modules: Vec<Rc<Module>>,
+    used_user_modules: HashMap<String, Rc<Module<'a>>>,
+    star_user_modules: Vec<Rc<Module<'a>>>,
     /// When set (a cross-module call), the module whose global scope was
     /// installed: `leave_module` writes the (possibly mutated) global scope back
     /// so a `!global` assignment inside the module persists.
-    write_back: Option<Rc<Module>>,
+    write_back: Option<Rc<Module<'a>>>,
 }
 
 /// Members a module re-exports via `@forward`, accumulated while it evaluates.
@@ -1346,14 +1364,14 @@ struct Forwarded {
     /// forwarded variable keeps pointing at the `$x: <value>` that defined it
     /// in its home module.
     var_spans: HashMap<String, VarSpan>,
-    functions: HashMap<String, Rc<UserCallable>>,
-    mixins: HashMap<String, Rc<UserCallable>>,
+    functions: HashMap<String, Rc<UserCallable<'a>>>,
+    mixins: HashMap<String, Rc<UserCallable<'a>>>,
     /// The module each re-exported member actually lives in (with the
     /// member's ORIGINAL name for variables), so calls/assignments through
     /// the forward run against the defining module's environment.
-    var_origins: HashMap<String, (Rc<Module>, String)>,
-    fn_origins: HashMap<String, Rc<Module>>,
-    mixin_origins: HashMap<String, Rc<Module>>,
+    var_origins: HashMap<String, (Rc<Module<'a>>, String)>,
+    fn_origins: HashMap<String, Rc<Module<'a>>>,
+    mixin_origins: HashMap<String, Rc<Module<'a>>>,
     /// Built-in `sass:*` modules re-exported via `@forward "sass:x"`.
     builtins: Vec<ForwardedBuiltin>,
     /// For each re-exported member name, the source module it came from (by
@@ -2130,12 +2148,52 @@ impl<'a> Evaluator<'a> {
     /// serves the top level (each statement is its own group), rule bodies
     /// (declarations join the block, nested rules bubble out), and every
     /// nested-block construct that reuses it.
-    fn exec(&mut self, stmts: &[Stmt], parents: &[String], sink: &mut Sink<'_>) -> Result<(), Error> {
-        for stmt in stmts {
-            if let Err(e) = self.exec_stmt(stmt, parents, sink) {
-                return Err(self.blame_stmt(e, stmt));
+    /// Execute a block's statements, with its loud comments spliced back in.
+    ///
+    /// The parser reports comments out of band, so `span` — the block's own
+    /// extent — is what decides which of the file's comments belong here.
+    fn exec(
+        &mut self,
+        stmts: &'a [ox::Statement<'a>],
+        span: Span,
+        parents: &[String],
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        for item in interleave(self.file, stmts, span) {
+            match item {
+                Item::Comment(c) => self.exec_comment(c, sink)?,
+                Item::Stmt(stmt) => {
+                    if let Err(e) = self.exec_stmt(stmt, parents, sink) {
+                        return Err(self.blame_stmt(e, stmt));
+                    }
+                }
             }
         }
+        Ok(())
+    }
+
+    /// Emit a loud comment, resolving any `#{…}` in its body.
+    fn exec_comment(
+        &mut self,
+        c: &oxc_css_parser::token::Comment<'a>,
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        // The body is the text between the delimiters; locating it by length
+        // keeps it a span of the file, so its interpolations carry positions.
+        let body = Span {
+            start: c.span.start + 2,
+            end: c.span.start + 2 + c.content.len(),
+        };
+        let text = self.interpolate(body)?;
+        let lines = self.stamp(SrcLines {
+            start: self.file.line_at(c.span.start),
+            end: self.file.line_at(c.span.end),
+            col: self.file.pos(c.span).col as u32,
+            start_col: self.file.pos(c.span).col as u32,
+            ..SrcLines::default()
+        });
+        sink.push_comment(text, lines);
+        self.last_child_invisible = false;
         Ok(())
     }
 
@@ -2143,327 +2201,452 @@ impl<'a> Evaluator<'a> {
     /// while `current_url`/`current_source`/`call_stack` still describe the
     /// file and call context it was raised in.
     ///
-    /// The mirror of what [`Self::eval_expr`] does for expressions. Between
-    /// them, every error that escapes evaluation has a span: an error raised
-    /// in a helper with no position of its own picks up the innermost
-    /// enclosing node that has one, which is where dart-sass — attaching a
-    /// span to every AST node it visits — blames it too.
-    fn blame_stmt(&self, e: Error, stmt: &Stmt) -> Error {
-        let e = match stmt.span() {
-            Some((pos, len)) => e.or_at(pos, len),
-            None => e,
-        };
+    /// The mirror of what [`Self::eval_value`] does for values. Between them,
+    /// every error that escapes evaluation has a span: an error raised in a
+    /// helper with no position of its own picks up the innermost enclosing
+    /// node that has one, which is where dart-sass — attaching a span to every
+    /// AST node it visits — blames it too.
+    fn blame_stmt(&self, e: Error, stmt: &'a ox::Statement<'a>) -> Error {
+        let span = *stmt.span();
+        let e = e.or_at(
+            self.file.pos(span),
+            span.end.saturating_sub(span.start),
+        );
         self.finalize_error(e)
     }
 
     /// Execute one statement. Every error leaving here passes through
     /// [`Self::blame_stmt`], which gives it this statement's position if it
     /// carries none of its own.
-    fn exec_stmt(&mut self, stmt: &Stmt, parents: &[String], sink: &mut Sink<'_>) -> Result<(), Error> {
-        {
-            match stmt {
-                Stmt::VarDecl(v) => {
-                    // The declaration's own enclosing selector, saved and
-                    // restored around the apply: evaluating the right-hand
-                    // side can run a function body that records declarations
-                    // of its own, and the record happens after that.
-                    let saved = if self.options.record_variable_values {
-                        Some(std::mem::replace(
-                            &mut self.record_parents,
-                            (!parents.is_empty()).then(|| parents.to_vec()),
-                        ))
-                    } else {
-                        None
+    fn exec_stmt(
+        &mut self,
+        stmt: &'a ox::Statement<'a>,
+        parents: &[String],
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        match stmt {
+            ox::Statement::SassVariableDeclaration(v) => {
+                // The declaration's own enclosing selector, saved and restored
+                // around the apply: evaluating the right-hand side can run a
+                // function body that records declarations of its own, and the
+                // record happens after that.
+                let saved = if self.options.record_variable_values {
+                    Some(std::mem::replace(
+                        &mut self.record_parents,
+                        (!parents.is_empty()).then(|| parents.to_vec()),
+                    ))
+                } else {
+                    None
+                };
+                let applied = self.apply_var(v);
+                if let Some(saved) = saved {
+                    self.record_parents = saved;
+                }
+                applied?
+            }
+            ox::Statement::QualifiedRule(r) => self.eval_style_rule(r, parents, sink)?,
+            ox::Statement::Declaration(d) => self.exec_declaration(d, parents, sink)?,
+            ox::Statement::KeyframeBlock(k) => self.eval_keyframe_block(k, parents, sink)?,
+            ox::Statement::SassIfAtRule(node) => {
+                // Evaluate conditions top to bottom; run the first match's body
+                // in a fresh semi-global scope so an assignment to an existing
+                // outer variable updates it (and can reach the global scope
+                // when every enclosing scope is semi-global), while a freshly
+                // declared variable stays local to the branch (dart-sass
+                // `visitIf`).
+                let mut clauses: Vec<(Option<&'a ox::ComponentValue<'a>>, &'a ox::SimpleBlock<'a>)> =
+                    Vec::with_capacity(1 + node.else_if_clauses.len() + 1);
+                clauses.push((Some(&node.if_clause.condition), &node.if_clause.block));
+                for c in &node.else_if_clauses {
+                    clauses.push((Some(&c.condition), &c.block));
+                }
+                if let Some(block) = &node.else_clause {
+                    clauses.push((None, block));
+                }
+                for (cond, block) in clauses {
+                    let take = match cond {
+                        None => true,
+                        Some(c) => self.eval_value(c)?.is_truthy(),
                     };
-                    let applied = self.apply_var(v);
-                    if let Some(saved) = saved {
-                        self.record_parents = saved;
-                    }
-                    applied?
-                }
-                Stmt::Comment(c, lines) => {
-                    let text = self.eval_template(c)?;
-                    let lines = self.stamp(*lines);
-                    sink.push_comment(text, lines);
-                    self.last_child_invisible = false;
-                }
-                Stmt::Decl(d) => {
-                    if sink.is_top() {
-                        return Err(Error::at("top-level declarations aren't allowed", d.pos));
-                    }
-                    if let Some(oi) = self.eval_decl(d)? {
-                        sink.push_item(oi);
-                        self.last_child_invisible = false;
+                    if take {
+                        self.push_scope(true);
+                        let result = self.exec(&block.statements, block.span, parents, sink);
+                        self.pop_scope();
+                        result?;
+                        break;
                     }
                 }
-                Stmt::PropertySet(ps) => {
-                    if sink.is_top() {
-                        return Err(Error::at("top-level declarations aren't allowed", ps.pos));
+            }
+            ox::Statement::AtRule(at) => self.exec_at_rule(at, parents, sink)?,
+            ox::Statement::UnknownSassAtRule(at) => {
+                // The name resolves at eval time; `@keyframes` is the one rule
+                // whose special handling happens here (frame stops).
+                let resolved = self.eval_interp_ident(&at.name)?;
+                let prelude = at.prelude.as_ref().map(|p| *p.span());
+                match &at.block {
+                    Some(block) if is_keyframes_name(&resolved) => {
+                        self.eval_keyframes(&resolved, prelude, block, SrcLines::default(), sink)?
                     }
-                    self.eval_property_set(ps, parents, sink)?;
-                    self.last_child_invisible = false;
-                }
-                Stmt::CustomDecl(d) => {
-                    if sink.is_top() {
-                        return Err(Error::at("top-level declarations aren't allowed", d.pos));
-                    }
-                    // A literal `--` name may never be nested inside a property
-                    // set (dart-sass parse-time error).
-                    if self.decl_prefix.is_some() {
-                        return Err(Error::at(
-                            "Declarations whose names begin with \"--\" may not be nested.",
-                            d.pos,
-                        ));
-                    }
-                    if let Some(oi) = self.eval_custom_decl(d)? {
-                        sink.push_item(oi);
-                        self.last_child_invisible = false;
-                    }
-                }
-                Stmt::Rule(r) => self.eval_style_rule(r, parents, sink)?,
-                Stmt::If(branches) => {
-                    // Evaluate conditions top to bottom; run the first match's
-                    // body in a fresh semi-global scope so an assignment to an
-                    // existing outer variable updates it (and can reach the
-                    // global scope when every enclosing scope is semi-global),
-                    // while a freshly declared variable stays local to the
-                    // branch (dart-sass `visitIf`).
-                    for branch in branches {
-                        let take = match &branch.cond {
-                            None => true,
-                            Some(c) => self.eval_expr(c)?.is_truthy(),
-                        };
-                        if take {
-                            self.push_scope(true);
-                            let result = self.exec(&branch.body, parents, sink);
-                            self.pop_scope();
-                            result?;
-                            break;
-                        }
-                    }
-                }
-                Stmt::For {
-                    var,
-                    from,
-                    to,
-                    inclusive,
-                    body,
-                    from_pos,
-                } => {
-                    let (start_i, end_i, unit) = self.for_bounds(from, to)?;
-                    // The loop body runs in its own semi-global scope: the loop
-                    // variable and any fresh assignments live there and vanish
-                    // when the loop ends (dart-sass `visitForRule`).
-                    self.push_scope(true);
-                    // Source-map: the loop variable is defined by `from`
-                    // (evaluate.dart:1666); resolved inside the scope like dart.
-                    let span = self.expression_node(from, *from_pos);
-                    let mut result = Ok(());
-                    for i in for_indices(start_i, end_i, *inclusive) {
-                        self.set_local(
-                            var,
-                            Value::Number(Number::with_unit(i as f64, unit.clone())),
-                            span,
-                        );
-                        result = self.exec(body, parents, sink);
-                        if result.is_err() {
-                            break;
-                        }
-                    }
-                    self.pop_scope();
-                    result?;
-                }
-                Stmt::Each {
-                    vars,
-                    list,
-                    body,
-                    list_pos,
-                } => {
-                    let items = self.eval_each_items(list)?;
-                    // Source-map: every bound variable is defined by the list
-                    // expression, resolved before the scope is pushed
-                    // (evaluate.dart:1441).
-                    let span = self.expression_node(list, *list_pos);
-                    self.push_scope(true);
-                    let mut result = Ok(());
-                    for i in 0..items.len() {
-                        self.bind_each(vars, items.get(i), span);
-                        result = self.exec(body, parents, sink);
-                        if result.is_err() {
-                            break;
-                        }
-                    }
-                    self.pop_scope();
-                    result?;
-                }
-                Stmt::While { cond, body, .. } => {
-                    self.push_scope(true);
-                    let mut result = Ok(());
-                    let mut guard = 0u32;
-                    loop {
-                        match self.eval_expr(cond) {
-                            Ok(v) if v.is_truthy() => {}
-                            Ok(_) => break,
-                            Err(e) => {
-                                result = Err(e);
-                                break;
-                            }
-                        }
-                        result = self.exec(body, parents, sink);
-                        if result.is_err() {
-                            break;
-                        }
-                        guard += 1;
-                        if guard >= 100_000 {
-                            result = Err(Error::unpositioned("@while exceeded 100000 iterations"));
-                            break;
-                        }
-                    }
-                    self.pop_scope();
-                    result?;
-                }
-                Stmt::FunctionDef(callable) => {
-                    let captured = self.capture_callable(callable);
-                    self.define_function(&callable.name, captured);
-                }
-                Stmt::MixinDef(callable) => {
-                    let captured = self.capture_callable(callable);
-                    self.define_mixin(&callable.name, captured);
-                }
-                Stmt::Return { .. } => {
-                    return Err(Error::unpositioned("@return is only allowed inside a function."));
-                }
-                Stmt::Include {
-                    name,
-                    args,
-                    content,
-                    content_params,
-                    module,
-                    pos,
-                    length,
-                } => {
-                    // Push a diagnostic call frame so an error/warning raised in
-                    // the mixin body unwinds through this `@include` call site.
-                    let saved = self.enter_call(*pos, *length, &mixin_frame_name(name, module));
-                    let r = self.exec_include(
-                        name,
-                        args,
-                        content.clone(),
-                        content_params.clone(),
-                        module.as_deref(),
-                        *pos,
+                    _ => self.eval_at_rule(
+                        &resolved,
+                        prelude,
+                        at.block.as_ref(),
+                        SrcLines::default(),
                         parents,
                         sink,
-                    );
-                    self.leave_call(saved);
-                    r?;
+                    )?,
                 }
-                Stmt::Use {
-                    url,
-                    namespace,
-                    star,
-                    config,
-                    pos,
-                } => self.exec_use(url, namespace.as_deref(), *star, config, *pos, parents, sink)?,
-                Stmt::Forward {
-                    url,
-                    prefix,
-                    show,
-                    hide,
-                    config,
-                    pos,
-                } => self.exec_forward(url, prefix.as_deref(), show, hide, config, *pos, parents, sink)?,
-                Stmt::Content {
-                    args: content_args, ..
-                } => {
-                    // The content block runs in the caller's context, so it is no
-                    // longer "directly in a mixin" (dart-sass): a
-                    // `meta.content-exists()` inside it is an error.
-                    self.in_mixin.push(false);
-                    let result = self.exec_content(content_args, parents, sink);
-                    self.in_mixin.pop();
-                    result?;
-                }
-                Stmt::Import(args) => self.eval_imports(args, parents, sink)?,
-                Stmt::AtRule {
-                    name,
-                    prelude,
-                    body,
-                    lines,
-                    ..
-                } => {
-                    let lines = self.stamp(*lines);
-                    self.eval_at_rule(name, prelude, body.as_deref(), lines, parents, sink)?;
-                    self.last_child_invisible = false;
-                }
-                Stmt::InterpAtRule {
-                    name, prelude, body, ..
-                } => {
-                    // The name resolves at eval time; `@keyframes` is the one
-                    // rule whose special handling happens here (frame stops).
-                    let resolved = self.eval_template(name)?;
-                    if is_keyframes_name(&resolved) && body.is_some() {
-                        if let Some(b) = body {
-                            self.eval_keyframes(&resolved, prelude, b, SrcLines::default(), sink)?;
-                        }
-                    } else {
-                        self.eval_at_rule(
-                            &resolved,
-                            prelude,
-                            body.as_deref(),
-                            SrcLines::default(),
-                            parents,
-                            sink,
-                        )?;
-                    }
-                    self.last_child_invisible = false;
-                }
-                Stmt::CssCustomAtRule { name, prelude, body } => {
-                    self.eval_css_custom_at_rule(name, prelude, body, sink)?;
-                    self.last_child_invisible = false;
-                }
-                Stmt::Media { query, body, lines } => {
-                    let stamped = self.stamp(*lines);
-                    self.eval_media(query, body, stamped, parents, sink)?;
-                    self.last_child_invisible = false;
-                }
-                Stmt::Supports {
-                    condition,
-                    body,
-                    lines,
-                } => {
-                    let stamped = self.stamp(*lines);
-                    self.eval_supports(condition, body, stamped, parents, sink)?;
-                    self.last_child_invisible = false;
-                }
-                Stmt::AtRoot { query, body } => {
-                    self.eval_at_root(query.as_deref(), body, parents, sink)?;
-                    self.last_child_invisible = false;
-                }
-                Stmt::Keyframes {
-                    name,
-                    prelude,
-                    body,
-                    lines,
-                } => {
-                    let lines = self.stamp(*lines);
-                    self.eval_keyframes(name, prelude, body, lines, sink)?;
-                    self.last_child_invisible = false;
-                }
-                Stmt::Extend {
-                    selector,
-                    optional,
-                    pos,
-                    length,
-                } => self.register_extend(selector, *optional, *pos, *length, parents)?,
-                Stmt::Warn { value, pos } => self.emit_warn(value, *pos)?,
-                Stmt::Debug { value, pos } => self.emit_debug(value, *pos)?,
-                Stmt::Error { value, pos, length } => {
-                    return Err(self.build_error(value, *pos, *length));
-                }
+                self.last_child_invisible = false;
+            }
+            // A rule whose prelude the typed selector grammar could not read
+            // (`x: { … }`). dart-sass has no such shape, and the parser only
+            // produces it for CSS; treat the prelude as a selector so the
+            // failure is reported where the text is.
+            ox::Statement::UnknownQualifiedRule(r) => {
+                return Err(Error::at(
+                    "expected \"{\".",
+                    self.file.pos(r.prelude.span),
+                ));
+            }
+            // Every remaining statement kind is Less-only, which an SCSS or
+            // CSS parse never produces.
+            other => {
+                return Err(Error::at(
+                    "This isn't allowed here.",
+                    self.file.pos(*other.span()),
+                ));
             }
         }
         Ok(())
+    }
+
+    /// A declaration statement, which is one of three things depending on its
+    /// name and value: a custom property (verbatim text), a nested property
+    /// set (`font: 12px/30px { family: serif }`), or an ordinary declaration.
+    fn exec_declaration(
+        &mut self,
+        d: &'a ox::Declaration<'a>,
+        parents: &[String],
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        if sink.is_top() {
+            return Err(Error::at(
+                "top-level declarations aren't allowed",
+                self.file.pos(d.span),
+            ));
+        }
+        // A nested property set is a declaration whose value ends in a block.
+        if let Some(ox::ComponentValue::SassNestingDeclaration(nested)) = d.value.last() {
+            let value = &d.value[..d.value.len() - 1];
+            self.eval_property_set(d, value, nested, parents, sink)?;
+            self.last_child_invisible = false;
+            return Ok(());
+        }
+        if d.name.is_custom_property() {
+            // A literal `--` name may never be nested inside a property set
+            // (dart-sass parse-time error).
+            if self.decl_prefix.is_some() {
+                return Err(Error::at(
+                    "Declarations whose names begin with \"--\" may not be nested.",
+                    self.file.pos(d.span),
+                ));
+            }
+            if let Some(oi) = self.eval_custom_decl(d)? {
+                sink.push_item(oi);
+                self.last_child_invisible = false;
+            }
+            return Ok(());
+        }
+        if let Some(oi) = self.eval_decl(d)? {
+            sink.push_item(oi);
+            self.last_child_invisible = false;
+        }
+        Ok(())
+    }
+
+    /// Dispatch an at-rule on the typed prelude the parser attached to it.
+    fn exec_at_rule(
+        &mut self,
+        at: &'a ox::AtRule<'a>,
+        parents: &[String],
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        use ox::AtRulePrelude as P;
+        let name = at.name.name;
+        let pos = self.file.pos(at.span);
+        let length = at.span.end.saturating_sub(at.span.start);
+
+        match (&at.prelude, &at.block) {
+            (Some(P::SassEach(each)), Some(block)) => {
+                let items = self.eval_each_items(&each.expr)?;
+                // Source-map: every bound variable is defined by the list
+                // expression, resolved before the scope is pushed
+                // (evaluate.dart:1441).
+                let span = self.expression_node_value(&each.expr);
+                let vars: Vec<String> = each
+                    .bindings
+                    .iter()
+                    .map(|b| b.name.name.to_string())
+                    .collect();
+                self.push_scope(true);
+                let mut result = Ok(());
+                for i in 0..items.len() {
+                    self.bind_each(&vars, items.get(i), span);
+                    result = self.exec(&block.statements, block.span, parents, sink);
+                    if result.is_err() {
+                        break;
+                    }
+                }
+                self.pop_scope();
+                result?;
+            }
+            (Some(P::SassFor(f)), Some(block)) => {
+                let (start_i, end_i, unit) = self.for_bounds(&f.start, &f.end)?;
+                // The loop body runs in its own semi-global scope: the loop
+                // variable and any fresh assignments live there and vanish
+                // when the loop ends (dart-sass `visitForRule`).
+                self.push_scope(true);
+                // Source-map: the loop variable is defined by `from`
+                // (evaluate.dart:1666); resolved inside the scope like dart.
+                let span = self.expression_node_value(&f.start);
+                let inclusive = matches!(f.boundary.kind, ox::SassForBoundaryKind::Inclusive);
+                let var = f.binding.name.name;
+                let mut result = Ok(());
+                for i in for_indices(start_i, end_i, inclusive) {
+                    self.set_local(
+                        var,
+                        Value::Number(Number::with_unit(i as f64, unit.clone())),
+                        span,
+                    );
+                    result = self.exec(&block.statements, block.span, parents, sink);
+                    if result.is_err() {
+                        break;
+                    }
+                }
+                self.pop_scope();
+                result?;
+            }
+            (Some(P::SassExpr(cond)), Some(block)) if name.eq_ignore_ascii_case("while") => {
+                self.push_scope(true);
+                let mut result = Ok(());
+                let mut guard = 0u32;
+                loop {
+                    match self.eval_value(cond) {
+                        Ok(v) if v.is_truthy() => {}
+                        Ok(_) => break,
+                        Err(e) => {
+                            result = Err(e);
+                            break;
+                        }
+                    }
+                    result = self.exec(&block.statements, block.span, parents, sink);
+                    if result.is_err() {
+                        break;
+                    }
+                    guard += 1;
+                    if guard >= 100_000 {
+                        result = Err(Error::unpositioned("@while exceeded 100000 iterations"));
+                        break;
+                    }
+                }
+                self.pop_scope();
+                result?;
+            }
+            (Some(P::SassFunction(f)), Some(block)) => {
+                let callable = Rc::new(Callable {
+                    name: f.name.name,
+                    params: Some(&f.parameters),
+                    body: block,
+                    file: self.file,
+                    span: at.span,
+                });
+                let captured = self.capture_callable(&callable);
+                self.define_function(f.name.name, captured);
+            }
+            (Some(P::SassMixin(m)), Some(block)) => {
+                let callable = Rc::new(Callable {
+                    name: m.name.name,
+                    params: m.parameters.as_ref(),
+                    body: block,
+                    file: self.file,
+                    span: at.span,
+                });
+                let captured = self.capture_callable(&callable);
+                self.define_mixin(m.name.name, captured);
+            }
+            (Some(P::SassInclude(inc)), block) => {
+                let (member, module) = include_target(&inc.name);
+                let args = super::value_read::args_of(
+                    inc.arguments.as_ref().map_or(&[], |a| &a.args),
+                    false,
+                );
+                let content_params = inc
+                    .content_block_params
+                    .as_ref()
+                    .map(|p| &p.params);
+                // Push a diagnostic call frame so an error/warning raised in
+                // the mixin body unwinds through this `@include` call site.
+                let saved = self.enter_call(pos, length, &mixin_frame_name(&member, module));
+                let r = self.exec_include(
+                    &member,
+                    &args,
+                    block.as_ref().copied_ref(),
+                    content_params,
+                    module,
+                    pos,
+                    parents,
+                    sink,
+                );
+                self.leave_call(saved);
+                r?;
+            }
+            (prelude, None) if name.eq_ignore_ascii_case("content") => {
+                let args = match prelude {
+                    Some(P::SassContent(c)) => super::value_read::args_of(&c.args, false),
+                    _ => Vec::new(),
+                };
+                // The content block runs in the caller's context, so it is no
+                // longer "directly in a mixin" (dart-sass): a
+                // `meta.content-exists()` inside it is an error.
+                self.in_mixin.push(false);
+                let result = self.exec_content(&args, parents, sink);
+                self.in_mixin.pop();
+                result?;
+            }
+            (Some(P::SassUse(u)), None) => {
+                let url = self.eval_interp_str(&u.path)?;
+                let (namespace, star) = match &u.namespace {
+                    None => (None, false),
+                    Some(ns) => match &ns.kind {
+                        ox::SassUseNamespaceKind::Named(id) => (Some(id.name.to_string()), false),
+                        ox::SassUseNamespaceKind::Unnamed(_) => (None, true),
+                    },
+                };
+                let config = self.module_config(u.config.as_ref())?;
+                self.exec_use(&url, namespace.as_deref(), star, &config, pos, parents, sink)?
+            }
+            (Some(P::SassForward(f)), None) => {
+                let url = self.eval_interp_str(&f.path)?;
+                let prefix = f.prefix.as_ref().map(|p| p.name.name.to_string());
+                let (show, hide) = forward_visibility(f.visibility.as_ref());
+                let config = self.module_config(f.config.as_ref())?;
+                self.exec_forward(
+                    &url,
+                    prefix.as_deref(),
+                    &show,
+                    &hide,
+                    &config,
+                    pos,
+                    parents,
+                    sink,
+                )?
+            }
+            (Some(P::SassImport(imp)), None) => {
+                let paths: Vec<(String, Span)> = imp
+                    .paths
+                    .iter()
+                    .map(|p| (unquote_raw(p.raw).to_string(), p.span))
+                    .collect();
+                self.eval_imports(&paths, parents, sink)?
+            }
+            (Some(P::Import(imp)), None) => self.eval_import_prelude(imp, parents, sink)?,
+            (Some(P::SassExtend(ext)), None) => {
+                let optional = ext.optional.is_some();
+                self.register_extend(ext.selectors.span, optional, pos, length, parents)?
+            }
+            (Some(P::SassExpr(e)), None) if name.eq_ignore_ascii_case("warn") => {
+                self.emit_warn(e, pos)?
+            }
+            (Some(P::SassExpr(e)), None) if name.eq_ignore_ascii_case("debug") => {
+                self.emit_debug(e, pos)?
+            }
+            (Some(P::SassExpr(e)), None) if name.eq_ignore_ascii_case("error") => {
+                return Err(self.build_error(e, pos, length));
+            }
+            (Some(P::SassExpr(_)), None) if name.eq_ignore_ascii_case("return") => {
+                return Err(Error::unpositioned(
+                    "@return is only allowed inside a function.",
+                ));
+            }
+            (prelude, Some(block)) if name.eq_ignore_ascii_case("at-root") => {
+                let query = match prelude {
+                    Some(P::SassAtRoot(q)) => Some(q.span),
+                    _ => None,
+                };
+                self.eval_at_root(query, block, parents, sink)?;
+                self.last_child_invisible = false;
+            }
+            (Some(P::Media(q)), Some(block)) => {
+                let lines = self.stamp(self.block_lines(at, block));
+                self.eval_media(q, block, lines, parents, sink)?;
+                self.last_child_invisible = false;
+            }
+            (Some(P::Supports(c)), Some(block)) => {
+                let lines = self.stamp(self.block_lines(at, block));
+                self.eval_supports(c, block, lines, parents, sink)?;
+                self.last_child_invisible = false;
+            }
+            (prelude, Some(block)) if is_keyframes_name(name) => {
+                let lines = self.stamp(self.block_lines(at, block));
+                let prelude = prelude.as_ref().map(|p| p.span());
+                self.eval_keyframes(name, prelude, block, lines, sink)?;
+                self.last_child_invisible = false;
+            }
+            // Every other at-rule — `@font-face`, `@page`, `@charset`,
+            // `@layer`, a vendor `@foo` — is generic: its prelude is text and
+            // its body (if any) bubbles like any at-rule.
+            (prelude, block) => {
+                let lines = match block {
+                    Some(b) => self.stamp(self.block_lines(at, b)),
+                    None => self.stamp(SrcLines {
+                        start: self.file.line_at(at.span.start),
+                        end: self.file.line_at(at.span.end),
+                        start_col: self.file.pos(at.span).col as u32,
+                        ..SrcLines::default()
+                    }),
+                };
+                let prelude = prelude.as_ref().map(|p| p.span());
+                self.eval_at_rule(name, prelude, block.as_ref(), lines, parents, sink)?;
+                self.last_child_invisible = false;
+            }
+        }
+        Ok(())
+    }
+
+    /// The `{`/`}` source lines of an at-rule's block, for the serializer's
+    /// trailing-comment rule and source-map output.
+    fn block_lines(&self, at: &ox::AtRule<'a>, block: &ox::SimpleBlock<'a>) -> SrcLines {
+        SrcLines {
+            start: self.file.line_at(block.span.start),
+            end: self.file.line_at(block.span.end),
+            start_col: self.file.pos(at.span).col as u32,
+            ..SrcLines::default()
+        }
+    }
+
+    /// A `@use`/`@forward` `with (…)` clause's entries.
+    fn module_config(
+        &mut self,
+        config: Option<&'a ox::SassModuleConfig<'a>>,
+    ) -> Result<Vec<ConfigEntry>, Error> {
+        let Some(config) = config else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::with_capacity(config.items.len());
+        for item in &config.items {
+            out.push(ConfigEntry {
+                name: item.variable.name.name.to_string(),
+                value: self.eval_value(&item.value)?,
+                // `!default` on a `@forward … with` entry: the override only
+                // applies if the downstream module does not configure the
+                // variable itself.
+                is_default: item
+                    .flags
+                    .iter()
+                    .any(|f| f.keyword.name.eq_ignore_ascii_case("default")),
+            });
+        }
+        Ok(out)
     }
 
     /// Evaluate a style rule: resolve its selector against `parents`, run its

@@ -184,3 +184,16 @@ pub(crate) fn group_span<'a>(
 pub(crate) fn values_span<'a>(values: &'a [ox::ComponentValue<'a>]) -> Span {
     group_span(values, values)
 }
+
+/// The declared parameters of a callable. A `@mixin` written with no `(…)`
+/// has no parameter node at all, which reads as an empty list.
+pub(crate) fn params_of<'a>(
+    params: Option<&'a ox::SassParameters<'a>>,
+) -> &'a [ox::SassParameter<'a>] {
+    params.map_or(&[], |p| &p.params)
+}
+
+/// The name of a callable's `$rest...` parameter, if it declares one.
+pub(crate) fn rest_of<'a>(params: Option<&'a ox::SassParameters<'a>>) -> Option<&'a str> {
+    params?.arbitrary_param.as_ref().map(|a| a.name.name.name)
+}
