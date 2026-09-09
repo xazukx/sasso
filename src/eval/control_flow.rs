@@ -196,11 +196,11 @@ impl<'a> Evaluator<'a> {
             Ok(())
         };
         for a in args {
-            let v = self.eval_values(a.values)?;
+            let v = self.eval_values(a.valuess)?;
             // dart resolves each argument's node right after evaluating it
             // (evaluate.dart:3814), so a bare `$x` argument carries `$x`'s
             // DEFINITION rather than the call site.
-            let sp = self.expression_node_values(a.values);
+            let sp = self.expression_node_values(a.valuess);
             if a.splat {
                 // A splat list spreads into positional args; a map spreads
                 // into keyword args (string keys only). A single non-list/map
@@ -378,7 +378,7 @@ impl<'a> Evaluator<'a> {
                 "{name} was passed too many arguments."
             )));
         }
-        if params.rest.is_none() && !keyword.is_empty() {
+        if rest_of(params).is_none() && !keyword.is_empty() {
             let leftover: Vec<&str> = keyword_order
                 .iter()
                 .filter(|(norm, _)| keyword.contains_key(norm))
@@ -487,7 +487,7 @@ impl<'a> Evaluator<'a> {
         // Reject keyword arguments that name no declared parameter. A `...`
         // rest parameter would absorb them into an arglist (whose keywords
         // are not yet modelled), so only validate when there is no rest.
-        if params.rest.is_none() && !keyword.is_empty() {
+        if rest_of(params).is_none() && !keyword.is_empty() {
             let leftover: Vec<&str> = keyword_order
                 .iter()
                 .filter(|(norm, _)| keyword.contains_key(norm))
@@ -565,12 +565,15 @@ impl<'a> Evaluator<'a> {
     /// Run a function body, propagating the first `@return` (including from
     /// nested control flow). Functions emit no CSS, so a returned value
     /// short-circuits the whole call.
-    pub(super) fn run_fn_body(&mut self, stmts: &[Stmt]) -> Result<Option<Value>, Error> {
+    pub(super) fn run_fn_body(
+        &mut self,
+        block: &'a ox::SimpleBlock<'a>,
+    ) -> Result<Option<Value>, Error> {
         for stmt in stmts {
             match stmt {
                 Stmt::VarDecl(v) => self.apply_var(v)?,
                 Stmt::Comment(..) => {}
-                Stmt::Return { value, .. } => return Ok(Some(self.eval_expr(value)?)),
+                Stmt::Return { value, .. } => return Ok(Some(self.eval_value(value)?)),
                 Stmt::FunctionDef(c) => {
                     let captured = self.capture_callable(c);
                     self.define_function(&c.name, captured);
@@ -579,7 +582,7 @@ impl<'a> Evaluator<'a> {
                     for branch in branches {
                         let take = match &branch.cond {
                             None => true,
-                            Some(c) => self.eval_expr(c)?.is_truthy(),
+                            Some(c) => self.eval_value(c)?.is_truthy(),
                         };
                         if take {
                             self.push_scope(true);
@@ -605,7 +608,7 @@ impl<'a> Evaluator<'a> {
                     // dart resolves the loop variable's node INSIDE the loop
                     // scope (evaluate.dart:1666) — but `@for` pushes a fresh
                     // frame, so the lookup still sees the outer bindings.
-                    let span = self.expression_node(from, *from_pos);
+                    let span = self.expression_node_value(from, *from_pos);
                     let mut result = Ok(None);
                     for i in for_indices(start_i, end_i, *inclusive) {
                         self.set_local(
@@ -633,7 +636,7 @@ impl<'a> Evaluator<'a> {
                     let items = self.eval_each_items(list)?;
                     // Resolved BEFORE the loop scope is pushed, like dart
                     // (evaluate.dart:1441 precedes `_environment.scope`).
-                    let span = self.expression_node(list, *list_pos);
+                    let span = self.expression_node_value(list, *list_pos);
                     self.push_scope(true);
                     let mut result = Ok(None);
                     for i in 0..items.len() {
@@ -654,7 +657,7 @@ impl<'a> Evaluator<'a> {
                     let mut result: Result<Option<Value>, Error> = Ok(None);
                     let mut guard = 0u32;
                     loop {
-                        match self.eval_expr(cond) {
+                        match self.eval_value(cond) {
                             Ok(v) if v.is_truthy() => {}
                             Ok(_) => break,
                             Err(e) => {
@@ -699,7 +702,7 @@ impl<'a> Evaluator<'a> {
         &mut self,
         name: &str,
         args: &[Arg<'a>],
-        content: Option<Rc<Vec<Stmt>>>,
+        content: Option<&'a ox::SimpleBlock<'a>>,
         content_params: Option<&'a ox::SassParameters<'a>>,
         module: Option<&str>,
         pos: Pos,
@@ -818,7 +821,7 @@ impl<'a> Evaluator<'a> {
         module: &Rc<Module<'a>>,
         mixin: &Rc<UserCallable<'a>>,
         args: &[Arg<'a>],
-        content: Option<Rc<Vec<Stmt>>>,
+        content: Option<&'a ox::SimpleBlock<'a>>,
         content_params: Option<&'a ox::SassParameters<'a>>,
         parents: &[String],
         sink: &mut Sink<'_>,
@@ -875,7 +878,7 @@ impl<'a> Evaluator<'a> {
     fn exec_apply(
         &mut self,
         args: &[Arg<'a>],
-        content: Option<Rc<Vec<Stmt>>>,
+        content: Option<&'a ox::SimpleBlock<'a>>,
         content_params: Option<&'a ox::SassParameters<'a>>,
         parents: &[String],
         sink: &mut Sink<'_>,
@@ -928,7 +931,7 @@ impl<'a> Evaluator<'a> {
         mixin: &SassMixin,
         pos_args: Vec<Value>,
         named: Vec<(String, Value)>,
-        content: Option<Rc<Vec<Stmt>>>,
+        content: Option<&'a ox::SimpleBlock<'a>>,
         content_params: Option<&'a ox::SassParameters<'a>>,
         parents: &[String],
         sink: &mut Sink<'_>,
@@ -1103,7 +1106,7 @@ impl<'a> Evaluator<'a> {
         let mut named: [Option<IfArg<'_>>; 3] = [None, None, None];
         for a in args {
             if a.splat {
-                match self.eval_expr(&a.value)? {
+                match self.eval_value(&a.values)? {
                     Value::List(l) => {
                         if let Some(kw) = &l.keywords {
                             for (k, v) in kw {
@@ -1155,12 +1158,12 @@ impl<'a> Evaluator<'a> {
             }
             match a.name.as_deref() {
                 Some(name) => match slot_index(name) {
-                    Some(i) => named[i] = Some(IfArg::Lazy(&a.value)),
+                    Some(i) => named[i] = Some(IfArg::Lazy(&a.values)),
                     None => {
                         return Err(Error::at(format!("if() has no argument named ${name}."), pos));
                     }
                 },
-                None => by_pos.push(IfArg::Lazy(&a.value)),
+                None => by_pos.push(IfArg::Lazy(&a.values)),
             }
         }
         let [cond, t_val, f_val] = named;
@@ -1171,14 +1174,14 @@ impl<'a> Evaluator<'a> {
         match (cond, t_val, f_val) {
             (Some(c), Some(t), Some(f)) => {
                 let truthy = match c {
-                    IfArg::Lazy(e) => self.eval_expr(e)?.is_truthy(),
+                    IfArg::Lazy(e) => self.eval_value(e)?.is_truthy(),
                     IfArg::Eager(v) => v.is_truthy(),
                 };
                 // if() is a function boundary: a bare slash-division branch
                 // collapses to its number (dart-sass `withoutSlash`).
                 let branch = if truthy { t } else { f };
                 match branch {
-                    IfArg::Lazy(e) => Ok(self.eval_expr(e)?.without_slash()),
+                    IfArg::Lazy(e) => Ok(self.eval_value(e)?.without_slash()),
                     IfArg::Eager(v) => Ok(v.without_slash()),
                 }
             }
@@ -1207,7 +1210,7 @@ impl<'a> Evaluator<'a> {
             match (&mut verbatim, result) {
                 // Not yet verbatim: a static-true (or `else`) clause wins.
                 (None, CondEval::Bool(true)) => {
-                    return Ok(self.eval_expr(&clause.value)?.without_slash());
+                    return Ok(self.eval_value(&clause.value)?.without_slash());
                 }
                 // Not yet verbatim: a static-false clause is skipped.
                 (None, CondEval::Bool(false)) => {}
@@ -1243,7 +1246,7 @@ impl<'a> Evaluator<'a> {
     fn eval_if_value(&mut self, expr: &Expr) -> Result<String, Error> {
         // No without_slash: dart serializes the clause value as-is, so a
         // preserved slash-division (`20/10`) keeps its slash form.
-        let v = self.eval_expr(expr)?;
+        let v = self.eval_value(expr)?;
         serialize_if_value(&v)
     }
 
@@ -1252,7 +1255,7 @@ impl<'a> Evaluator<'a> {
     /// condition that must be re-serialized verbatim.
     fn eval_if_cond(&mut self, cond: &IfCond) -> Result<CondEval, Error> {
         match cond {
-            IfCond::Sass(expr) => Ok(CondEval::Bool(self.eval_expr(expr)?.is_truthy())),
+            IfCond::Sass(expr) => Ok(CondEval::Bool(self.eval_value(expr)?.is_truthy())),
             IfCond::Raw { pieces, .. } => {
                 let text = self.eval_template(pieces)?;
                 // dart re-serializes the raw token run with collapsed
