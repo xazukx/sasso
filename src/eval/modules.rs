@@ -694,7 +694,7 @@ impl<'a> Evaluator<'a> {
         parents: &[String],
         force_reemit: bool,
         sink: &mut Sink<'_>,
-    ) -> Result<(Rc<Module>, Vec<String>), Error> {
+    ) -> Result<(Rc<Module<'a>>, Vec<String>), Error> {
         // Inside a module-loading `@import`, every load re-emits as a clone.
         // A TRUE `meta.load-css` call (not an @import clone): dart re-visits
         // the combined css node-by-node, so every re-visited top-level style
@@ -1255,12 +1255,12 @@ impl<'a> Evaluator<'a> {
         // Merge `@forward`ed members (lower precedence than the module's own).
         // A member the module did NOT shadow keeps its origin binding, so
         // reads/writes/calls route to the defining module.
-        let mut var_origins: HashMap<String, (Rc<Module>, String)> = HashMap::default();
-        let mut fn_origins: HashMap<String, Rc<Module>> = HashMap::default();
-        let mut mixin_origins: HashMap<String, Rc<Module>> = HashMap::default();
+        let mut var_origins: HashMap<String, (Rc<Module<'a>>, String)> = HashMap::default();
+        let mut fn_origins: HashMap<String, Rc<Module<'a>>> = HashMap::default();
+        let mut mixin_origins: HashMap<String, Rc<Module<'a>>> = HashMap::default();
         // Assignments write through to the forwarded module even when the
         // module's own same-named variable shadows it for reads.
-        let var_write_origins: HashMap<String, (Rc<Module>, String)> = forwarded
+        let var_write_origins: HashMap<String, (Rc<Module<'a>>, String)> = forwarded
             .var_origins
             .iter()
             .map(|(k, (m, o))| (k.clone(), (Rc::clone(m), o.clone())))

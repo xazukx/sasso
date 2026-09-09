@@ -890,7 +890,7 @@ impl<'a> Evaluator<'a> {
     pub(super) fn call_user_module_function(
         &mut self,
         module: &Rc<Module<'a>>,
-        func: &Rc<UserCallable>,
+        func: &Rc<UserCallable<'a>>,
         args: &[super::value_read::Arg<'a>],
         call: Option<(Pos, usize)>,
     ) -> Result<Value, Error> {

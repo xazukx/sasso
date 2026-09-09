@@ -199,7 +199,7 @@ impl<'a> Evaluator<'a> {
     /// Keys are dash-normalized like dart's parse-time `identifier(normalize:
     /// true)` — `@function a_b` and `@function a-b` define the SAME name (the
     /// AST keeps the original spelling for plain-CSS fallback and messages).
-    pub(super) fn define_function(&mut self, name: &str, c: Rc<UserCallable>) {
+    pub(super) fn define_function(&mut self, name: &str, c: Rc<UserCallable<'a>>) {
         if let Some(frame) = self.functions.last() {
             frame
                 .borrow_mut()
@@ -208,7 +208,7 @@ impl<'a> Evaluator<'a> {
     }
 
     /// Define a user `@mixin` in the innermost frame (dart `visitMixinRule`).
-    pub(super) fn define_mixin(&mut self, name: &str, c: Rc<UserCallable>) {
+    pub(super) fn define_mixin(&mut self, name: &str, c: Rc<UserCallable<'a>>) {
         if let Some(frame) = self.mixins.last() {
             frame
                 .borrow_mut()
@@ -411,7 +411,7 @@ impl<'a> Evaluator<'a> {
         if (self.scopes.len() == 1 || has_flag(&v.flags, "global")) && !is_private_member(v.name.name.name) {
             if let Some(g) = self.scopes.first() {
                 if !g.borrow().contains_key(v.name.name.name) {
-                    let targets: Vec<Rc<Module>> = self
+                    let targets: Vec<Rc<Module<'a>>> = self
                         .star_user_modules
                         .iter()
                         .filter(|m| m.var(v.name.name.name).is_some())
