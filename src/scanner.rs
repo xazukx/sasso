@@ -122,6 +122,48 @@ impl Scanner {
         self.chars.get(self.pos + offset).copied()
     }
 
+    /// Where dart-sass blames a missing statement terminator.
+    ///
+    /// dart consumes whitespace (newlines included) while looking for the
+    /// `;`, but its diagnostics still point at the end of the statement's own
+    /// line — `@use "a" as t` followed by a rule on the next line reports at
+    /// column 18, not at column 1 of line 2. Reproduce that by walking the
+    /// whitespace run that ends at the cursor back to the last character with
+    /// content, then forward again over just the spaces and tabs that trail
+    /// it. With no whitespace before the cursor this is the cursor itself.
+    pub(crate) fn statement_end_pos(&self) -> Pos {
+        let cur = self.pos.min(self.chars.len());
+        let mut i = cur;
+        while i > 0 && self.chars[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        while matches!(self.chars.get(i), Some(&c) if c == ' ' || c == '\t') {
+            i += 1;
+        }
+        if i >= cur {
+            return self.position();
+        }
+        // Re-derive the position of `i` by unwinding the cursor over the
+        // characters between them.
+        let mut line = self.line;
+        let mut byte = self.byte;
+        for &c in &self.chars[i..cur] {
+            byte -= c.len_utf8();
+            if c == '\n' {
+                line -= 1;
+            }
+        }
+        let mut bol = i;
+        while bol > 0 && self.chars[bol - 1] != '\n' {
+            bol -= 1;
+        }
+        Pos {
+            line,
+            col: i - bol + 1,
+            offset: byte,
+        }
+    }
+
     /// The remaining unconsumed characters, for non-consuming lookahead.
     pub(crate) fn rest(&self) -> &[char] {
         let start = self.pos.min(self.chars.len());

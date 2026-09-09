@@ -86,8 +86,7 @@ impl Parser {
                 };
                 // Measured before the terminator, like `@include`/`@error`.
                 let length = self.sc.byte_len_from(start_mark);
-                self.skip_ws_inline();
-                self.sc.eat(';');
+                self.expect_statement_separator()?;
                 Ok(Stmt::Content { args, pos, length })
             }
             "warn" => self.parse_message(MessageKind::Warn, pos, start_mark),
@@ -183,15 +182,10 @@ impl Parser {
             }
             break;
         }
-        self.skip_ws_trivia();
         // After the last argument only `;`, `}`, or EOF may follow; anything
         // else (e.g. a supports()/identifier after a media query list, the
         // `wrong_order` cases) is a syntax error like dart-sass.
-        match self.sc.peek() {
-            None | Some(';') | Some('}') => {}
-            _ => return Err(Error::at("expected \";\".", self.sc.position())),
-        }
-        self.sc.eat(';');
+        self.expect_statement_separator()?;
         Ok(Stmt::Import(args))
     }
 
@@ -227,8 +221,7 @@ impl Parser {
         if self.try_keyword("with") {
             config = self.parse_config_clause(pos)?;
         }
-        self.skip_ws_trivia();
-        self.sc.eat(';');
+        self.expect_statement_separator()?;
         Ok(Stmt::Use {
             url,
             namespace,
@@ -275,8 +268,7 @@ impl Parser {
         if self.try_keyword("with") {
             config = self.parse_config_clause(pos)?;
         }
-        self.skip_ws_trivia();
-        self.sc.eat(';');
+        self.expect_statement_separator()?;
         Ok(Stmt::Forward {
             url,
             prefix,
@@ -750,8 +742,7 @@ impl Parser {
         // Byte length of the `@error <expr>` span (from the `@` through the end
         // of the value, before the trailing `;`), for the diagnostic caret.
         let length = self.sc.byte_len_from(start_mark);
-        self.skip_ws_inline();
-        self.sc.eat(';');
+        self.expect_statement_separator()?;
         Ok(match kind {
             MessageKind::Warn => Stmt::Warn { value, pos },
             MessageKind::Debug => Stmt::Debug { value, pos },
@@ -777,8 +768,7 @@ impl Parser {
         }
         // Measured before the terminator, like `@include`/`@error`.
         let length = self.sc.byte_len_from(start_mark);
-        self.skip_ws_inline();
-        self.sc.eat(';');
+        self.expect_statement_separator()?;
         Ok(Stmt::Extend {
             selector,
             optional,
@@ -2583,8 +2573,7 @@ impl Parser {
         let value = self.parse_value()?;
         // Measured before the terminator, like `@include`/`@error`.
         let length = self.sc.byte_len_from(start_mark);
-        self.skip_ws_inline();
-        self.sc.eat(';');
+        self.expect_statement_separator()?;
         Ok(Stmt::Return { value, pos, length })
     }
 
@@ -2656,7 +2645,7 @@ impl Parser {
             // A `using (params)` clause requires a content block to bind into.
             return Err(Error::at("expected \"{\".", self.sc.position()));
         } else {
-            self.sc.eat(';');
+            self.expect_statement_separator()?;
             None
         };
         Ok(Stmt::Include {

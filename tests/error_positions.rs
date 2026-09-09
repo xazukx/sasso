@@ -230,3 +230,30 @@ fn errors_inside_a_mixin_blame_the_innermost_node() {
     assert!(rendered.contains("in.scss 2:6"), "{rendered}");
     assert!(rendered.contains("in.scss 4:6"), "call site frame:\n{rendered}");
 }
+
+/// A statement must be terminated by `;`, by the `}` that closes its block, or
+/// by end of file — dart-sass's `expectStatementSeparator`. Without one it is
+/// `expected ";".`, blamed at the end of the statement's own line even though
+/// the parser scanned past the newline looking for the terminator.
+#[test]
+fn missing_statement_terminator_is_positioned() {
+    // dart-sass 1.104: `in.scss 1:18`, at the end of line 1 — NOT at the `.a`
+    // on line 2 that the scan actually stopped on.
+    let (msg, pos, _) = err_span("@use \"other\" as t\n.a { color: red; }\n");
+    assert_eq!((msg.as_str(), pos), ("expected \";\".", (1, 18)));
+    // A value runs on into the next declaration's name, so the scan gives up
+    // at that declaration's `:` — dart-sass 1.104: `in.scss 2:3`.
+    let (msg, pos, _) = err_span("$a: 1\n$b: 2;\n");
+    assert_eq!((msg.as_str(), pos), ("expected \";\".", (2, 3)));
+    // dart-sass 1.104: `in.scss 2:11`.
+    let (msg, pos, _) = err_span(".a { color: red\nbackground: blue; }\n");
+    assert_eq!((msg.as_str(), pos), ("expected \";\".", (2, 11)));
+    // A comment on a later line is trivia the scan passes over, and the caret
+    // follows it — dart-sass 1.104: `in.scss 2:5`.
+    let (msg, pos, _) = err_span("@use \"other\" as t\n// c\n.a { color: red; }\n");
+    assert_eq!((msg.as_str(), pos), ("expected \";\".", (2, 5)));
+    // Trailing spaces on the statement's line are part of it; the newline is
+    // not — dart-sass 1.104: `in.scss 1:21`.
+    let (msg, pos, _) = err_span("@use \"other\" as t   \n\n.a { color: red; }\n");
+    assert_eq!((msg.as_str(), pos), ("expected \";\".", (1, 21)));
+}

@@ -976,3 +976,28 @@ fn rgba_hsla_special_value_passthrough_keeps_name() {
         ".a {\n  color: rgb(none none none);\n}\n"
     );
 }
+
+/// A statement's `;` is optional only where dart-sass makes it optional: the
+/// last statement of a block, or the last statement of the file. The negative
+/// half of this rule — the `expected ";".` a run-on statement gets, and where
+/// it is blamed — lives in `tests/error_positions.rs`.
+#[test]
+fn final_statement_may_omit_its_semicolon() {
+    assert_eq!(css(".a { color: red }\n"), ".a {\n  color: red;\n}\n");
+    assert_eq!(
+        css(".a { color: red !important }\n"),
+        ".a {\n  color: red !important;\n}\n"
+    );
+    assert_eq!(css("$a: 1\n"), "");
+    assert_eq!(
+        css("@mixin m { a: b }\n.c { @include m }\n"),
+        ".c {\n  a: b;\n}\n"
+    );
+    assert_eq!(
+        css("@function f() { @return 1 }\n.a { b: f() }\n"),
+        ".a {\n  b: 1;\n}\n"
+    );
+    // A `;` on a *later* line still terminates the statement: Sass is not
+    // newline-delimited, only the diagnostic for a missing `;` is line-aware.
+    assert_eq!(css(".a { color: red\n; }\n"), ".a {\n  color: red;\n}\n");
+}

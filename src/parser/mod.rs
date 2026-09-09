@@ -586,6 +586,26 @@ impl Parser {
         pos
     }
 
+    /// Require a statement terminator, consuming it when it is a `;`.
+    ///
+    /// dart-sass's `expectStatementSeparator`: a statement may end at a `;`,
+    /// at the `}` that closes its block, or at end of file — anything else
+    /// (`@use "a" as t` followed by a rule, `color: red` followed by another
+    /// declaration) is `expected ";".`, blamed at the end of the statement's
+    /// own line. Sass is *not* newline-terminated: the `;` may sit on a later
+    /// line, so whitespace is skipped before the check either way.
+    fn expect_statement_separator(&mut self) -> Result<(), Error> {
+        self.skip_ws_inline();
+        match self.sc.peek() {
+            None | Some('}') => Ok(()),
+            Some(';') => {
+                self.sc.bump();
+                Ok(())
+            }
+            _ => Err(Error::at("expected \";\".", self.sc.statement_end_pos())),
+        }
+    }
+
     /// Skip inline whitespace; report whether any was consumed.
     fn skip_ws_inline(&mut self) -> bool {
         let mut any = false;

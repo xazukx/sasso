@@ -102,6 +102,20 @@ Conformance is tracked separately as a ratchet against the official
 
 ### Fixed
 
+- **A missing statement terminator is now an error, as it is in dart-sass.** A
+  statement may end at a `;`, at the `}` that closes its block, or at end of
+  file; anything else is `expected ";".` (dart's `expectStatementSeparator`).
+  sasso used to treat every terminator as optional, so a run-on statement was
+  silently accepted and mis-parsed: `@use "other" as t` followed by a rule
+  compiled clean, `.a { color: red` followed by `background: blue;` emitted
+  `color: red background` plus a bogus `: blue`, and `$a: 1` followed by
+  `$b: 2;` read as `$a: 1 $b` and failed much later with `Undefined variable.`
+  Declarations, variable declarations, `@use`, `@forward`, `@import`,
+  `@include`, `@return`, `@extend`, `@content` and `@debug`/`@warn`/`@error`
+  all check for one now. The caret matches dart's: the scan crosses the newline
+  looking for the `;` (Sass is not newline-delimited — `.a { color: red\n; }`
+  is still valid), but the diagnostic is blamed at the end of the statement's
+  own line, trailing spaces and trailing comments included.
 - **Every error the compiler raises now carries a source position.** Roughly a
   hundred diagnostics — a mixin that does not exist, a missing or duplicated
   argument, a bad `@content`/`@return` placement, a duplicate map key, an

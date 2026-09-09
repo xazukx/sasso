@@ -263,12 +263,13 @@ fn capture_variables(files: &MemoryImporter) {
             .as_deref()
             .map_or_else(|| "(root)".to_string(), |sel| sel.join(", "));
         by_file.entry(file).or_default().push(format!(
-            "{:>3}:{:<3} ${} = {}{}   in {scope}",
+            "{:>3}:{:<3} ${} = {}{}   in {scope} [selectors: {:?}]",
             v.span.line,
             v.span.col,
             v.name,
             v.value.to_css(false),
             guard,
+            v.selector,
         ));
     }
     for (file, vars) in &by_file {

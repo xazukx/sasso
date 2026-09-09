@@ -373,8 +373,7 @@ impl Parser {
             }
             self.sc.reset(mark);
         }
-        self.skip_ws_inline();
-        self.sc.eat(';');
+        self.expect_statement_separator()?;
         Ok(Stmt::Decl(Declaration {
             property,
             value,
@@ -485,8 +484,7 @@ impl Parser {
             }
         }
         let value_end = self.sc.position();
-        self.skip_ws_inline();
-        self.sc.eat(';');
+        self.expect_statement_separator()?;
         Ok(Stmt::VarDecl(VarDecl {
             name,
             value,
