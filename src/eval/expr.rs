@@ -844,15 +844,6 @@ pub(super) fn args_span(f: &ox::Function<'_>) -> Span {
     }
 }
 
-/// Whether a value run is eligible to keep the deprecated `/` slash spelling.
-///
-/// dart-sass keeps the slash only between number literals (including a
-/// unary-signed literal) and chains of such slash divisions; variables,
-/// function calls, parentheses, and other operations force real division.
-fn is_slash_operand(values: &[ox::ComponentValue<'_>]) -> bool {
-    matches!(values, [one] if is_slash_operand_node(one))
-}
-
 fn is_slash_operand_node(v: &ox::ComponentValue<'_>) -> bool {
     use ox::ComponentValue as CV;
     match v {

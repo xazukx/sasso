@@ -16,7 +16,7 @@
 //! to let the next family try.
 
 use crate::error::Error;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 use crate::value::{convert_factor, CalcNode, Number, SassStr, Value};
 
 /// The names the math family owns (the single source of truth, mirroring the
@@ -1289,7 +1289,7 @@ fn value_to_calc_node(v: &Value) -> CalcNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::Pos;
+    use crate::lines::Pos;
 
     fn pos() -> Pos {
         Pos::new(1, 1, 0)

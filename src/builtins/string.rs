@@ -9,7 +9,7 @@
 //! with negative indices counting back from the end.
 
 use crate::error::Error;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 use crate::value::{List, ListSep, Number, SassStr, Value};
 
 /// The names the string family owns by name (the single source of truth,

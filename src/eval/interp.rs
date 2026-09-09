@@ -15,7 +15,6 @@
 use oxc_css_parser::{ParserBuilder, Span, ast as ox};
 
 use crate::error::Error;
-use crate::source::SourceFile;
 use super::{Evaluator, interp_checked};
 
 /// One chunk of interpolated text: a literal run, or an expression to

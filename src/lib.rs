@@ -59,7 +59,6 @@ mod importer;
 mod musl_math;
 mod ryu;
 mod lines;
-mod scanner;
 mod source;
 pub mod selector;
 // Source Map v3 generation: the encoding primitives + JSON model (Phase A),
@@ -95,7 +94,7 @@ pub use oxc_css_parser::ast::Stylesheet;
 /// text a [`Compiler`] produces lives here, so it must outlive them.
 pub use oxc_css_parser::Allocator;
 pub use eval::{EvalOptions, Evaluator, OutItem, OutNode, RuleSelectors, VarSpan, VariableValue};
-pub use scanner::Pos;
+pub use lines::Pos;
 pub use value::Value;
 
 /// Output formatting style.

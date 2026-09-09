@@ -21,15 +21,6 @@ pub enum BinOp {
     SingleEq,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum UnOp {
-    Neg,
-    /// Unary `+`: numeric identity (`+5` -> `5`); on any other operand an
-    /// unquoted string prefixed with `+` (`+foo` -> `+foo`), matching
-    /// dart-sass's `unaryPlus`.
-    Plus,
-    Not,
-}
 
 /// Evaluate the `/` operator. When `slash` is set and both operands are
 /// numbers, produce a slash-separated value that serializes as `a/b` but

@@ -13,7 +13,7 @@ use oxc_css_parser::token::{Comment, CommentKind};
 use oxc_css_parser::{Allocator, ParserBuilder, Span, Syntax as OxcSyntax, ast as ox};
 
 use crate::error::Error;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 
 /// One parsed stylesheet, with the context needed to blame a span on it.
 #[derive(Clone, Copy)]

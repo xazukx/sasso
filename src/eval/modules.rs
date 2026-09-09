@@ -1533,7 +1533,7 @@ impl<'a> Evaluator<'a> {
         // never used. Re-forwarding the SAME module is idempotent.
         // With a prefix, `show`/`hide` names match the PREFIXED member name.
         // Private members (by their ORIGINAL name) are never re-exported.
-        let src: *const Module = Rc::as_ptr(&module);
+        let src: *const Module<'_> = Rc::as_ptr(&module);
         let pfx = prefix.unwrap_or("");
         let module_vars: Vec<(String, Value)> = module
             .vars
@@ -1552,7 +1552,7 @@ impl<'a> Evaluator<'a> {
                 // Conflict identity is that home module, so two forwards that
                 // both re-export the SAME upstream member don't collide
                 // (distributed configuration trees).
-                let member_src: *const Module = Rc::as_ptr(&origin.0);
+                let member_src: *const Module<'_> = Rc::as_ptr(&origin.0);
                 if let Some(prev) = self.forwarded.var_src.get(&key) {
                     if *prev != member_src {
                         return Err(Error::at(
@@ -1572,7 +1572,7 @@ impl<'a> Evaluator<'a> {
         for (name, f) in module.functions.borrow().iter() {
             let key = format!("{pfx}{name}");
             if !is_private_member(name) && visible_name(&key) {
-                let f_src: *const Module = module.fn_origin(name).map(|m| Rc::as_ptr(&m)).unwrap_or(src);
+                let f_src: *const Module<'_> = module.fn_origin(name).map(|m| Rc::as_ptr(&m)).unwrap_or(src);
                 if let Some(prev) = self.forwarded.fn_src.get(&key) {
                     if *prev != f_src {
                         return Err(Error::at(
@@ -1590,7 +1590,7 @@ impl<'a> Evaluator<'a> {
         for (name, m) in module.mixins.borrow().iter() {
             let key = format!("{pfx}{name}");
             if !is_private_member(name) && visible_name(&key) {
-                let m_src: *const Module = module.mixin_origin(name).map(|m| Rc::as_ptr(&m)).unwrap_or(src);
+                let m_src: *const Module<'_> = module.mixin_origin(name).map(|m| Rc::as_ptr(&m)).unwrap_or(src);
                 if let Some(prev) = self.forwarded.mixin_src.get(&key) {
                     if *prev != m_src {
                         return Err(Error::at(

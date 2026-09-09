@@ -11,7 +11,6 @@
 use oxc_css_parser::token::Token;
 use oxc_css_parser::{Span, ast as ox};
 
-use crate::value::ListSep;
 
 /// One argument of a call, as a borrowed view over the parser's nodes.
 #[derive(Clone, Copy)]
@@ -148,11 +147,6 @@ fn same_kind(a: &ox::DelimiterKind, b: &ox::DelimiterKind) -> bool {
 /// Whether a component value is a top-level `/`.
 pub(crate) fn is_solidus(v: &ox::ComponentValue<'_>) -> bool {
     matches!(v, ox::ComponentValue::Delimiter(d) if matches!(d.kind, ox::DelimiterKind::Solidus))
-}
-
-/// Whether a component value is a top-level `;`.
-pub(crate) fn is_semicolon(v: &ox::ComponentValue<'_>) -> bool {
-    matches!(v, ox::ComponentValue::Delimiter(d) if matches!(d.kind, ox::DelimiterKind::Semicolon))
 }
 
 /// Split a run on top-level `;`, which only the modern CSS `if()` uses to

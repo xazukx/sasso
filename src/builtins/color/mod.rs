@@ -17,7 +17,7 @@ mod modern;
 use super::color_ext::{computed, named_repr};
 use super::{arg, as_color, channel, max_positional, num, require, require_legacy_color};
 use crate::error::Error;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 use crate::value::{fmt_num, CalcNode, Color, ColorSpace, List, ListSep, ModernColor, Number, Value};
 
 // Bring every sibling submodule item into this module's scope so the glue

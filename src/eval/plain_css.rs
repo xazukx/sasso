@@ -19,6 +19,7 @@ impl<'a> Evaluator<'a> {
         result
     }
 
+    #[allow(dead_code)]
     pub(super) fn exec_css(
         &mut self,
         block: &'a ox::SimpleBlock<'a>,

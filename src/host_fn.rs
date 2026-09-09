@@ -301,7 +301,7 @@ fn call_color(member: &str, pos_args: &[Value], named: &[(&str, Value)]) -> Resu
         member,
         pos_args,
         &named,
-        crate::scanner::Pos::new(1, 1, 0),
+        crate::lines::Pos::new(1, 1, 0),
     )
     .map_err(|e| e.message)
 }

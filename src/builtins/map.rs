@@ -10,7 +10,7 @@
 //! module: `super::{arg, require, num}`.
 
 use crate::error::Error;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 use crate::value::{List, ListSep, Map, Number, Value};
 
 /// The names the map family owns *unconditionally* by name (the single source

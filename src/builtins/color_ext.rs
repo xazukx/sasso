@@ -9,7 +9,7 @@
 use super::color::{modify_in_space, modify_in_space_opt, space_arg, ModifyOp};
 use super::{arg, as_color, clamp01, num, require, require_legacy_color};
 use crate::error::Error;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 use crate::value::{Color, ColorSpace, Number, SassStr, Value};
 
 /// The modern change/adjust/scale path: used when `$space` is given, or when

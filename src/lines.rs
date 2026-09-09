@@ -5,6 +5,9 @@
 //! trails the declaration before it, and how far a multi-line custom
 //! property value may be re-indented. The evaluator resolves offsets to
 //! lines once, at the node boundary, and carries the result here.
+//!
+//! [`Pos`] lives here for the same reason: it is the resolved form of a byte
+//! offset, which is all the rest of the crate ever wants to talk about.
 
 /// Source-line metadata for the serializer's trailing-comment rule
 /// (dart `_isTrailingComment`). `file` is an evaluator-interned source id
@@ -43,4 +46,45 @@ pub struct SrcLines {
     /// back to [`Self::start`]). Set together with [`Self::map_file`] on a
     /// bubbled-selector wrapper; see that field.
     pub map_line: u32,
+}
+
+/// A source position: 1-based line/column plus the 0-based **byte** offset of
+/// the same point in the source text.
+///
+/// Line and column are what diagnostics print; `offset` is what a tool that
+/// slices the source wants — a UTF-8 byte index directly usable as
+/// `&source[pos.offset..]`, with no line-table walk and no char-vs-byte
+/// ambiguity (dart-sass measures span lengths in bytes too, see
+/// [`Error::length`](crate::Error::length)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pos {
+    /// 1-based line.
+    pub line: usize,
+    /// 1-based column, counted in **characters** (what the snippet renderer
+    /// draws a caret under).
+    pub col: usize,
+    /// 0-based **byte** offset into the source text. Meaningful only when
+    /// [`is_known`](Self::is_known) — [`Pos::NONE`] carries `0`, which is also
+    /// a real offset for the first byte of a file.
+    pub offset: usize,
+}
+
+impl Pos {
+    /// The "no position" sentinel. `line == 0` can never be a real 1-based
+    /// line, so it reads unambiguously as "unknown" (the source map drops it).
+    pub const NONE: Pos = Pos {
+        line: 0,
+        col: 0,
+        offset: 0,
+    };
+
+    /// A position from its 1-based line/column and 0-based byte offset.
+    pub const fn new(line: usize, col: usize, offset: usize) -> Pos {
+        Pos { line, col, offset }
+    }
+
+    /// Whether this is a real recorded position rather than [`Pos::NONE`].
+    pub fn is_known(self) -> bool {
+        self.line != 0
+    }
 }

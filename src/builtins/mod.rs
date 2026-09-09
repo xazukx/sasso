@@ -20,7 +20,7 @@ mod selector;
 mod string;
 
 use crate::error::Error;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 use crate::value::{Color, Number, SassStr, Value};
 
 // dart-sass `inspect()` serialization, reused by `@error` (the inspected

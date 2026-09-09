@@ -21,7 +21,7 @@ use oxc_css_parser::{Allocator, Span, Syntax as OxcSyntax, ast as ox};
 
 use crate::error::Error;
 use crate::lines::SrcLines;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 use crate::source::{Item, SourceFile, interleave};
 use crate::value::{
     CalcNode, CalcOp, CallableId, List, ListSep, Map, ModuleId, Number, SassFunction,
@@ -207,7 +207,7 @@ fn new_span_scope() -> SpanScope {
 /// One function/mixin scope frame, parallel to the variable chain (dart's
 /// `Environment._functions`/`_mixins` are lists of maps pushed and popped in
 /// lockstep with `_variables`).
-pub type FnScope<'a> = std::rc::Rc<std::cell::RefCell<HashMap<String, Rc<UserCallable<'a>>>>>;
+pub(crate) type FnScope<'a> = std::rc::Rc<std::cell::RefCell<HashMap<String, Rc<UserCallable<'a>>>>>;
 
 fn new_fn_scope<'a>() -> FnScope<'a> {
     std::rc::Rc::new(std::cell::RefCell::new(HashMap::default()))
@@ -232,7 +232,7 @@ pub struct EnvModules<'a> {
 /// still in the arena, together with the file it came from — which the
 /// evaluator swaps in as the current file while the body runs, so a
 /// diagnostic raised inside a mixin points at the file that DEFINED it.
-pub struct Callable<'a> {
+pub(crate) struct Callable<'a> {
     pub name: &'a str,
     /// The declared parameters. `None` for a `@mixin` written with no `(…)`.
     pub params: Option<&'a ox::SassParameters<'a>>,
@@ -248,7 +248,7 @@ pub struct Callable<'a> {
 /// function/mixin scope chains captured at the definition site (shared
 /// frames, dart's `Environment.closure()`). The body runs against these
 /// chains, not the caller's stack.
-pub struct UserCallable<'a> {
+pub(crate) struct UserCallable<'a> {
     pub def: Rc<Callable<'a>>,
     pub env: Vec<Scope>,
     /// The variable-definition-span chain captured alongside `env`, frame for
@@ -1189,7 +1189,7 @@ struct DiagFrame {
 
 /// An evaluated user module: its public members plus the bindings it itself
 /// `@use`d (so a `ns.member` lookup can recurse through forwards).
-struct Module<'a> {
+pub(crate) struct Module<'a> {
     /// Top-level variables (the module's global scope). Shared and mutable so an
     /// outside `ns.$var: value` assignment updates the module and its own
     /// functions/mixins observe the new value on their next call.
@@ -1450,7 +1450,7 @@ struct PendingExtend {
 }
 
 impl<'a> Evaluator<'a> {
-    pub fn new(
+    pub(crate) fn new(
         arena: &'a Allocator,
         file: &'a SourceFile<'a>,
         options: EvalOptions<'a>,
@@ -2852,7 +2852,7 @@ impl<'a> Evaluator<'a> {
     /// [`Self::eval_style_rule`] for a rule whose selector and body come from
     /// different nodes — `@at-root <selector> { … }`, where the prelude is the
     /// selector and the at-rule's block is the body.
-    pub(super) fn eval_style_rule_at(
+    fn eval_style_rule_at(
         &mut self,
         selector: Span,
         block: &'a ox::SimpleBlock<'a>,
@@ -4095,7 +4095,7 @@ impl ScopeCtx {
 /// - a declaration or style rule inside a `@function` body;
 /// - `@content` outside a `@mixin` declaration;
 /// - `@extend` outside a style rule or mixin.
-pub fn validate_declarations<'a>(
+pub(crate) fn validate_declarations<'a>(
     file: &SourceFile<'a>,
     sheet: &'a ox::Stylesheet<'a>,
 ) -> Result<(), Error> {
@@ -7688,7 +7688,7 @@ fn include_target<'a>(name: &'a ox::FunctionName<'a>) -> (String, Option<&'a str
         }
         // An interpolated `@include` name is not a shape dart-sass accepts;
         // the parser only produces it for an unknown at-rule.
-        other => (String::new(), None),
+        _ => (String::new(), None),
     }
 }
 

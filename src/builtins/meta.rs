@@ -9,7 +9,7 @@
 //! to let the next family try.
 
 use crate::error::Error;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 use crate::value::{CalcNode, List, ListSep, SassStr, Value};
 
 /// The names the meta family owns by name (the single source of truth,

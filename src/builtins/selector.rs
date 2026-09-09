@@ -15,7 +15,7 @@
 //! arguments, and serializes results.
 
 use crate::error::Error;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 use crate::selector::{self, Complex};
 // `Compound` is referenced via the fully-qualified `crate::selector::Compound`
 // path in `compound_target`'s signature.

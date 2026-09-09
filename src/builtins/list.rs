@@ -9,7 +9,7 @@
 //! let the next family try.
 
 use crate::error::Error;
-use crate::scanner::Pos;
+use crate::lines::Pos;
 use crate::value::{List, ListSep, Number, SassStr, Value};
 
 /// The names the list family owns by name (the single source of truth,

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::scanner::Pos;
+use crate::lines::Pos;
 
 /// A compilation error, carrying a human-readable message and the source
 /// position it is blamed on.
