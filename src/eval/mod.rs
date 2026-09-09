@@ -3153,8 +3153,13 @@ impl<'a> Evaluator<'a> {
     ) -> Result<Option<OutItem>, Error> {
         let prop = trim_owned(self.decl_name(d)?);
         // A custom property's value is text as dart-sass reads it: only
-        // `#{...}` resolves, everything else is emitted exactly as written.
-        let value_span = value_read::values_span(&d.value);
+        // `#{...}` resolves, everything else is emitted exactly as written —
+        // starting right after the colon, so its leading whitespace (which the
+        // serializer relies on, adding none of its own) survives.
+        let value_span = Span {
+            start: d.colon_span.end,
+            end: value_read::values_span(&d.value).end.max(d.colon_span.end),
+        };
         let value = self.interpolate(value_span)?;
         let pos = self.file.pos(d.span);
         // A custom property is serialized inside `_for(node.value, …)`
