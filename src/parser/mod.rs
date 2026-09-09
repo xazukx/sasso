@@ -544,26 +544,132 @@ fn property_is_literal_custom(property: &[TplPiece]) -> bool {
 /// of any value — only whitespace and `/* */` / `//` comments. Such a span
 /// makes `property: { … }` a bare nested property set (no leading value).
 fn value_is_only_comments(span: &[char]) -> bool {
-    let mut i = 0;
-    while i < span.len() {
-        let c = span[i];
+    trivia_end(span, 0) == span.len()
+}
+
+/// Skip the trivia run starting at `cs[i]` — whitespace and `/* */` / `//`
+/// comments, which dart-sass's `whitespace()` treats alike — and return the
+/// index of the first character that is neither.
+fn trivia_end(cs: &[char], mut i: usize) -> usize {
+    while i < cs.len() {
+        let c = cs[i];
         if c.is_whitespace() {
             i += 1;
-        } else if c == '/' && span.get(i + 1) == Some(&'*') {
+        } else if c == '/' && cs.get(i + 1) == Some(&'*') {
             i += 2;
-            while i + 1 < span.len() && !(span[i] == '*' && span[i + 1] == '/') {
+            while i + 1 < cs.len() && !(cs[i] == '*' && cs[i + 1] == '/') {
                 i += 1;
             }
-            i += 2;
-        } else if c == '/' && span.get(i + 1) == Some(&'/') {
-            while i < span.len() && span[i] != '\n' {
+            i = (i + 2).min(cs.len());
+        } else if c == '/' && cs.get(i + 1) == Some(&'/') {
+            while i < cs.len() && cs[i] != '\n' {
                 i += 1;
             }
         } else {
-            return false;
+            break;
         }
     }
-    true
+    i
+}
+
+/// How far the CSS escape at `cs[i]` (which must be a `\`) reaches: `\` plus up
+/// to six hex digits plus ONE optional trailing whitespace character, or `\`
+/// plus a single literal character (dart-sass `escape()`). The whitespace after
+/// a hex escape belongs to the escape, so `\61 b` is the one identifier `ab`
+/// rather than a name followed by a second one.
+fn escape_end(cs: &[char], i: usize) -> usize {
+    let mut j = i + 1;
+    if matches!(cs.get(j), Some(c) if c.is_ascii_hexdigit()) {
+        let limit = j + 6;
+        while j < limit && matches!(cs.get(j), Some(c) if c.is_ascii_hexdigit()) {
+            j += 1;
+        }
+        if matches!(cs.get(j), Some(c) if c.is_whitespace()) {
+            j += 1;
+        }
+        return j;
+    }
+    (i + 2).min(cs.len())
+}
+
+/// The index just past the `}` closing the `#{…}` interpolation at `cs[i]`.
+/// Nested braces and quoted strings inside the expression are skipped.
+fn interp_end(cs: &[char], i: usize) -> usize {
+    let mut j = i + 2;
+    let mut depth = 1i32;
+    while j < cs.len() && depth > 0 {
+        match cs[j] {
+            '\\' => {
+                j = escape_end(cs, j);
+                continue;
+            }
+            q @ ('"' | '\'') => {
+                j += 1;
+                while j < cs.len() && cs[j] != q {
+                    j = if cs[j] == '\\' { escape_end(cs, j) } else { j + 1 };
+                }
+            }
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            _ => {}
+        }
+        j += 1;
+    }
+    j
+}
+
+/// Whether an interpolated identifier begins at `cs[i]` (dart-sass
+/// `_lookingAtInterpolatedIdentifier`): a name-start code point, an escape, a
+/// `#{…}`, or a `-` followed by any of those (or by a second `-`). A digit does
+/// NOT start an identifier, which is why `9foo: red` is not a declaration.
+fn at_interpolated_identifier(cs: &[char], i: usize) -> bool {
+    match cs.get(i) {
+        None => false,
+        Some(&'\\') => true,
+        Some(&'#') => cs.get(i + 1) == Some(&'{'),
+        Some(&'-') => match cs.get(i + 1) {
+            None => false,
+            Some(&'-') | Some(&'\\') => true,
+            Some(&'#') => cs.get(i + 2) == Some(&'{'),
+            Some(&c) => is_name_start_codepoint(c),
+        },
+        Some(&c) => is_name_start_codepoint(c),
+    }
+}
+
+/// Whether the statement text `cs` opens with a *declaration name* followed by
+/// its `:`.
+///
+/// dart-sass (`_declarationOrBuffer`) commits to a declaration only for an
+/// optional property-hack character (`*`/`.`/`#`/`:`), then ONE interpolated
+/// identifier, then — across nothing but trivia — a `:`. Anything else is not a
+/// property name: dart abandons the declaration, re-reads the very same text as
+/// a selector, and then fails to find the `{`. Without this gate the name
+/// template runs to the first colon whatever lies between, so a stray
+/// identifier is silently absorbed into the next declaration's name
+/// (`df` on its own line + `background: red` → one property `df background`).
+fn decl_name_then_colon(cs: &[char]) -> bool {
+    let mut i = 0;
+    // The `*prop`/`.prop`/`#prop`/`:prop` IE property hacks: one punctuation
+    // character and trivia, then the name proper.
+    if matches!(cs.first(), Some(&(':' | '*' | '.')))
+        || (cs.first() == Some(&'#') && cs.get(1) != Some(&'{'))
+    {
+        i = trivia_end(cs, 1);
+    }
+    if !at_interpolated_identifier(cs, i) {
+        return false;
+    }
+    // The identifier body: name code points, escapes and `#{…}`.
+    while i < cs.len() {
+        match cs[i] {
+            '\\' => i = escape_end(cs, i),
+            '#' if cs.get(i + 1) == Some(&'{') => i = interp_end(cs, i),
+            c if is_name_codepoint(c) => i += 1,
+            _ => break,
+        }
+    }
+    cs.get(trivia_end(cs, i)) == Some(&':')
 }
 
 impl Parser {

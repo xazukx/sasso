@@ -778,6 +778,44 @@ fn selector_bang_and_extend_leading_comma_match_dart() {
 }
 
 #[test]
+fn a_property_name_is_one_identifier() {
+    let err = |src: &str| compile(src, &Options::default()).unwrap_err();
+
+    // A stray identifier before a declaration is not part of its name: dart
+    // gives up on the declaration, re-reads the text as a selector, and fails
+    // to find the `{` at the point that scan stopped.
+    let e = err(".page {\n  padding: 2rem;\n  df\n  background: red;\n}\n");
+    assert_eq!(e.message, "expected \"{\".");
+    assert_eq!((e.line, e.col), (4, 18)); // dart-sass 1.104: the `;`.
+    assert_eq!(err(".a { foo bar }").message, "expected \"{\".");
+    assert_eq!(err(".a { --x y z: red }").message, "expected \"{\".");
+    // A `;` ends the (failed) selector scan at the top level too.
+    assert_eq!(err("a; b {c: d}").message, "expected \"{\".");
+    // An identifier may not begin with a digit, so this is a selector as well.
+    assert_eq!(err(".a { 9foo: red; }").message, "expected \"{\".");
+
+    // What may still stand between a property name and its colon: trivia, a
+    // glued comment, an IE hack's punctuation, an escape that consumes the
+    // space after it (`\61 b` is the single name `ab`), interpolation.
+    for ok in [
+        ".a { color : red }",
+        ".a { color/*c*/: red }",
+        ".a { color /*c*/ : red }",
+        ".a { *zoom: 1 }",
+        ".a { . x : y }",
+        r".a { a\ b: red }",
+        r".a { \61 b: red }",
+        ".a { #{\"col\"}or: red }",
+        ".a { -#{\"x\"}: red }",
+        ".a { --: red }",
+        ".a { --x: {a: b} }",
+        ".a { b: c { d: e } }",
+    ] {
+        assert!(compile(ok, &Options::default()).is_ok(), "{ok}");
+    }
+}
+
+#[test]
 fn at_charset_and_at_root_query_match_dart() {
     let err = |src: &str| compile(src, &Options::default()).unwrap_err().message;
 

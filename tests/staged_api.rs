@@ -61,6 +61,24 @@ fn entry_requires_an_importer() {
     assert!(err.message.contains("No importer configured"), "{err}");
 }
 
+/// Construction only *resolves and loads* the entry: a syntax error inside it
+/// surfaces at `parse()`, the first stage that reads the source. A `Compiler`
+/// in hand says the file was found, never that it compiles.
+#[test]
+fn a_syntax_error_surfaces_at_parse_not_construction() {
+    let files = one(".page {\n  padding: 2rem;\n  df\n  background: red;\n}\n");
+    let options = Options::default().with_importer(&files);
+    let compiler = Compiler::new("in.scss", &options).expect("the entry loads without being parsed");
+
+    let err = compiler.parse().expect_err("`df` is neither a declaration nor a selector");
+    // A stray identifier is not part of the next property's name: dart-sass
+    // re-reads the text as a selector and blames where that scan gave up, the
+    // `;` (dart-sass 1.104: `in.scss 4:18`).
+    assert_eq!(err.message, "expected \"{\".");
+    assert_eq!((err.line, err.col), (4, 18));
+    assert_eq!(err.file.as_deref(), Some("in.scss"));
+}
+
 /// A missing entry is an error, and it names the file that was asked for.
 #[test]
 fn missing_entry_is_reported() {

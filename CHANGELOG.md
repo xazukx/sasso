@@ -102,6 +102,21 @@ Conformance is tracked separately as a ratchet against the official
 
 ### Fixed
 
+- **A property name is one identifier again, so a stray identifier is an
+  error.** The property-name scan ran to the first `:` no matter what lay in
+  between, so a typo on a line of its own was absorbed into the *next*
+  declaration's name: `df` above `background: red;` compiled clean as the single
+  property `df background`. Like dart-sass (`_declarationOrBuffer`), a
+  declaration is now only committed to for an optional property-hack character
+  (`*`/`.`/`#`/`:`), ONE interpolated identifier, and then — across nothing but
+  whitespace and comments — the `:`; anything else is re-read as a selector and
+  reported as `expected "{".` at the point that scan gives up, which is dart's
+  message and dart's caret (`df` + `background: red;` blames the `;`). A rule
+  selector now stops at a top-level `;`/`}` as well as `!` for the same reason
+  (dart's `almostAnyValue`), so the blame lands on the terminator instead of at
+  end of file. Names that legitimately reach their colon across trivia are
+  unaffected: `color : red`, `color/*c*/: red`, the `*zoom`/`. x` hacks, an
+  escape that swallows the space after it (`\61 b`), and interpolated names.
 - **A missing statement terminator is now an error, as it is in dart-sass.** A
   statement may end at a `;`, at the `}` that closes its block, or at end of
   file; anything else is `expected ";".` (dart's `expectStatementSeparator`).

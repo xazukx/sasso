@@ -115,6 +115,15 @@ impl Parser {
     /// opens a style rule — matching dart-sass declaration disambiguation.
     fn classify(&self) -> NextKind {
         let cs = self.sc.rest();
+        // A declaration has to *begin* with a property name and its colon. When
+        // it doesn't, no later punctuation can make one: dart-sass gives up on
+        // the declaration and re-reads the text as a selector, so this is a
+        // rule (and a bad one — `df` on a line of its own then reports
+        // `expected "{".`) rather than a property whose name swallows the
+        // stray text up to the next colon.
+        if !decl_name_then_colon(cs) {
+            return NextKind::Rule;
+        }
         let mut i = 0;
         let mut paren = 0i32;
         let mut bracket = 0i32;
@@ -229,9 +238,13 @@ impl Parser {
         let saved_collect = std::mem::replace(&mut self.collect_interp_spans, true);
         // A top-level `!` is not valid in a selector: dart-sass stops the
         // selector there and then fails to find the `{` (`a !important {…}` →
-        // `expected "{".`). It is only a stop at depth 0 — a `!` inside an
+        // `expected "{".`). Same for a `;` and a `}` — dart's selector scan
+        // (`almostAnyValue`) stops at all three — so a rule that is really a
+        // botched declaration is blamed at its terminator (`df<newline>
+        // background: red;` → `expected "{".` at the `;`) instead of running on
+        // to the end of the file. Each is only a stop at depth 0 — one inside an
         // attribute selector (`[a="x!y"]`) or a string is consumed normally.
-        let selector = self.parse_template_mode(&['{', '!'], CommentMode::Strip);
+        let selector = self.parse_template_mode(&['{', '!', ';', '}'], CommentMode::Strip);
         self.collect_interp_spans = saved_collect;
         let selector_interp_spans = std::mem::replace(&mut self.interp_spans, saved_spans);
         let selector = selector?;
