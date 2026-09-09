@@ -2420,10 +2420,13 @@ impl ModernColor {
 /// integer by as little as 1e-10, and the ~7e-15 dust an hsl round trip leaves
 /// behind is enough to flip it.
 fn rgb_channel_text(r: f64, g: f64, b: f64, compressed: bool) -> (String, String, String) {
-    // dart `_tryIntegerRgbChannels` -> `_asInt`: fuzzyIsInt AND in [0, 256).
-    // An out-of-gamut or non-integral channel sends the WHOLE triple to
-    // percentages (serialize.dart:869-886).
-    let as_int = |v: f64| (v - v.round()).abs() < 1e-11 && (0.0..256.0).contains(&v);
+    // dart `_tryIntegerRgbChannels` -> `_asInt`: outside inspect mode that's
+    // `rounded == number`, i.e. EXACT integrality, not a fuzzy match. So a
+    // channel carrying conversion dust (`hwb(150 20% 40%)` reaches red as
+    // 101.99999999999999) sends the WHOLE triple to percentages, even though
+    // the same dust still collapses to hex on the opaque path — which uses the
+    // fuzzy `_canUseHexForChannel` instead.
+    let as_int = |v: f64| v == v.round() && (0.0..256.0).contains(&v);
     if as_int(r) && as_int(g) && as_int(b) {
         return (
             fmt_num(r, compressed),

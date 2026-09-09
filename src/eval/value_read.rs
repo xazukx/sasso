@@ -64,6 +64,24 @@ pub(crate) fn args_of<'a>(
                 splat: true,
                 span: a.span,
             }),
+            // `$name: 1 2 3` and `1 2 3...`: in a function call the parser
+            // pairs the keyword (or the `...`) with only the value it touches
+            // and leaves the rest of the run beside it, so the argument is the
+            // whole group. A wrapper node evaluates to its own value, so the
+            // run still reads as `1 2 3`. (`@include` doesn't need this — it
+            // collects each argument's space list before pairing.)
+            [ox::ComponentValue::SassKeywordArgument(k), ..] => out.push(Arg {
+                name: Some(k.name.name.name),
+                values: group,
+                splat: false,
+                span,
+            }),
+            [.., ox::ComponentValue::SassArbitraryArgument(_)] => out.push(Arg {
+                name: None,
+                values: group,
+                splat: true,
+                span,
+            }),
             _ => out.push(Arg {
                 name: None,
                 values: group,

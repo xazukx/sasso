@@ -587,9 +587,28 @@ fn fn_saturate_two(
     require_legacy_color(&c, name, pos)?;
     let amount = require(&params, pos_args, named, 1, name, pos)?;
     let amount = bounded(amount, 0.0, 100.0, pos)?;
-    let (h, s, l) = c.to_hsl();
-    let new_s = (s + sign * amount / 100.0).clamp(0.0, 1.0);
-    Ok(Value::Color(from_hsl(h, new_s, l, c.a)))
+    // dart `changeHsl(saturation: clampLikeCss(color.saturation ± amount, 0,
+    // 100))`: the shift is read off the hsl saturation and then CHANGED, so the
+    // result rides exactly the same conversion path as
+    // `color.change($saturation: …)` — including its float dust, which decides
+    // whether the legacy serialization can use integer rgb channels.
+    let current = crate::builtins::convert_modern(&crate::builtins::legacy_to_modern(&c), ColorSpace::Hsl)
+        .channels[1]
+        .unwrap_or(0.0);
+    let target = Value::Number(crate::value::Number::with_unit(
+        (current + sign * amount).clamp(0.0, 100.0),
+        "%",
+    ));
+    let chans: Vec<(String, &Value)> = vec![("saturation".to_string(), &target)];
+    super::color::modify_in_space_full(
+        &c,
+        ColorSpace::Hsl,
+        &chans,
+        super::color::ModifyOp::Change,
+        false,
+        false,
+        pos,
+    )
 }
 
 /// Read a number argument and require its value to be within `[lo, hi]`,

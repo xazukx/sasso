@@ -84,7 +84,8 @@ pub(super) fn channel_category(space: ColorSpace, idx: usize) -> Option<ChannelC
 }
 
 /// Convert a [`ModernColor`] to a new space, preserving alpha and carrying
-/// over missing channels into analogous channels of the target (CSS Color 4).
+/// over missing channels into the analogous channels of the target
+/// (see [`conv_missing`]).
 pub(crate) fn convert_modern(mc: &ModernColor, target: ColorSpace) -> ModernColor {
     if mc.space == target {
         return mc.clone();
@@ -94,48 +95,366 @@ pub(crate) fn convert_modern(mc: &ModernColor, target: ColorSpace) -> ModernColo
     // linear spaces, glibc-rounded `pow`, and dart's formula shapes — see
     // `builtins::colorspace`.
     let out = crate::builtins::colorspace::convert(mc.space, target, src);
-    // For each output channel, become missing if the analogous source channel
-    // was missing.
-    let missing_in_src = |cat: ChannelCategory| {
-        (0..3).any(|i| mc.channels[i].is_none() && channel_category(mc.space, i) == Some(cat))
-    };
-    let mk = |i: usize| match channel_category(target, i) {
-        Some(cat) if missing_in_src(cat) => None,
-        _ => Some(out[i]),
-    };
-    let mut channels = [mk(0), mk(1), mk(2)];
-    // A hue that is powerless in the result becomes a missing channel,
-    // matching dart-sass's conversion behavior: lch/oklch at zero chroma, hsl
-    // at fuzzy-zero saturation, and hwb when whiteness+blackness covers
-    // everything. (The legacy result fill then turns a missing hsl/hwb hue
-    // into 0.)
-    if matches!(target, ColorSpace::Lch | ColorSpace::Oklch) && out[1].abs() < 1e-10 {
-        channels[2] = None;
-    }
-    // dart's lch → lab conversion marks a/b POWERLESS when the lightness is
-    // missing or fuzzy-zero (LabColorSpace.convert dest=lab: `powerlessAB =
-    // lightness == null || fuzzyEquals(lightness, 0)`). Oklab has NO such
-    // rule (`oklch(none 20% 30deg)` keeps its computed a/b), and a same-space
-    // conversion is an identity shortcut that never reaches here.
-    let lch_to_lab = mc.space == ColorSpace::Lch && target == ColorSpace::Lab;
-    if lch_to_lab && (channels[0].is_none() || out[0].abs() < 1e-11) {
-        channels[1] = None;
-        channels[2] = None;
-    }
-    if target == ColorSpace::Hsl && out[1].abs() < 1e-11 {
-        channels[0] = None;
-    }
-    if target == ColorSpace::Hwb {
-        let sum = out[1] + out[2];
-        if sum > 100.0 || (sum - 100.0).abs() < 1e-11 {
-            channels[0] = None;
-        }
-    }
     ModernColor {
         space: target,
-        channels,
+        channels: conv_missing(mc.space, mc.channels, target, out),
         alpha: mc.alpha,
     }
+}
+
+// ---- missing-channel propagation (dart `ColorSpace.convert` overrides) ----
+//
+// dart threads five booleans through its conversion chain — `missingLightness`,
+// `missingChroma`, `missingHue`, `missingA`, `missingB` — recording which
+// CONCEPTUAL channel of the source was missing. That's what lets a destination
+// blank a channel the source spells differently: hsl saturation and lch chroma
+// are both "chroma", lab's a/b are the rectangular form of chroma+hue, and
+// hwb's whiteness/blackness pair stands in for hsl's saturation+lightness.
+// The functions below mirror that dispatch one-for-one; the *numbers* still
+// come from `builtins::colorspace`, and every fuzzy test dart makes reads a
+// channel of the FINAL destination, so `out` is all the numeric context needed.
+
+/// dart's `missingLightness` / `missingChroma` / `missingHue` / `missingA` /
+/// `missingB`.
+#[derive(Clone, Copy, Default)]
+struct Missing {
+    lightness: bool,
+    chroma: bool,
+    hue: bool,
+    a: bool,
+    b: bool,
+}
+
+impl Missing {
+    /// The preamble shared by `convertLinear`, `XyzD50ColorSpace.convert` and
+    /// `LmsColorSpace.convert`: a missing a/b pair and a missing chroma+hue
+    /// pair are two spellings of the same thing, so each implies the other.
+    fn normalized(mut self) -> Missing {
+        if self.a && self.b {
+            self.chroma = true;
+            self.hue = true;
+        } else if self.chroma && self.hue {
+            self.a = true;
+            self.b = true;
+        }
+        self
+    }
+
+    /// dart's `missingLightness && missingChroma && missingHue` short circuit:
+    /// nothing of the color survives, so every destination channel is missing.
+    fn everything(&self) -> bool {
+        self.lightness && self.chroma && self.hue
+    }
+}
+
+/// The channels handed to an INTERMEDIATE conversion stage, which dart always
+/// computes (so they are never `null`) before recursing.
+const COMPUTED: [Option<f64>; 3] = [Some(0.0), Some(0.0), Some(0.0)];
+
+fn all_missing(ch: &[Option<f64>; 3]) -> bool {
+    ch[0].is_none() && ch[1].is_none() && ch[2].is_none()
+}
+
+/// A destination channel is missing exactly where the source channel in the
+/// same position was (dart's `red == null ? null : transformedRed`), used by
+/// the rgb/xyz-family destinations that carry nullness positionally.
+fn carry(ch: &[Option<f64>; 3], out: [f64; 3]) -> [Option<f64>; 3] {
+    [
+        ch[0].map(|_| out[0]),
+        ch[1].map(|_| out[1]),
+        ch[2].map(|_| out[2]),
+    ]
+}
+
+/// dart-sass `fuzzyEquals`: equal to the 11th decimal digit.
+fn fuzzy_eq(a: f64, b: f64) -> bool {
+    a == b || ((a - b).abs() <= 1e-11 && (a * 1e11).round() == (b * 1e11).round())
+}
+
+/// The missing-channel structure of `src.convert(dest, …)`, evaluated against
+/// the already-computed destination channel values `out`.
+fn conv_missing(
+    src: ColorSpace,
+    ch: [Option<f64>; 3],
+    dest: ColorSpace,
+    out: [f64; 3],
+) -> [Option<f64>; 3] {
+    use ColorSpace::*;
+    match src {
+        // `HslColorSpace.convert`: hue/saturation/lightness are the three
+        // conceptual channels, so they map straight onto the three flags.
+        Hsl => srgb_missing(
+            dest,
+            COMPUTED,
+            out,
+            Missing {
+                lightness: ch[2].is_none(),
+                chroma: ch[1].is_none(),
+                hue: ch[0].is_none(),
+                ..Missing::default()
+            },
+        ),
+        // `HwbColorSpace.convert`: whiteness and blackness aren't analogous to
+        // any single channel, so dart special-cases a missing PAIR rather than
+        // pipe two more flags everywhere — it converts the hue on its own and
+        // then blanks whichever destination channels the pair stood for.
+        Hwb => {
+            if ch[1].is_none() && ch[2].is_none() {
+                if ch[0].is_none() {
+                    return [None; 3];
+                }
+                let converted = conv_missing(Hwb, [ch[0], Some(0.0), Some(0.0)], dest, out);
+                return match dest {
+                    Hsl => [converted[0], None, None],
+                    Lch | Oklch => [None, None, converted[2]],
+                    _ => converted,
+                };
+            }
+            srgb_missing(
+                dest,
+                COMPUTED,
+                out,
+                Missing {
+                    hue: ch[0].is_none(),
+                    ..Missing::default()
+                },
+            )
+        }
+        Lab => lab_missing(dest, ch, out, Missing::default()),
+        // `LchColorSpace.convert` hands lab a COMPUTED a/b pair plus the flags
+        // that say where it came from.
+        Lch => lab_missing(
+            dest,
+            [ch[0], Some(0.0), Some(0.0)],
+            out,
+            Missing {
+                chroma: ch[1].is_none(),
+                hue: ch[2].is_none(),
+                ..Missing::default()
+            },
+        ),
+        Oklab => oklab_missing(dest, ch, out, Missing::default()),
+        Oklch => oklab_missing(
+            dest,
+            [ch[0], Some(0.0), Some(0.0)],
+            out,
+            Missing {
+                chroma: ch[1].is_none(),
+                hue: ch[2].is_none(),
+                ..Missing::default()
+            },
+        ),
+        // `RgbColorSpace.convert` only rescales by 255, so nullness reaches
+        // sRGB unchanged.
+        Rgb | Srgb => srgb_missing(dest, ch, out, Missing::default()),
+        XyzD50 => xyz_d50_missing(dest, ch, out, Missing::default()),
+        _ => linear_missing(dest, ch, out, Missing::default()),
+    }
+}
+
+/// dart `SrgbColorSpace.convert`.
+fn srgb_missing(
+    dest: ColorSpace,
+    rgb: [Option<f64>; 3],
+    out: [f64; 3],
+    m: Missing,
+) -> [Option<f64>; 3] {
+    use ColorSpace::*;
+    if all_missing(&rgb) || m.everything() {
+        return [None; 3];
+    }
+    match dest {
+        // A hue is powerless at zero saturation; `out` is `[hue, saturation,
+        // lightness]`.
+        Hsl => [
+            if m.hue || fuzzy_eq(out[1], 0.0) {
+                None
+            } else {
+                Some(out[0])
+            },
+            if m.chroma { None } else { Some(out[1]) },
+            if m.lightness { None } else { Some(out[2]) },
+        ],
+        // A hue is powerless once whiteness and blackness cover everything, and
+        // the whiteness/blackness pair only goes missing when BOTH of the
+        // channels it stands in for did.
+        Hwb => {
+            let sum = out[1] + out[2];
+            let pair = m.chroma && m.lightness;
+            [
+                if m.hue || sum > 100.0 || fuzzy_eq(sum, 100.0) {
+                    None
+                } else {
+                    Some(out[0])
+                },
+                if pair { None } else { Some(out[1]) },
+                if pair { None } else { Some(out[2]) },
+            ]
+        }
+        Rgb | SrgbLinear => carry(&rgb, out),
+        _ => linear_missing(dest, rgb, out, m),
+    }
+}
+
+/// dart `ColorSpace.convertLinear`.
+fn linear_missing(
+    dest: ColorSpace,
+    ch: [Option<f64>; 3],
+    out: [f64; 3],
+    m: Missing,
+) -> [Option<f64>; 3] {
+    use ColorSpace::*;
+    let m = m.normalized();
+    if m.everything() || all_missing(&ch) {
+        return [None; 3];
+    }
+    match dest {
+        Hsl | Hwb => srgb_missing(dest, COMPUTED, out, m),
+        Lab | Lch => xyz_d50_missing(dest, COMPUTED, out, m),
+        Oklab | Oklch => lms_missing(dest, COMPUTED, out, m),
+        _ => carry(&ch, out),
+    }
+}
+
+/// dart `XyzD50ColorSpace.convert`.
+fn xyz_d50_missing(
+    dest: ColorSpace,
+    ch: [Option<f64>; 3],
+    out: [f64; 3],
+    m: Missing,
+) -> [Option<f64>; 3] {
+    use ColorSpace::*;
+    let m = m.normalized();
+    if m.everything() || all_missing(&ch) {
+        return [None; 3];
+    }
+    match dest {
+        Lab => [
+            if m.lightness { None } else { Some(out[0]) },
+            if m.a { None } else { Some(out[1]) },
+            if m.b { None } else { Some(out[2]) },
+        ],
+        Lch => lab_to_lch_missing(out, false, m.lightness, m),
+        _ => linear_missing(dest, ch, out, m),
+    }
+}
+
+/// dart `LmsColorSpace.convert` — oklab/oklch's counterpart to xyz-d50.
+fn lms_missing(
+    dest: ColorSpace,
+    ch: [Option<f64>; 3],
+    out: [f64; 3],
+    m: Missing,
+) -> [Option<f64>; 3] {
+    use ColorSpace::*;
+    let m = m.normalized();
+    if m.everything() || all_missing(&ch) {
+        return [None; 3];
+    }
+    match dest {
+        Oklab => [
+            if m.lightness { None } else { Some(out[0]) },
+            if m.a { None } else { Some(out[1]) },
+            if m.b { None } else { Some(out[2]) },
+        ],
+        Oklch => lab_to_lch_missing(out, false, m.lightness, m),
+        _ => linear_missing(dest, ch, out, m),
+    }
+}
+
+/// dart `LabColorSpace.convert`, with `ch` as `[lightness, a, b]`.
+fn lab_missing(
+    dest: ColorSpace,
+    ch: [Option<f64>; 3],
+    out: [f64; 3],
+    mut m: Missing,
+) -> [Option<f64>; 3] {
+    use ColorSpace::*;
+    let (mut a, mut b) = (ch[1], ch[2]);
+    if m.chroma && m.hue {
+        a = None;
+        b = None;
+    } else if a.is_none() && b.is_none() {
+        m.chroma = true;
+        m.hue = true;
+    }
+    match dest {
+        // Reached only from lch (a same-space conversion short-circuits), where
+        // a/b are POWERLESS at a missing or zero lightness. Oklab has no such
+        // rule, so `oklch(none 20% 30deg)` keeps its computed a/b.
+        Lab => {
+            let powerless = ch[0].is_none() || fuzzy_eq(out[0], 0.0);
+            [
+                ch[0].map(|_| out[0]),
+                if a.is_none() || powerless {
+                    None
+                } else {
+                    Some(out[1])
+                },
+                if b.is_none() || powerless {
+                    None
+                } else {
+                    Some(out[2])
+                },
+            ]
+        }
+        Lch => lab_to_lch_missing(out, a.is_none() && b.is_none(), ch[0].is_none(), m),
+        _ => {
+            m.lightness = ch[0].is_none();
+            m.a = a.is_none();
+            m.b = b.is_none();
+            xyz_d50_missing(dest, COMPUTED, out, m)
+        }
+    }
+}
+
+/// dart `OklabColorSpace.convert`.
+fn oklab_missing(
+    dest: ColorSpace,
+    ch: [Option<f64>; 3],
+    out: [f64; 3],
+    mut m: Missing,
+) -> [Option<f64>; 3] {
+    if dest == ColorSpace::Oklch {
+        return lab_to_lch_missing(out, ch[1].is_none() && ch[2].is_none(), ch[0].is_none(), m);
+    }
+    let (mut a, mut b) = (ch[1], ch[2]);
+    if a.is_none() && b.is_none() {
+        m.chroma = true;
+        m.hue = true;
+    } else if m.chroma && m.hue {
+        a = None;
+        b = None;
+    }
+    m.lightness = ch[0].is_none();
+    m.a = a.is_none();
+    m.b = b.is_none();
+    lms_missing(dest, COMPUTED, out, m)
+}
+
+/// dart `labToLch`: `out` is `[lightness, chroma, hue]`, and a hue is powerless
+/// at zero chroma.
+fn lab_to_lch_missing(
+    out: [f64; 3],
+    ab_missing: bool,
+    lightness_missing: bool,
+    mut m: Missing,
+) -> [Option<f64>; 3] {
+    m.chroma = m.chroma || ab_missing;
+    m.hue = m.hue || ab_missing;
+    [
+        if lightness_missing {
+            None
+        } else {
+            Some(out[0])
+        },
+        if m.chroma { None } else { Some(out[1]) },
+        if m.hue || fuzzy_eq(out[1], 0.0) {
+            None
+        } else {
+            Some(out[2])
+        },
+    ]
 }
 
 /// [`convert_modern`] for a conversion that produces a user-facing RESULT
