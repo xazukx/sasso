@@ -205,15 +205,7 @@ impl<'a> Evaluator<'a> {
                 number(&d.value),
                 d.unit.name.to_string(),
             ))),
-            CV::HexColor(h) => Ok(match crate::value::Color::from_hex(h.value) {
-                Some(c) => Value::Color(c),
-                // The parser accepts hash tokens that are not colors
-                // (`#abcde`); dart-sass keeps those as identifiers.
-                None => Value::Str(SassStr {
-                    text: format!("#{}", h.raw).into(),
-                    quoted: false,
-                }),
-            }),
+            CV::HexColor(h) => self.eval_hex_color(h),
             CV::InterpolableIdent(i) => self.eval_ident(i),
             CV::InterpolableStr(s) => {
                 // A string expression resolves its interpolation in a context
@@ -303,6 +295,43 @@ impl<'a> Evaluator<'a> {
             CV::SassArbitraryArgument(a) => self.eval_value(&a.value),
             other => self.eval_text_value(*other.span()),
         }
+    }
+
+    /// A `#…` token.
+    ///
+    /// dart-sass splits on the character right after `#`. A DIGIT commits to a
+    /// hex color: exactly 3, 4, 6 or 8 digits are read in stages and anything
+    /// left over is a separate token (`#000g` is `#000` then `g`), while a
+    /// short or malformed run is an error rather than an identifier (`#0`,
+    /// `#00000`, `#12g`). A name-start character only yields a color when the
+    /// whole spelling is valid hex, so `#abcde` stays a `#…` string.
+    fn eval_hex_color(&mut self, h: &'a ox::HexColor<'a>) -> Result<Value, Error> {
+        if let Some(c) = crate::value::Color::from_hex(h.value) {
+            return Ok(Value::Color(c));
+        }
+        if !h.value.starts_with(|c: char| c.is_ascii_digit()) {
+            return Ok(Value::Str(SassStr {
+                text: format!("#{}", h.raw).into(),
+                quoted: false,
+            }));
+        }
+        let err = || Error::at("Expected hex digit.", self.file.pos(h.span));
+        let digits = hex_prefix_len(h.value).ok_or_else(err)?;
+        let color = crate::value::Color::from_hex(&h.value[..digits]).ok_or_else(err)?;
+        // The trailing run is a token of its own, juxtaposed with the color.
+        Ok(Value::List(List {
+            items: vec![
+                Value::Color(color),
+                Value::Str(SassStr {
+                    text: h.value[digits..].to_string().into(),
+                    quoted: false,
+                }),
+            ]
+            .into(),
+            sep: ListSep::Space,
+            bracketed: false,
+            keywords: None,
+        }))
     }
 
     /// A node with no SassScript meaning of its own: its source text, with
@@ -932,4 +961,35 @@ pub(super) fn strip_vendor_prefix(lower: &str) -> &str {
         Some(rel) if rel >= 1 => &lower[1 + rel + 1..],
         _ => lower,
     }
+}
+
+/// How many leading characters of a digit-led `#` token form a hex color,
+/// reading dart-sass's staged 3/4/6/8 shape. `None` when the run is short or
+/// stops on a non-hex digit mid-stage, which dart reports as
+/// "Expected hex digit.".
+fn hex_prefix_len(value: &str) -> Option<usize> {
+    let b = value.as_bytes();
+    let hex = |i: usize| b.get(i).is_some_and(u8::is_ascii_hexdigit);
+    // Digits 1-3 are mandatory.
+    if !(hex(0) && hex(1) && hex(2)) {
+        return None;
+    }
+    if !hex(3) {
+        return Some(3);
+    }
+    if !hex(4) {
+        return Some(4);
+    }
+    // A 5th digit commits to #RRGGBB, so the 6th is mandatory.
+    if !hex(5) {
+        return None;
+    }
+    if !hex(6) {
+        return Some(6);
+    }
+    // ...and a 7th commits to #RRGGBBAA.
+    if !hex(7) {
+        return None;
+    }
+    Some(8)
 }
