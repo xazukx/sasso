@@ -2652,8 +2652,13 @@ impl<'a> Evaluator<'a> {
     /// Evaluate a style rule: resolve its selector against `parents`, run its
     /// body into a fresh rule sink, then hand the produced block and the
     /// rules that bubbled out of it to the enclosing `sink`.
-    fn eval_style_rule(&mut self, rule: &Rule, parents: &[String], sink: &mut Sink<'_>) -> Result<(), Error> {
-        let (sel_str, interp_bounds) = self.eval_template_bounds(&rule.selector)?;
+    fn eval_style_rule(
+        &mut self,
+        rule: &'a ox::QualifiedRule<'a>,
+        parents: &[String],
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        let (sel_str, interp_bounds) = self.interpolate_bounds(rule.selector.span)?;
         // A selector that resolves to nothing (e.g. `#{&}` at the document root,
         // where `&` is null) is rejected by dart-sass with "expected selector".
         if sel_str.trim().is_empty() {
@@ -2667,7 +2672,12 @@ impl<'a> Evaluator<'a> {
         // from an interpolation (todo_single_escape).
         if !self.in_keyframes {
             if let Some(at_idx) = find_unquoted_at(&sel_str) {
-                return Err(self.interp_selector_error(rule, &sel_str, &interp_bounds, at_idx));
+                return Err(self.interp_selector_error(
+                    rule.selector.span,
+                    &sel_str,
+                    &interp_bounds,
+                    at_idx,
+                ));
             }
         }
         // A selector starting with a digit is dart's "expected selector."
@@ -2775,12 +2785,12 @@ impl<'a> Evaluator<'a> {
         let prev_at_root = std::mem::replace(&mut self.at_root_excluding_style_rule, false);
         let rule_lines = self.stamp(SrcLines {
             file: 0,
-            start: rule.brace_line,
-            end: rule.end_line,
+            start: self.file.line_at(rule.block.span.start),
+            end: self.file.line_at(rule.block.span.end),
             col: 0,
             // Source-map: the selector's start column (its first character),
             // mapped on the rule's first output line.
-            start_col: rule.selector_pos.col as u32,
+            start_col: self.file.pos(rule.selector.span).col as u32,
             map_file: 0,
             map_line: 0,
         });
@@ -2814,7 +2824,12 @@ impl<'a> Evaluator<'a> {
                 flushed: &mut flushed,
                 extend_base,
             };
-            let r = self.exec(&rule.body, &current, &mut child);
+            let r = self.exec(
+                &rule.block.statements,
+                rule.block.span,
+                &current,
+                &mut child,
+            );
             // Flush any declarations/loud comments that follow the last nested
             // rule, so they emit (in their own block) after the bubbled rules.
             if r.is_ok() && child.flush_rule_block() {
@@ -2844,13 +2859,14 @@ impl<'a> Evaluator<'a> {
         Ok(())
     }
 
-    fn eval_decl(&mut self, d: &Declaration) -> Result<Option<OutItem>, Error> {
-        let name = trim_owned(self.eval_template(&d.property)?);
+    fn eval_decl(&mut self, d: &'a ox::Declaration<'a>) -> Result<Option<OutItem>, Error> {
+        let name = trim_owned(self.decl_name(d)?);
         let prop = match &self.decl_prefix {
             Some(prefix) => format!("{prefix}-{name}"),
             None => name,
         };
-        let value = self.eval_expr(&d.value)?;
+        let pos = self.file.pos(d.span);
+        let value = self.eval_values(&d.value)?;
         if matches!(value, Value::Null) {
             return Ok(None);
         }
@@ -2858,21 +2874,21 @@ impl<'a> Evaluator<'a> {
         if let Some(m) = find_map(&value) {
             return Err(Error::at(
                 format!("{} isn't a valid CSS value.", m.to_css(false)),
-                d.pos,
+                pos,
             ));
         }
         // A first-class function reference is likewise not a valid CSS value.
         if let Value::Function(f) = &value {
             return Err(Error::at(
                 format!("{} isn't a valid CSS value.", f.inspect()),
-                d.pos,
+                pos,
             ));
         }
         // A first-class mixin reference is likewise not a valid CSS value.
         if let Value::Mixin(m) = &value {
             return Err(Error::at(
                 format!("{} isn't a valid CSS value.", m.inspect()),
-                d.pos,
+                pos,
             ));
         }
         // An empty unbracketed list (`()`, or e.g. `list.join((), ())`) cannot
@@ -2880,7 +2896,7 @@ impl<'a> Evaluator<'a> {
         // with at least one element.
         if let Value::List(l) = &value {
             if l.items.is_empty() && !l.bracketed {
-                return Err(Error::at("() isn't a valid CSS value.", d.pos));
+                return Err(Error::at("() isn't a valid CSS value.", pos));
             }
         }
         let vstr = value.to_css(self.compressed());
@@ -2892,19 +2908,19 @@ impl<'a> Evaluator<'a> {
         // dart computes `valueSpanForMap` as `_expressionNode(node.value).span`
         // (evaluate.dart:1414): a BARE `$name` value resolves to wherever that
         // variable was declared; any other expression shape keeps its own span.
-        let value_span = self.expression_node(&d.value, d.value_pos);
+        let value_span = self.expression_node_values(&d.value);
         Ok(Some(OutItem::Decl {
             prop,
             value: vstr,
-            important: d.important,
+            important: d.important.is_some(),
             custom: false,
             lines: self.stamp(SrcLines {
                 file: 0,
-                start: d.pos.line as u32,
-                end: d.end_line,
+                start: pos.line as u32,
+                end: self.file.line_at(d.span.end),
                 col: 0,
                 // Source-map: the property name's start column.
-                start_col: d.pos.col as u32,
+                start_col: pos.col as u32,
                 map_file: 0,
                 map_line: 0,
             }),
@@ -2912,17 +2928,41 @@ impl<'a> Evaluator<'a> {
         }))
     }
 
+    /// A declaration's property name, with the IE `*color` hack's sigil
+    /// kept as a prefix (dart-sass accepts it and emits it verbatim).
+    fn decl_name(&mut self, d: &'a ox::Declaration<'a>) -> Result<String, Error> {
+        let name = self.eval_interp_ident(&d.name)?;
+        Ok(match (d.name_prefix, d.name_suffix) {
+            (None, None) => name,
+            (prefix, suffix) => {
+                let mut out = String::with_capacity(name.len() + 2);
+                out.extend(prefix);
+                out.push_str(&name);
+                out.extend(suffix);
+                out
+            }
+        })
+    }
+
     /// Evaluate a custom-property declaration: the name and verbatim value are
     /// templates whose `#{…}` interpolation resolves; the value is otherwise
     /// emitted exactly as written (no SassScript evaluation). An empty value
     /// (`--x: ;`) still emits.
-    fn eval_custom_decl(&mut self, d: &CustomDecl) -> Result<Option<OutItem>, Error> {
-        let prop = trim_owned(self.eval_template(&d.property)?);
-        let value = self.eval_template(&d.value)?;
+    fn eval_custom_decl(
+        &mut self,
+        d: &'a ox::Declaration<'a>,
+    ) -> Result<Option<OutItem>, Error> {
+        let prop = trim_owned(self.decl_name(d)?);
+        // A custom property's value is text as dart-sass reads it: only
+        // `#{...}` resolves, everything else is emitted exactly as written.
+        let value_span = super::value_read::values_span(&d.value);
+        let value = self.interpolate(value_span)?;
+        let pos = self.file.pos(d.span);
         // A custom property is serialized inside `_for(node.value, …)`
         // (serialize.dart:379) — the value's OWN span, never resolved through
         // `_expressionNode`. So `--x: $c` maps to the literal `$c` text.
-        let value_span = self.span_at(d.value_pos);
+        let value_pos = self.file.pos(value_span);
+        let value_span = self.span_at(value_pos);
         Ok(Some(OutItem::Decl {
             prop,
             value,
@@ -2930,13 +2970,13 @@ impl<'a> Evaluator<'a> {
             custom: true,
             lines: self.stamp(SrcLines {
                 file: 0,
-                start: d.pos.line as u32,
-                end: d.end_line,
+                start: pos.line as u32,
+                end: self.file.line_at(d.span.end),
                 // The name's source column caps the re-indentation strip for a
                 // multi-line value (dart _writeReindentedValue).
-                col: d.pos.col as u32,
+                col: pos.col as u32,
                 // Source-map: the property name's start column.
-                start_col: d.pos.col as u32,
+                start_col: pos.col as u32,
                 map_file: 0,
                 map_line: 0,
             }),
@@ -2950,38 +2990,41 @@ impl<'a> Evaluator<'a> {
     /// namespaced `<name>-<child>` and emitted in source order.
     fn eval_property_set(
         &mut self,
-        ps: &PropertySet,
+        d: &'a ox::Declaration<'a>,
+        value: &'a [ox::ComponentValue<'a>],
+        nested: &'a ox::SassNestingDeclaration<'a>,
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
+        let pos = self.file.pos(d.span);
         // A nested property set whose own literal name begins with `--` is
         // rejected just like a plain `--` declaration would be when nested.
-        if self.decl_prefix.is_some() && literal_name_is_custom_property(&ps.property) {
+        if self.decl_prefix.is_some() && d.name.is_custom_property() {
             return Err(Error::at(
                 "Declarations whose names begin with \"--\" may not be nested.",
-                ps.pos,
+                pos,
             ));
         }
-        let name = trim_owned(self.eval_template(&ps.property)?);
+        let name = trim_owned(self.decl_name(d)?);
         let full = match &self.decl_prefix {
             Some(prefix) => format!("{prefix}-{name}"),
             None => name,
         };
         // The leading value (`b: c { … }`) emits `<full>: c;` before children.
-        if let Some(value_expr) = &ps.value {
-            let value = self.eval_expr(value_expr)?;
+        if !value.is_empty() {
+            let value = self.eval_values(value)?;
             if !matches!(value, Value::Null) {
                 if let Some(m) = find_map(&value) {
                     return Err(Error::at(
                         format!("{} isn't a valid CSS value.", m.to_css(false)),
-                        ps.pos,
+                        pos,
                     ));
                 }
                 let vstr = value.to_css(self.compressed());
                 sink.push_item(OutItem::Decl {
                     prop: full.clone(),
                     value: vstr,
-                    important: ps.important,
+                    important: d.important.is_some(),
                     custom: false,
                     // No usable end line of its own (the value precedes the
                     // `{…}` block); the trailing-comment rule stays disabled.
@@ -2994,7 +3037,12 @@ impl<'a> Evaluator<'a> {
             }
         }
         let saved = self.decl_prefix.replace(full);
-        let result = self.exec(&ps.body, parents, sink);
+        let result = self.exec(
+            &nested.block.statements,
+            nested.block.span,
+            parents,
+            sink,
+        );
         self.decl_prefix = saved;
         result
     }
