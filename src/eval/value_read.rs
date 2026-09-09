@@ -199,6 +199,15 @@ pub(crate) fn rest_of<'a>(params: Option<&'a ox::SassParameters<'a>>) -> Option<
     params?.arbitrary_param.as_ref().map(|a| a.name.name.name)
 }
 
+/// Whether a component value is a bare `=` token.
+///
+/// The proprietary Microsoft filter syntax (`alpha(opacity=80)`) uses a single
+/// `=` as an operator, which no value grammar owns — the parser leaves it as a
+/// raw token for the evaluator to join across.
+pub(crate) fn is_equal(v: &ox::ComponentValue<'_>) -> bool {
+    matches!(v, ox::ComponentValue::TokenWithSpan(t) if matches!(t.token, Token::Equal(..)))
+}
+
 /// Whether a component value is a bare `:` token.
 ///
 /// The modern CSS `if()` separates a clause's condition from its value with

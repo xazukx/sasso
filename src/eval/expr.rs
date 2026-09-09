@@ -1,4 +1,4 @@
-use super::value_read::{Arg, args_of, is_solidus, split_commas};
+use super::value_read::{Arg, args_of, is_equal, is_solidus, split_commas};
 use super::*;
 
 impl<'a> Evaluator<'a> {
@@ -128,6 +128,26 @@ impl<'a> Evaluator<'a> {
                 let slash = self.calc_depth == 0 && lhs_ok && rhs_ok;
                 elems.push(eval_div(lhs, rhs, slash, self.file.pos(op))?);
                 slashy.push(slash);
+                i += 1;
+                continue;
+            }
+            if is_equal(&values[i]) {
+                // The single-`=` Microsoft-filter operator: the lowest-
+                // precedence value operator, joining both sides with `=` and no
+                // spaces as one unquoted string.
+                i += 1;
+                let Some(rhs_node) = values.get(i) else { break };
+                let rhs = self.eval_value(rhs_node)?;
+                let lhs = elems.pop().unwrap_or(Value::Str(SassStr {
+                    text: String::new().into(),
+                    quoted: false,
+                }));
+                slashy.pop();
+                elems.push(Value::Str(SassStr {
+                    text: format!("{}={}", lhs.to_css(false), rhs.to_css(false)).into(),
+                    quoted: false,
+                }));
+                slashy.push(false);
                 i += 1;
                 continue;
             }
