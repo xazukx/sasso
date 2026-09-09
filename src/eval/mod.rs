@@ -2567,10 +2567,8 @@ impl<'a> Evaluator<'a> {
             }
             (Some(P::SassInclude(inc)), block) => {
                 let (member, module) = include_target(&inc.name);
-                let args = value_read::args_of(
-                    inc.arguments.as_ref().map_or(&[], |a| &a.args),
-                    false,
-                );
+                let args =
+                    value_read::args_presplit(inc.arguments.as_ref().map_or(&[], |a| &a.args));
                 let content_params = inc
                     .content_block_params
                     .as_ref()
@@ -2593,7 +2591,7 @@ impl<'a> Evaluator<'a> {
             }
             (prelude, None) if name.eq_ignore_ascii_case("content") => {
                 let args = match prelude {
-                    Some(P::SassContent(c)) => value_read::args_of(&c.args, false),
+                    Some(P::SassContent(c)) => value_read::args_presplit(&c.args),
                     _ => Vec::new(),
                 };
                 // The content block runs in the caller's context, so it is no

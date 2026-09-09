@@ -76,6 +76,39 @@ pub(crate) fn args_of<'a>(
     out
 }
 
+/// Read an argument list the parser already split for us.
+///
+/// `@include` and `@content` report their arguments as one node each with the
+/// commas held separately (`SassIncludeArgs::comma_spans`), unlike a function
+/// call, whose arguments arrive as one flat run with `Delimiter::Comma` in it.
+pub(crate) fn args_presplit<'a>(args: &'a [ox::ComponentValue<'a>]) -> Vec<Arg<'a>> {
+    args.iter().map(arg_of).collect()
+}
+
+/// One already-separated argument.
+fn arg_of<'a>(value: &'a ox::ComponentValue<'a>) -> Arg<'a> {
+    match value {
+        ox::ComponentValue::SassKeywordArgument(k) => Arg {
+            name: Some(k.name.name.name),
+            values: std::slice::from_ref(&k.value),
+            splat: false,
+            span: k.span,
+        },
+        ox::ComponentValue::SassArbitraryArgument(a) => Arg {
+            name: None,
+            values: std::slice::from_ref(&a.value),
+            splat: true,
+            span: a.span,
+        },
+        other => Arg {
+            name: None,
+            values: std::slice::from_ref(other),
+            splat: false,
+            span: *other.span(),
+        },
+    }
+}
+
 /// A value run grouped into its top-level elements and the separator that
 /// joined them.
 pub(crate) struct Group<'a> {
