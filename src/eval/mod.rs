@@ -216,7 +216,7 @@ fn new_fn_scope<'a>() -> FnScope<'a> {
 /// against ITS file's `@use "sass:list"`, not whatever the caller has bound
 /// (uswds `units()`, quasar `str-fe()`).
 #[derive(Clone)]
-pub struct EnvModules {
+pub struct EnvModules<'a> {
     pub(self) used_modules: HashMap<String, String>,
     pub(self) star_modules: Vec<String>,
     pub(self) used_user_modules: HashMap<String, Rc<Module<'a>>>,
@@ -907,7 +907,7 @@ pub struct Evaluator<'a> {
     loading: Vec<String>,
     /// Per-compile `@import` cache (dart-sass ImportCache analogue): keyed by
     /// (url, importing dir), holding (resolved key, syntax, parsed sheet).
-    import_cache: HashMap<(String, Option<String>), CachedImport>,
+    import_cache: HashMap<(String, Option<String>), CachedImport<'a>>,
     /// The current file's interned diagnostic id for [`Self::stamp`], or 0
     /// when not yet interned. Every `current_url` assignment resets it.
     current_url_stamp: u32,
@@ -918,7 +918,7 @@ pub struct Evaluator<'a> {
     functions: Vec<FnScope<'a>>,
     mixins: Vec<FnScope<'a>>,
     /// Stack of `@content` blocks, one per active `@include`.
-    content_stack: Vec<Option<ContentBlock>>,
+    content_stack: Vec<Option<ContentBlock<'a>>>,
     /// Whether we are *directly* executing a mixin body (dart-sass `_inMixin`).
     /// `true` is pushed while a mixin body runs; running a `@content` block or a
     /// function body pushes `false` (those execute in the caller's context), so
@@ -1091,7 +1091,7 @@ pub struct Evaluator<'a> {
     module_cache: Rc<RefCell<HashMap<String, Rc<Module<'a>>>>>,
     /// Members re-exported from the module currently being evaluated, collected
     /// from its `@forward` rules. Empty when not evaluating a module.
-    forwarded: Forwarded,
+    forwarded: Forwarded<'a>,
     /// Configuration (`@use/@forward ... with`) supplied for the module
     /// currently being evaluated, consumed by its `!default` declarations.
     /// Maps variable name -> (value, is_default_override).
@@ -1185,8 +1185,8 @@ struct Module<'a> {
     /// Top-level functions/mixins (the module's global frame). Shared by Rc
     /// with the chains the module's own callables captured, so they resolve
     /// each other (and forwarded members merged after evaluation).
-    functions: FnScope,
-    mixins: FnScope,
+    functions: FnScope<'a>,
+    mixins: FnScope<'a>,
     /// Namespaced user modules this module `@use`d (for transitive `ns.fn()`
     /// calls evaluated inside this module's own functions/mixins).
     used_user_modules: HashMap<String, Rc<Module<'a>>>,
@@ -1326,11 +1326,14 @@ impl<'a> Module<'a> {
 /// A `@content` block plus, when the enclosing `@include` targets a mixin from
 /// another module, a snapshot of the call-site environment in which the content
 /// must run (dart-sass: a content block closes over its definition site).
-struct ContentBlock {
-    stmts: Rc<Vec<Stmt>>,
+struct ContentBlock<'a> {
+    /// The content block itself — the `@include`'s own `{ … }`, still in
+    /// the arena, together with the file it was written in.
+    block: &'a ox::SimpleBlock<'a>,
+    file: &'a SourceFile<'a>,
     /// The `using (params)` clause's parameters; `@content(args)` binds its
     /// arguments to these before the block runs.
-    params: Option<Rc<ParamList>>,
+    params: Option<&'a ox::SassParameters<'a>>,
     /// `Some` only for a cross-module include: the environment to install while
     /// the block runs, so the content resolves against the call site, not the
     /// mixin's module.
@@ -1340,7 +1343,7 @@ struct ContentBlock {
 /// The caller-side environment saved while a cross-module member call runs in
 /// the callee module's environment.
 #[derive(Clone)]
-struct SavedModuleEnv {
+struct SavedModuleEnv<'a> {
     scopes: Vec<Scope>,
     /// Definition spans parallel to `scopes` (source-map only).
     var_spans: Vec<SpanScope>,
@@ -1359,7 +1362,7 @@ struct SavedModuleEnv {
 
 /// Members a module re-exports via `@forward`, accumulated while it evaluates.
 #[derive(Default)]
-struct Forwarded {
+struct Forwarded<'a> {
     vars: HashMap<String, Value>,
     /// Definition spans for `vars`, keyed identically (source-map only): a
     /// forwarded variable keeps pointing at the `$x: <value>` that defined it
@@ -1378,9 +1381,9 @@ struct Forwarded {
     /// For each re-exported member name, the source module it came from (by
     /// pointer). Re-forwarding the SAME module is idempotent (no conflict);
     /// forwarding a same-named member from a DIFFERENT module is a conflict.
-    var_src: HashMap<String, *const Module>,
-    fn_src: HashMap<String, *const Module>,
-    mixin_src: HashMap<String, *const Module>,
+    var_src: HashMap<String, *const Module<'a>>,
+    fn_src: HashMap<String, *const Module<'a>>,
+    mixin_src: HashMap<String, *const Module<'a>>,
 }
 
 /// A built-in module re-exported via `@forward "sass:x" [as p-*] [show|hide ...]`.
@@ -1616,7 +1619,12 @@ impl<'a> Evaluator<'a> {
     /// `!default` over an existing value, or a `@use … with` override) and
     /// `value` is therefore the value already in effect rather than one this
     /// declaration computed.
-    fn record_variable_value(&mut self, v: &VarDecl, value: &Value, evaluated: bool) {
+    fn record_variable_value(
+        &mut self,
+        v: &'a ox::SassVariableDeclaration<'a>,
+        value: &Value,
+        evaluated: bool,
+    ) {
         if !self.options.record_variable_values {
             return;
         }
@@ -1647,10 +1655,14 @@ impl<'a> Evaluator<'a> {
         );
     }
 
-    pub fn eval_sheet(&mut self, sheet: &Stylesheet, out: &mut Vec<OutNode>) -> Result<(), Error> {
+    pub fn eval_sheet(
+        &mut self,
+        sheet: &'a ox::Stylesheet<'a>,
+        out: &mut Vec<OutNode>,
+    ) -> Result<(), Error> {
         {
             let mut sink = Sink::Top(out);
-            let r = self.exec(&sheet.stmts, &[], &mut sink);
+            let r = self.exec(&sheet.statements, sheet.span, &[], &mut sink);
             // At the outermost boundary, finalize any error into a rendered
             // diagnostic block (header + snippet + frames) if we have a span.
             if let Err(e) = r {
@@ -1851,7 +1863,7 @@ impl<'a> Evaluator<'a> {
     /// by shifting across the interpolations before it.
     fn interp_selector_error(
         &self,
-        rule: &Rule,
+        selector: Span,
         sel_str: &str,
         interp_bounds: &[(usize, usize)],
         at_idx: usize,
@@ -2058,8 +2070,12 @@ impl<'a> Evaluator<'a> {
     /// Execute a `@warn`: emit `WARNING: <message>` + the 4-space-indented stack
     /// trace + a trailing blank line to stderr. The message is the string value
     /// unquoted; exit code is unaffected.
-    fn emit_warn(&mut self, value: &Expr, pos: Pos) -> Result<(), Error> {
-        let v = self.eval_expr(value)?;
+    fn emit_warn(
+        &mut self,
+        value: &'a ox::ComponentValue<'a>,
+        pos: Pos,
+    ) -> Result<(), Error> {
+        let v = self.eval_value(value)?;
         let msg = v.to_message();
         let formatted = if self.diag_enabled() {
             let frames = self.frames_for(pos);
@@ -2081,8 +2097,12 @@ impl<'a> Evaluator<'a> {
 
     /// Execute a `@debug`: emit `<path>:<line> DEBUG: <value>` to stderr (the
     /// value serialized as in CSS, a string unquoted). No snippet, no frames.
-    fn emit_debug(&mut self, value: &Expr, pos: Pos) -> Result<(), Error> {
-        let v = self.eval_expr(value)?;
+    fn emit_debug(
+        &mut self,
+        value: &'a ox::ComponentValue<'a>,
+        pos: Pos,
+    ) -> Result<(), Error> {
+        let v = self.eval_value(value)?;
         let msg = v.to_message();
         let url = self.current_url.clone();
         let formatted = if self.diag_enabled() {
@@ -2107,8 +2127,13 @@ impl<'a> Evaluator<'a> {
     /// call site (so an `@error` inside a mixin highlights the `@include`), or
     /// at the `@error` statement itself when there is no enclosing call. dart's
     /// "unspanned exception attaches at the boundary" rule.
-    fn build_error(&mut self, value: &Expr, pos: Pos, length: usize) -> Error {
-        let msg = match self.eval_expr(value) {
+    fn build_error(
+        &mut self,
+        value: &'a ox::ComponentValue<'a>,
+        pos: Pos,
+        length: usize,
+    ) -> Error {
+        let msg = match self.eval_value(value) {
             Ok(v) => v.to_error_message(),
             Err(e) => return e,
         };
@@ -2477,7 +2502,7 @@ impl<'a> Evaluator<'a> {
             }
             (Some(P::SassInclude(inc)), block) => {
                 let (member, module) = include_target(&inc.name);
-                let args = super::value_read::args_of(
+                let args = value_read::args_of(
                     inc.arguments.as_ref().map_or(&[], |a| &a.args),
                     false,
                 );
@@ -2503,7 +2528,7 @@ impl<'a> Evaluator<'a> {
             }
             (prelude, None) if name.eq_ignore_ascii_case("content") => {
                 let args = match prelude {
-                    Some(P::SassContent(c)) => super::value_read::args_of(&c.args, false),
+                    Some(P::SassContent(c)) => value_read::args_of(&c.args, false),
                     _ => Vec::new(),
                 };
                 // The content block runs in the caller's context, so it is no
@@ -2546,7 +2571,7 @@ impl<'a> Evaluator<'a> {
                 let paths: Vec<(String, Span)> = imp
                     .paths
                     .iter()
-                    .map(|p| (unquote_raw(p.raw).to_string(), p.span))
+                    .map(|p| (expr::unquote_raw(p.raw).to_string(), p.span))
                     .collect();
                 self.eval_imports(&paths, parents, sink)?
             }
@@ -2629,13 +2654,13 @@ impl<'a> Evaluator<'a> {
     fn module_config(
         &mut self,
         config: Option<&'a ox::SassModuleConfig<'a>>,
-    ) -> Result<Vec<ConfigEntry>, Error> {
+    ) -> Result<Vec<modules::ConfigEntry>, Error> {
         let Some(config) = config else {
             return Ok(Vec::new());
         };
         let mut out = Vec::with_capacity(config.items.len());
         for item in &config.items {
-            out.push(ConfigEntry {
+            out.push(modules::ConfigEntry {
                 name: item.variable.name.name.to_string(),
                 value: self.eval_value(&item.value)?,
                 // `!default` on a `@forward … with` entry: the override only
@@ -2956,7 +2981,7 @@ impl<'a> Evaluator<'a> {
         let prop = trim_owned(self.decl_name(d)?);
         // A custom property's value is text as dart-sass reads it: only
         // `#{...}` resolves, everything else is emitted exactly as written.
-        let value_span = super::value_read::values_span(&d.value);
+        let value_span = value_read::values_span(&d.value);
         let value = self.interpolate(value_span)?;
         let pos = self.file.pos(d.span);
         // A custom property is serialized inside `_for(node.value, …)`
@@ -3454,92 +3479,57 @@ impl<'a> Evaluator<'a> {
     }
 }
 
-/// Whether a calc space-list item is a substitution that makes the unparsed
-/// run legal: a `#{…}` interpolation, or a `var()`/`env()` reference (which
-/// the parser lowers to an [`Expr::Ident`] whose text begins with `var(`/
-/// `env(`, possibly after a vendor prefix). A plain ident, number, nested
-/// calc, or variable is NOT a substitution.
-/// Whether a property-name template begins, *literally*, with `--` (a custom
-/// property). A name whose first piece is `#{…}` interpolation is not literal,
-/// so `#{--b}` is allowed to namespace inside a property set while a written
-/// `--b` is not.
-fn literal_name_is_custom_property(property: &[TplPiece]) -> bool {
-    match property.first() {
-        Some(TplPiece::Lit(s)) => s.trim_start().starts_with("--"),
-        _ => false,
-    }
-}
-
-fn expr_has_substitution(e: &Expr) -> bool {
-    match e {
-        Expr::Interp(_) => true,
-        // `var()`/`env()` are parsed as plain function calls; inside a calc
-        // space-list they are legal substitutions (`calc(var(--c) 1)`).
-        Expr::Func { name, .. } => name.eq_ignore_ascii_case("var") || name.eq_ignore_ascii_case("env"),
-        Expr::Ident(pieces) => pieces.iter().any(|p| match p {
-            TplPiece::Interp(_) => true,
-            TplPiece::Lit(s) => {
-                let lower = s.trim_start().to_ascii_lowercase();
-                lower.starts_with("var(") || lower.starts_with("env(")
-            }
-        }),
-        _ => false,
-    }
-}
-
-/// Whether an expression tree contains a calculation substitution — a
-/// `var()`/`env()` reference or an interpolation — anywhere within it
-/// (recursing through operations, parentheses, nested calculations, and
-/// lists). Used to decide whether a legacy global math function such as `abs()`
-/// is being used as a CSS calculation (so its argument is preserved) rather
-/// than as the deprecated Sass global.
-fn expr_contains_calc_substitution(e: &Expr) -> bool {
-    if expr_has_substitution(e) {
-        return true;
-    }
-    match e {
-        Expr::Binary { lhs, rhs, .. } => {
-            expr_contains_calc_substitution(lhs) || expr_contains_calc_substitution(rhs)
-        }
-        Expr::Div { lhs, rhs, .. } => {
-            expr_contains_calc_substitution(lhs) || expr_contains_calc_substitution(rhs)
-        }
-        Expr::Unary { operand, .. } => expr_contains_calc_substitution(operand),
-        Expr::Paren(inner) => expr_contains_calc_substitution(inner),
-        Expr::Calc { inner } => expr_contains_calc_substitution(inner),
-        Expr::List { items, .. } => items.iter().any(expr_contains_calc_substitution),
-        _ => false,
-    }
-}
-
 /// Collect the names of every `$var: ... !global` declaration nested inside
 /// block statements (rules, conditionals, loops, mixins are NOT entered —
 /// dart-sass registers slots for statically visible nested globals in rules
 /// and control flow). Top-level declarations register themselves on
 /// evaluation.
-fn collect_global_var_decls(stmts: &[Stmt], out: &mut Vec<String>) {
+fn collect_global_var_decls<'a>(stmts: &'a [ox::Statement<'a>], out: &mut Vec<String>) {
     for stmt in stmts {
         match stmt {
-            Stmt::VarDecl(v) if v.is_global && v.namespace.is_none() => out.push(v.name.clone()),
-            Stmt::Rule(r) => collect_global_var_decls(&r.body, out),
-            Stmt::If(branches) => {
-                for b in branches {
-                    collect_global_var_decls(&b.body, out);
+            ox::Statement::SassVariableDeclaration(v)
+                if v.namespace.is_none() && has_flag(&v.flags, "global") =>
+            {
+                out.push(v.name.name.name.to_string())
+            }
+            ox::Statement::QualifiedRule(r) => {
+                collect_global_var_decls(&r.block.statements, out)
+            }
+            ox::Statement::SassIfAtRule(node) => {
+                collect_global_var_decls(&node.if_clause.block.statements, out);
+                for c in &node.else_if_clauses {
+                    collect_global_var_decls(&c.block.statements, out);
+                }
+                if let Some(block) = &node.else_clause {
+                    collect_global_var_decls(&block.statements, out);
                 }
             }
-            Stmt::For { body, .. }
-            | Stmt::Each { body, .. }
-            | Stmt::While { body, .. }
-            | Stmt::Media { body, .. }
-            | Stmt::Supports { body, .. }
-            | Stmt::AtRoot { body, .. }
-            | Stmt::Keyframes { body, .. } => collect_global_var_decls(body, out),
-            Stmt::AtRule { body: Some(b), .. } => collect_global_var_decls(b, out),
+            ox::Statement::AtRule(at) => {
+                // A `@mixin`/`@function` body is not statically visible: its
+                // globals register when it runs.
+                let opaque = matches!(
+                    at.prelude,
+                    Some(ox::AtRulePrelude::SassMixin(_))
+                        | Some(ox::AtRulePrelude::SassFunction(_))
+                );
+                if !opaque {
+                    if let Some(block) = &at.block {
+                        collect_global_var_decls(&block.statements, out);
+                    }
+                }
+            }
             _ => {}
         }
     }
 }
 
+/// Whether a `!flag` list carries `name` (matched case-insensitively, as
+/// dart-sass reads flags).
+pub(crate) fn has_flag(flags: &[ox::SassFlag<'_>], name: &str) -> bool {
+    flags
+        .iter()
+        .any(|f| f.keyword.name.eq_ignore_ascii_case(name))
+}
 /// Nest module CSS under the style rule enclosing an `@import` (descendant
 /// join on every top-level rule, recursing into at-rule bodies). dart-sass
 /// clones the module's CSS into the current parent; a top-level import
@@ -3607,37 +3597,6 @@ fn reparent_nodes(nodes: Vec<OutNode>, parents: &[String]) -> Vec<OutNode> {
     }
     out.extend(rest);
     out
-}
-
-/// Whether an expression contains a SassScript-only operator (`%`, a
-/// comparison, boolean logic) that can never appear in a CSS calculation.
-/// dart-sass's parser then treats the whole call as a plain function rather
-/// than a calculation (`round(7 % 3, 1)` is the legacy one-argument
-/// `math.round` — an arity error).
-fn expr_has_non_calc_op(e: &Expr) -> bool {
-    match e {
-        Expr::Binary { op, lhs, rhs, .. } => {
-            matches!(
-                op,
-                BinOp::Mod
-                    | BinOp::Eq
-                    | BinOp::Neq
-                    | BinOp::Lt
-                    | BinOp::Gt
-                    | BinOp::Le
-                    | BinOp::Ge
-                    | BinOp::And
-                    | BinOp::Or
-                    | BinOp::SingleEq
-            ) || expr_has_non_calc_op(lhs)
-                || expr_has_non_calc_op(rhs)
-        }
-        Expr::Div { lhs, rhs, .. } => expr_has_non_calc_op(lhs) || expr_has_non_calc_op(rhs),
-        Expr::Unary { operand, .. } => expr_has_non_calc_op(operand),
-        Expr::Paren(inner) => expr_has_non_calc_op(inner),
-        Expr::List { items, .. } => items.iter().any(expr_has_non_calc_op),
-        _ => false,
-    }
 }
 
 /// The inspect-style spelling of a value rejected from a calculation, for
@@ -4142,17 +4101,6 @@ fn validate_decl_stmt(stmt: &Stmt, ctx: ScopeCtx) -> Result<(), Error> {
         }
     }
     Ok(())
-}
-
-/// True when a rule selector is the empty-`()` artifact the indented-syntax
-/// parser emits for a `@function` header whose parameter list spills onto a
-/// continuation line. dart-sass treats `()` there as the parameter list, never
-/// a selector, so it must not count as a style rule inside a `@function` body.
-fn is_empty_parens_selector(selector: &[TplPiece]) -> bool {
-    match selector {
-        [TplPiece::Lit(s)] => s.trim() == "()",
-        _ => false,
-    }
 }
 
 /// Entering a control directive: a `@function`/`@mixin` body keeps its own
@@ -4727,34 +4675,41 @@ fn mixin_frame_name(name: &str, _module: &Option<String>) -> String {
     format!("{name}()")
 }
 
-/// Whether a mixin body contains a reachable `@content`. dart-sass scans the
-/// whole body tree — control flow, at-rules, nested style rules, and nested
-/// `@include` content blocks all count (nested mixin/function definitions are
-/// disallowed by the grammar, so there is no separate scope to exclude).
-fn body_uses_content(body: &[Stmt]) -> bool {
-    body.iter().any(stmt_uses_content)
+/// Whether a block mentions `@content` anywhere below it. Style rules,
+/// control flow, at-rule bodies and `@include` content blocks all count
+/// (nested mixin/function definitions are disallowed by the grammar, so there
+/// is no separate scope to exclude).
+fn body_uses_content<'a>(block: &'a ox::SimpleBlock<'a>) -> bool {
+    block.statements.iter().any(stmt_uses_content)
 }
 
-fn stmt_uses_content(stmt: &Stmt) -> bool {
+fn stmt_uses_content<'a>(stmt: &'a ox::Statement<'a>) -> bool {
     match stmt {
-        Stmt::Content { .. } => true,
-        Stmt::Rule(r) => body_uses_content(&r.body),
-        Stmt::If(branches) => branches.iter().any(|b| body_uses_content(&b.body)),
-        Stmt::For { body, .. }
-        | Stmt::Each { body, .. }
-        | Stmt::While { body, .. }
-        | Stmt::Media { body, .. }
-        | Stmt::AtRoot { body, .. }
-        | Stmt::Keyframes { body, .. } => body_uses_content(body),
-        Stmt::AtRule { body: Some(body), .. } => body_uses_content(body),
-        Stmt::Include {
-            content: Some(content),
-            ..
-        } => body_uses_content(content),
+        ox::Statement::AtRule(at) => {
+            if at.name.name.eq_ignore_ascii_case("content") {
+                return true;
+            }
+            at.block.as_ref().is_some_and(|b| body_uses_content(b))
+        }
+        ox::Statement::QualifiedRule(r) => body_uses_content(&r.block),
+        ox::Statement::SassIfAtRule(node) => {
+            body_uses_content(&node.if_clause.block)
+                || node
+                    .else_if_clauses
+                    .iter()
+                    .any(|c| body_uses_content(&c.block))
+                || node.else_clause.as_ref().is_some_and(body_uses_content)
+        }
+        ox::Statement::Declaration(d) => match d.value.last() {
+            Some(ox::ComponentValue::SassNestingDeclaration(n)) => body_uses_content(&n.block),
+            _ => false,
+        },
+        ox::Statement::UnknownSassAtRule(at) => {
+            at.block.as_ref().is_some_and(|b| body_uses_content(b))
+        }
         _ => false,
     }
 }
-
 /// Validate a (post-interpolation) selector string against the subset of
 /// dart-sass's parser rules this build can safely enforce:
 ///   * `&` may appear only at the beginning of a compound selector (so `b&`,
@@ -7094,43 +7049,6 @@ impl ResolvedQuery {
             s.push_str(c);
         }
         s
-    }
-}
-
-/// Serialize a comma list of media queries.
-/// Whether a parsed media query contains `#{}` interpolation anywhere.
-fn media_query_has_interp(q: &MediaQuery) -> bool {
-    fn tpl(t: &[TplPiece]) -> bool {
-        t.iter().any(|p| matches!(p, TplPiece::Interp(_)))
-    }
-    fn expr(e: &Expr) -> bool {
-        match e {
-            Expr::Interp(_) => true,
-            Expr::Ident(t) | Expr::QuotedString(t) => tpl(t),
-            Expr::Paren(inner) | Expr::Unary { operand: inner, .. } => expr(inner),
-            Expr::Binary { lhs, rhs, .. } | Expr::Div { lhs, rhs, .. } => expr(lhs) || expr(rhs),
-            Expr::List { items, .. } => items.iter().any(expr),
-            _ => false,
-        }
-    }
-    fn in_parens(c: &MediaInParens) -> bool {
-        match c {
-            MediaInParens::Feature(f) => match &**f {
-                MediaFeature::Decl { name, value } => expr(name) || value.as_ref().is_some_and(expr),
-                MediaFeature::Range {
-                    first, second, rest, ..
-                } => expr(first) || expr(second) || rest.as_ref().is_some_and(|(_, e)| expr(e)),
-            },
-            MediaInParens::Not(inner) => in_parens(inner),
-            MediaInParens::Group { conditions, .. } => conditions.iter().any(in_parens),
-            MediaInParens::Interp(_) => true,
-        }
-    }
-    match q {
-        MediaQuery::Type {
-            mtype, conditions, ..
-        } => tpl(mtype) || conditions.iter().any(in_parens),
-        MediaQuery::Condition { conditions, .. } => conditions.iter().any(in_parens),
     }
 }
 
