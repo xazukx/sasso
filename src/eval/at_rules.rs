@@ -1,3 +1,4 @@
+use super::value_read::values_span;
 use super::*;
 
 impl<'a> Evaluator<'a> {
@@ -8,14 +9,14 @@ impl<'a> Evaluator<'a> {
     pub(super) fn eval_at_rule(
         &mut self,
         name: &str,
-        prelude: &[TplPiece],
-        body: Option<&[Stmt]>,
+        prelude: Option<Span>,
+        body: Option<&'a ox::SimpleBlock<'a>>,
         lines: SrcLines,
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
-        let prelude = self.eval_template(prelude)?;
-        let Some(stmts) = body else {
+        let prelude = self.prelude_text(prelude)?;
+        let Some(block) = body else {
             // dart-sass strips a top-level (or bubbled-out) `@charset` entirely,
             // but keeps one that appears inside a style rule's block.
             if name == "charset" && !sink.is_rule() {
@@ -42,7 +43,7 @@ impl<'a> Evaluator<'a> {
         // declarations in nested contexts that would otherwise reject them
         // (a `@media` directly inside `@utility`).
         let saved_unknown = std::mem::replace(&mut self.in_unknown_at_rule, true);
-        let out_body = self.eval_at_body(stmts, body_parents);
+        let out_body = self.eval_at_body(block, body_parents);
         self.in_unknown_at_rule = saved_unknown;
         let out_body = out_body?;
         sink.push_at_rule(OutNode::AtRule {
@@ -55,55 +56,23 @@ impl<'a> Evaluator<'a> {
         Ok(())
     }
 
-    /// Evaluate a plain CSS custom `@function`/`@mixin`: resolve the prelude
-    /// and each body declaration (verbatim values keep their literal text;
-    /// interpolated-property declarations evaluate as SassScript), then emit the
-    /// whole construct verbatim as a generic at-rule.
-    pub(super) fn eval_css_custom_at_rule(
-        &mut self,
-        name: &str,
-        prelude: &[TplPiece],
-        body: &[CssCustomItem],
-        sink: &mut Sink<'_>,
-    ) -> Result<(), Error> {
-        let prelude = self.eval_template(prelude)?;
-        let mut out_body: Vec<OutNode> = Vec::new();
-        for item in body {
-            let prop = self.eval_template(&item.property)?;
-            match &item.value {
-                CssCustomValue::Raw(tpl) => {
-                    let raw = self.eval_template(tpl)?;
-                    out_body.push(OutNode::Raw(format!("{prop}:{raw};")));
-                }
-                CssCustomValue::Script(expr) => {
-                    let value = self.eval_expr(expr)?.to_css(self.compressed());
-                    out_body.push(OutNode::Raw(format!("{prop}: {value};")));
-                }
-                // A nested property set on an interpolated property: each
-                // child emits as `property-suffix: value`.
-                CssCustomValue::Set(children) => {
-                    for (suffix, expr) in children {
-                        let sfx = self.eval_template(suffix)?;
-                        let value = self.eval_expr(expr)?.to_css(self.compressed());
-                        out_body.push(OutNode::Raw(format!("{prop}-{sfx}: {value};")));
-                    }
-                }
-            }
+    /// An at-rule prelude's text, with `#{...}` resolved. An at-rule with no
+    /// prelude at all (`@font-face`) has empty text.
+    pub(super) fn prelude_text(&mut self, prelude: Option<Span>) -> Result<String, Error> {
+        match prelude {
+            Some(span) => Ok(trim_owned(self.interpolate(span)?)),
+            None => Ok(String::new()),
         }
-        sink.push_at_rule(OutNode::AtRule {
-            name: name.to_string(),
-            prelude,
-            body: out_body,
-            has_block: true,
-            lines: SrcLines::default(),
-        });
-        Ok(())
     }
 
     /// Run an at-rule body, producing its output node list. When the at-rule
     /// is nested under a style rule, bare declarations are wrapped in the
     /// enclosing selectors; at the document root they emit directly.
-    fn eval_at_body(&mut self, stmts: &[Stmt], parents: &[String]) -> Result<Vec<OutNode>, Error> {
+    fn eval_at_body(
+        &mut self,
+        block: &'a ox::SimpleBlock<'a>,
+        parents: &[String],
+    ) -> Result<Vec<OutNode>, Error> {
         self.push_scope(false);
         // The at-rule body's trailing-invisible tracking is its own; the
         // exec arm that called us reports the at-rule itself to the parent.
@@ -331,7 +300,7 @@ impl<'a> Evaluator<'a> {
     /// evaluating SassScript inside feature values.
     pub(super) fn resolve_media_queries(
         &mut self,
-        list: &MediaQueryList,
+        list: &'a ox::MediaQueryList<'a>,
     ) -> Result<Vec<ResolvedQuery>, Error> {
         let mut out = Vec::with_capacity(list.queries.len());
         for q in &list.queries {
@@ -341,26 +310,25 @@ impl<'a> Evaluator<'a> {
         // .parseList), so interpolation may span query boundaries
         // (`scr#{"een, pri"}nt` splits into two queries). Only a prelude that
         // actually contained interpolation needs the round-trip.
-        if list.queries.iter().any(media_query_has_interp) {
+        if self.has_interp(list.span) {
             let text = serialize_media_queries(&out, self.compressed());
             return css_media_parse_list(&text);
         }
         Ok(out)
     }
 
-    fn resolve_media_query(&mut self, q: &MediaQuery) -> Result<ResolvedQuery, Error> {
+    fn resolve_media_query(
+        &mut self,
+        q: &'a ox::MediaQuery<'a>,
+    ) -> Result<ResolvedQuery, Error> {
         match q {
-            MediaQuery::Type {
-                modifier,
-                mtype,
-                conditions,
-            } => {
-                let mtype = self.eval_template(mtype)?;
-                let modifier = match modifier {
-                    Some(t) => Some(self.eval_template(t)?),
-                    None => None,
+            ox::MediaQuery::WithType(t) => {
+                let mtype = self.eval_interp_ident(&t.media_type)?;
+                let modifier = t.modifier.as_ref().map(|m| m.name.to_string());
+                let conditions = match &t.condition {
+                    Some(c) => self.resolve_media_condition(&c.condition)?,
+                    None => Vec::new(),
                 };
-                let conditions = self.resolve_conditions(conditions)?;
                 Ok(ResolvedQuery {
                     modifier,
                     mtype: Some(mtype),
@@ -368,82 +336,115 @@ impl<'a> Evaluator<'a> {
                     conjunction_and: true,
                 })
             }
-            MediaQuery::Condition {
-                conditions,
-                conjunction,
-            } => Ok(ResolvedQuery {
+            ox::MediaQuery::ConditionOnly(c) => Ok(ResolvedQuery {
                 modifier: None,
                 mtype: None,
-                conditions: self.resolve_conditions(conditions)?,
-                conjunction_and: matches!(conjunction, Conjunction::And),
+                conditions: self.resolve_media_condition(c)?,
+                conjunction_and: !condition_is_or(c),
+            }),
+            // A query the typed grammar could not read is spliced text (a
+            // Sass interpolation standing for a whole query).
+            other => Ok(ResolvedQuery {
+                modifier: None,
+                mtype: None,
+                conditions: vec![self.interpolate(*other.span())?],
+                conjunction_and: true,
             }),
         }
     }
 
-    fn resolve_conditions(&mut self, conds: &[MediaInParens]) -> Result<Vec<String>, Error> {
-        let mut out = Vec::with_capacity(conds.len());
-        for c in conds {
-            out.push(self.serialize_media_in_parens(c)?);
+    fn resolve_media_condition(
+        &mut self,
+        c: &'a ox::MediaCondition<'a>,
+    ) -> Result<Vec<String>, Error> {
+        let mut out = Vec::with_capacity(c.conditions.len());
+        for k in &c.conditions {
+            out.push(match k {
+                ox::MediaConditionKind::MediaInParens(p) => {
+                    self.serialize_media_in_parens(p)?
+                }
+                ox::MediaConditionKind::And(a) => {
+                    self.serialize_media_in_parens(&a.media_in_parens)?
+                }
+                ox::MediaConditionKind::Or(o) => {
+                    self.serialize_media_in_parens(&o.media_in_parens)?
+                }
+                ox::MediaConditionKind::Not(n) => {
+                    format!("not {}", self.serialize_media_in_parens(&n.media_in_parens)?)
+                }
+            });
         }
         Ok(out)
     }
 
-    fn serialize_media_in_parens(&mut self, c: &MediaInParens) -> Result<String, Error> {
-        match c {
-            MediaInParens::Feature(f) => {
+    fn serialize_media_in_parens(
+        &mut self,
+        p: &'a ox::MediaInParens<'a>,
+    ) -> Result<String, Error> {
+        match &p.kind {
+            ox::MediaInParensKind::MediaFeature(f) => {
                 let inner = self.serialize_media_feature(f)?;
                 Ok(format!("({inner})"))
             }
-            MediaInParens::Not(inner) => Ok(format!("not {}", self.serialize_media_in_parens(inner)?)),
-            MediaInParens::Group {
-                conditions,
-                conjunction,
-            } => {
-                let parts = self.resolve_conditions(conditions)?;
-                let sep = if matches!(conjunction, Conjunction::And) {
-                    " and "
-                } else {
-                    " or "
-                };
+            ox::MediaInParensKind::MediaCondition(c) => {
+                let parts = self.resolve_media_condition(c)?;
+                let sep = if condition_is_or(c) { " or " } else { " and " };
                 Ok(format!("({})", parts.join(sep)))
             }
-            MediaInParens::Interp(e) => {
-                let v = self.eval_expr(e)?;
-                interp_checked(&v)
+            // Raw interpolation spliced into the query verbatim, e.g.
+            // `(a) and #{"(b) and (c)"}`.
+            ox::MediaInParensKind::SassInterpolation(i) => self.interpolate(i.span),
+            ox::MediaInParensKind::GeneralEnclosed(seq) => {
+                Ok(format!("({})", self.interpolate(seq.span)?))
             }
         }
     }
 
-    fn serialize_media_feature(&mut self, f: &MediaFeature) -> Result<String, Error> {
+    fn serialize_media_feature(
+        &mut self,
+        f: &'a ox::MediaFeature<'a>,
+    ) -> Result<String, Error> {
         match f {
-            MediaFeature::Decl { name, value } => {
-                // Media-feature names and values serialize in interpolation
-                // context: a quoted string unquotes (`("min-width:#{$w}")`
-                // emits `(min-width:20px)`), numbers are unchanged.
-                let n = interp_checked(&self.eval_expr(name)?)?;
-                match value {
-                    Some(v) => {
-                        let val = interp_checked(&self.eval_expr(v)?)?;
-                        Ok(format!("{n}: {val}"))
-                    }
-                    None => Ok(n),
-                }
+            // Media-feature names and values serialize in interpolation
+            // context: a quoted string unquotes (`("min-width:#{$w}")` emits
+            // `(min-width:20px)`), numbers are unchanged.
+            ox::MediaFeature::Boolean(b) => self.media_feature_name(&b.name),
+            ox::MediaFeature::Plain(pl) => {
+                let n = self.media_feature_name(&pl.name)?;
+                let v = self.eval_value(&pl.value)?;
+                Ok(format!("{n}: {}", interp_checked(&v)?))
             }
-            MediaFeature::Range {
-                first,
-                op1,
-                second,
-                rest,
-            } => {
-                let a = self.eval_expr(first)?.to_css(self.compressed());
-                let b = self.eval_expr(second)?.to_css(self.compressed());
-                let mut s = format!("{a} {op1} {b}");
-                if let Some((op2, third)) = rest {
-                    let c = self.eval_expr(third)?.to_css(self.compressed());
-                    s.push_str(&format!(" {op2} {c}"));
-                }
-                Ok(s)
+            ox::MediaFeature::Range(r) => {
+                let a = self.eval_value(&r.left)?.to_css(self.compressed());
+                let b = self.eval_value(&r.right)?.to_css(self.compressed());
+                Ok(format!("{a} {} {b}", comparison_text(&r.comparison)))
             }
+            ox::MediaFeature::RangeInterval(r) => {
+                let a = self.eval_value(&r.left)?.to_css(self.compressed());
+                let n = self.media_feature_name(&r.name)?;
+                let b = self.eval_value(&r.right)?.to_css(self.compressed());
+                Ok(format!(
+                    "{a} {} {n} {} {b}",
+                    comparison_text(&r.left_comparison),
+                    comparison_text(&r.right_comparison)
+                ))
+            }
+        }
+    }
+
+    /// A media feature's name, which may be an interpolated identifier or a
+    /// `$variable` holding one.
+    fn media_feature_name(
+        &mut self,
+        name: &'a ox::MediaFeatureName<'a>,
+    ) -> Result<String, Error> {
+        match name {
+            ox::MediaFeatureName::Ident(i) => self.eval_interp_ident(i),
+            ox::MediaFeatureName::SassVariable(v) => {
+                let value = self.eval_variable(v.name.name, self.file.pos(v.span))?;
+                interp_checked(&value)
+            }
+            other => self.interpolate(*other.span()),
         }
     }
 
@@ -453,8 +454,8 @@ impl<'a> Evaluator<'a> {
     /// (dart-sass drops an empty/invisible `@supports`).
     pub(super) fn eval_supports(
         &mut self,
-        condition: &SupportsCondition,
-        body: &[Stmt],
+        condition: &'a ox::SupportsCondition<'a>,
+        body: &'a ox::SimpleBlock<'a>,
         lines: SrcLines,
         parents: &[String],
         sink: &mut Sink<'_>,
@@ -526,124 +527,133 @@ impl<'a> Evaluator<'a> {
     /// (dart-sass `_visitSupportsCondition`).
     pub(super) fn serialize_supports_condition(
         &mut self,
-        condition: &SupportsCondition,
+        condition: &'a ox::SupportsCondition<'a>,
     ) -> Result<String, Error> {
-        match condition {
-            SupportsCondition::Operation { left, right, op } => {
-                let l = self.parenthesize_supports(left, Some(*op))?;
-                let r = self.parenthesize_supports(right, Some(*op))?;
-                let word = if matches!(op, Conjunction::And) {
-                    "and"
-                } else {
-                    "or"
-                };
-                Ok(format!("{l} {word} {r}"))
-            }
-            SupportsCondition::Negation(inner) => {
-                Ok(format!("not {}", self.parenthesize_supports(inner, None)?))
-            }
-            SupportsCondition::Interpolation(expr) => interp_checked(&self.eval_expr(expr)?),
-            SupportsCondition::Declaration { name, value, custom } => {
-                // dart-sass evaluates BOTH the name and the value with
-                // `_inSupportsDeclaration` set, so a calc in the name
-                // (`(calc(0): a)`) is also kept unsimplified.
-                let saved = self.in_supports_declaration;
-                self.in_supports_declaration = true;
-                let result = (|| {
-                    let n = self.eval_expr(name)?.to_css(self.compressed());
-                    let v = match value.as_ref() {
-                        SupportsValue::Expr(e) => self.eval_expr(e)?.to_css(self.compressed()),
-                        // A custom-property value is an unquoted string: resolve
-                        // its interpolation, then apply unquoted-string
-                        // serialization (`\n` -> space, post-newline spaces
-                        // dropped), matching dart-sass `_visitUnquotedString`.
-                        SupportsValue::Raw(tpl) => unquoted_string_css(&self.eval_template(tpl)?),
-                    };
-                    Ok::<_, Error>((n, v))
-                })();
-                self.in_supports_declaration = saved;
-                let (n, v) = result?;
-                let sep = if *custom { "" } else { " " };
-                Ok(format!("({n}:{sep}{v})"))
-            }
-            SupportsCondition::Function { name, arguments } => {
-                let n = self.eval_template(name)?;
-                let args = self.eval_template(arguments)?;
-                Ok(format!("{n}({args})"))
-            }
-            SupportsCondition::Anything(contents) => {
-                let inner = self.eval_template(contents)?;
-                Ok(format!("({inner})"))
-            }
-        }
-    }
-
-    /// Serialize a plain-CSS `@import` argument: the URL template followed by
-    /// its canonical modifiers. Raw identifier/function runs join with single
-    /// spaces; a `supports(<query>)` re-serializes its parsed condition (a
-    /// declaration's own parens double as the call parens); the terminal media
-    /// query list joins with `, ` when it continued a bare-identifier query.
-    pub(super) fn serialize_css_import(
-        &mut self,
-        url: &[TplPiece],
-        modifiers: &[ImportModifier],
-    ) -> Result<String, Error> {
-        let mut out = self.eval_template(url)?;
-        for m in modifiers {
-            match m {
-                ImportModifier::Raw(tpl) => {
-                    out.push(' ');
-                    out.push_str(&self.eval_template(tpl)?);
+        let mut out = String::new();
+        for (i, kind) in condition.conditions.iter().enumerate() {
+            match kind {
+                ox::SupportsConditionKind::SupportsInParens(p) => {
+                    out.push_str(&self.supports_in_parens(p)?)
                 }
-                ImportModifier::Supports {
-                    condition,
-                    declaration,
-                } => {
-                    out.push(' ');
-                    // The condition is an *expression* part of the modifiers
-                    // interpolation in dart-sass (a `SupportsExpression` whose
-                    // value is an unquoted string), so its serialized text gets
-                    // the unquoted-string newline collapse — unlike a Raw
-                    // modifier, which is verbatim buffer text.
-                    let inner = unquoted_string_css(&self.serialize_supports_condition(condition)?);
-                    if *declaration {
-                        out.push_str(&format!("supports{inner}"));
-                    } else {
-                        out.push_str(&format!("supports({inner})"));
+                ox::SupportsConditionKind::Not(n) => {
+                    if i > 0 {
+                        out.push(' ');
                     }
+                    out.push_str("not ");
+                    out.push_str(&self.supports_in_parens(&n.condition)?);
                 }
-                ImportModifier::Media { list, comma_before } => {
-                    out.push_str(if *comma_before { ", " } else { " " });
-                    let queries = self.resolve_media_queries(list)?;
-                    out.push_str(&serialize_media_queries(&queries, self.compressed()));
+                ox::SupportsConditionKind::And(a) => {
+                    out.push_str(" and ");
+                    out.push_str(&self.supports_in_parens(&a.condition)?);
+                }
+                ox::SupportsConditionKind::Or(o) => {
+                    out.push_str(" or ");
+                    out.push_str(&self.supports_in_parens(&o.condition)?);
                 }
             }
         }
         Ok(out)
     }
 
-    /// dart-sass `_parenthesize`: wrap a sub-condition in parentheses when it is
-    /// a negation, or an operation whose operator differs from the surrounding
-    /// one (or there is no surrounding operator).
-    fn parenthesize_supports(
+    /// One operand of a `@supports` condition.
+    fn supports_in_parens(
         &mut self,
-        condition: &SupportsCondition,
-        operator: Option<Conjunction>,
+        p: &'a ox::SupportsInParens<'a>,
     ) -> Result<String, Error> {
-        let needs_parens = match condition {
-            SupportsCondition::Negation(_) => true,
-            SupportsCondition::Operation { op, .. } => match operator {
-                None => true,
-                Some(outer) => outer != *op,
-            },
-            _ => false,
-        };
-        let inner = self.serialize_supports_condition(condition)?;
-        if needs_parens {
-            Ok(format!("({inner})"))
-        } else {
-            Ok(inner)
+        match &p.kind {
+            ox::SupportsInParensKind::Feature(f) => self.supports_declaration(&f.decl),
+            ox::SupportsInParensKind::SupportsCondition(c) => {
+                Ok(format!("({})", self.serialize_supports_condition(c)?))
+            }
+            ox::SupportsInParensKind::Function(f) => {
+                let name = self.interpolate(*f.name.span())?;
+                let args = self.interpolate(super::expr::args_span(f))?;
+                Ok(format!("{name}({args})"))
+            }
+            ox::SupportsInParensKind::Selector(sel) => {
+                Ok(format!("selector({})", self.interpolate(sel.span)?))
+            }
+            // A lone interpolation as a condition operand, e.g.
+            // `@supports #{"(a: b)"} { ... }`.
+            ox::SupportsInParensKind::Interpolation(i) => self.eval_interp_ident(i),
+            ox::SupportsInParensKind::GeneralEnclosed(seq) => {
+                Ok(format!("({})", self.interpolate(seq.span)?))
+            }
         }
+    }
+
+    /// A `(<name>: <value>)` feature query.
+    fn supports_declaration(
+        &mut self,
+        decl: &'a ox::Declaration<'a>,
+    ) -> Result<String, Error> {
+        // dart-sass evaluates BOTH the name and the value with
+        // `_inSupportsDeclaration` set, so a calc in the name (`(calc(0): a)`)
+        // is also kept unsimplified.
+        let custom = decl.name.is_custom_property();
+        let saved = self.in_supports_declaration;
+        self.in_supports_declaration = true;
+        let result = (|| {
+            let n = self.eval_interp_ident(&decl.name)?;
+            let v = if custom || decl.value_is_raw {
+                // A custom-property value is an unquoted string: resolve its
+                // interpolation, then apply unquoted-string serialization
+                // (`\n` -> space, post-newline spaces dropped), matching
+                // dart-sass `_visitUnquotedString`.
+                unquoted_string_css(&self.interpolate(values_span(&decl.value))?)
+            } else {
+                self.eval_values(&decl.value)?.to_css(self.compressed())
+            };
+            Ok::<_, Error>((n, v))
+        })();
+        self.in_supports_declaration = saved;
+        let (n, v) = result?;
+        let sep = if custom { "" } else { " " };
+        Ok(format!("({n}:{sep}{v})"))
+    }
+
+    /// Serialize a plain-CSS `@import` argument: the URL followed by its
+    /// canonical modifiers. A `supports(<query>)` re-serializes its parsed
+    /// condition (a declaration's own parens double as the call parens); the
+    /// terminal media query list joins with `, `.
+    pub(super) fn serialize_css_import(
+        &mut self,
+        prelude: &'a ox::ImportPrelude<'a>,
+    ) -> Result<String, Error> {
+        let mut out = self.interpolate(*prelude.href.span())?;
+        if let Some(layer) = &prelude.layer {
+            out.push(' ');
+            out.push_str(&self.interpolate(*layer.span())?);
+        }
+        if let Some(supports) = &prelude.supports {
+            out.push(' ');
+            // The condition is an *expression* part of the modifiers
+            // interpolation in dart-sass (a `SupportsExpression` whose value is
+            // an unquoted string), so its serialized text gets the
+            // unquoted-string newline collapse.
+            match &supports.kind {
+                ox::ImportPreludeSupportsKind::Declaration(d) => {
+                    let inner = unquoted_string_css(&self.supports_declaration(d)?);
+                    out.push_str(&format!("supports{inner}"));
+                }
+                ox::ImportPreludeSupportsKind::SupportsCondition(c) => {
+                    let inner =
+                        unquoted_string_css(&self.serialize_supports_condition(c)?);
+                    out.push_str(&format!("supports({inner})"));
+                }
+            }
+        }
+        if let Some(media) = &prelude.media {
+            out.push(' ');
+            let queries = self.resolve_media_queries(media)?;
+            out.push_str(&serialize_media_queries(&queries, self.compressed()));
+        }
+        // Modifiers the typed grammar could not read are kept as written.
+        if let Some(modifiers) = &prelude.modifiers {
+            out.push(' ');
+            out.push_str(&self.interpolate(modifiers.span)?);
+        }
+        Ok(out)
     }
 
     /// Evaluate `@keyframes`. The frame selectors are keyframe selectors, not
@@ -653,8 +663,8 @@ impl<'a> Evaluator<'a> {
     pub(super) fn eval_keyframes(
         &mut self,
         name: &str,
-        prelude: &[TplPiece],
-        body: &[Stmt],
+        prelude: Option<Span>,
+        body: &'a ox::SimpleBlock<'a>,
         lines: SrcLines,
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
@@ -919,5 +929,25 @@ impl<'a> Evaluator<'a> {
             }
         }
         Ok(())
+    }
+}
+
+/// Whether a media condition's operands are joined with `or` rather than
+/// `and`. dart-sass models a query as one conjunction, so the first `or`
+/// decides for the whole run.
+fn condition_is_or(c: &ox::MediaCondition<'_>) -> bool {
+    c.conditions
+        .iter()
+        .any(|k| matches!(k, ox::MediaConditionKind::Or(_)))
+}
+
+/// The source spelling of a media-feature range comparison.
+fn comparison_text(c: &ox::MediaFeatureComparison) -> &'static str {
+    match c.kind {
+        ox::MediaFeatureComparisonKind::LessThan => "<",
+        ox::MediaFeatureComparisonKind::LessThanOrEqual => "<=",
+        ox::MediaFeatureComparisonKind::GreaterThan => ">",
+        ox::MediaFeatureComparisonKind::GreaterThanOrEqual => ">=",
+        ox::MediaFeatureComparisonKind::Equal => "=",
     }
 }
