@@ -2660,11 +2660,21 @@ impl<'a> Evaluator<'a> {
                 ));
             }
             (prelude, Some(block)) if name.eq_ignore_ascii_case("at-root") => {
-                let query = match prelude {
-                    Some(P::SassAtRoot(q)) => Some(q.span),
-                    _ => None,
-                };
-                self.eval_at_root(query, block, parents, sink)?;
+                // `@at-root` takes either a `(with:|without: …)` QUERY or a
+                // SELECTOR (`@at-root .b { … }`, which is the rule itself,
+                // lifted to the root). They are different constructs, not two
+                // spellings of one.
+                match prelude {
+                    Some(P::SassAtRoot(node)) => match &node.kind {
+                        ox::SassAtRootKind::Query(q) => {
+                            self.eval_at_root(Some(q.span), block, parents, sink)?
+                        }
+                        ox::SassAtRootKind::Selector(sel) => {
+                            self.eval_at_root_selector(sel, block, sink)?
+                        }
+                    },
+                    _ => self.eval_at_root(None, block, parents, sink)?,
+                }
                 self.last_child_invisible = false;
             }
             (Some(P::Media(q)), Some(block)) => {
@@ -2838,7 +2848,20 @@ impl<'a> Evaluator<'a> {
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
-        let (sel_str, interp_bounds) = self.interpolate_bounds(rule.selector.span)?;
+        self.eval_style_rule_at(rule.selector.span, &rule.block, parents, sink)
+    }
+
+    /// [`Self::eval_style_rule`] for a rule whose selector and body come from
+    /// different nodes — `@at-root <selector> { … }`, where the prelude is the
+    /// selector and the at-rule's block is the body.
+    pub(super) fn eval_style_rule_at(
+        &mut self,
+        selector: Span,
+        block: &'a ox::SimpleBlock<'a>,
+        parents: &[String],
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        let (sel_str, interp_bounds) = self.interpolate_bounds(selector)?;
         // A selector that resolves to nothing (e.g. `#{&}` at the document root,
         // where `&` is null) is rejected by dart-sass with "expected selector".
         if sel_str.trim().is_empty() {
@@ -2852,8 +2875,8 @@ impl<'a> Evaluator<'a> {
         // from an interpolation (todo_single_escape).
         if !self.in_keyframes {
             if let Some(at_idx) = find_unquoted_at(&sel_str) {
-                let spans = self.interp_spans(rule.selector.span)?;
-                let sel_pos = self.file.pos(rule.selector.span);
+                let spans = self.interp_spans(selector)?;
+                let sel_pos = self.file.pos(selector);
                 return Err(self.interp_selector_error(
                     &spans,
                     sel_pos,
@@ -2968,12 +2991,12 @@ impl<'a> Evaluator<'a> {
         let prev_at_root = std::mem::replace(&mut self.at_root_excluding_style_rule, false);
         let rule_lines = self.stamp(SrcLines {
             file: 0,
-            start: self.file.line_at(rule.block.span.start),
-            end: self.file.line_at(rule.block.span.end),
+            start: self.file.line_at(block.span.start),
+            end: self.file.line_at(block.span.end),
             col: 0,
             // Source-map: the selector's start column (its first character),
             // mapped on the rule's first output line.
-            start_col: self.file.pos(rule.selector.span).col as u32,
+            start_col: self.file.pos(selector).col as u32,
             map_file: 0,
             map_line: 0,
         });
@@ -3007,12 +3030,7 @@ impl<'a> Evaluator<'a> {
                 flushed: &mut flushed,
                 extend_base,
             };
-            let r = self.exec(
-                &rule.block.statements,
-                rule.block.span,
-                &current,
-                &mut child,
-            );
+            let r = self.exec(&block.statements, block.span, &current, &mut child);
             // Flush any declarations/loud comments that follow the last nested
             // rule, so they emit (in their own block) after the bubbled rules.
             if r.is_ok() && child.flush_rule_block() {

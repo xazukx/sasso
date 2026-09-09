@@ -60,7 +60,9 @@ impl<'a> Evaluator<'a> {
     /// prelude at all (`@font-face`) has empty text.
     pub(super) fn prelude_text(&mut self, prelude: Option<Span>) -> Result<String, Error> {
         match prelude {
-            Some(span) => Ok(trim_owned(self.interpolate(span)?)),
+            // dart-sass re-serializes a prelude rather than echoing it: comments
+            // are dropped and whitespace runs collapse to one space.
+            Some(span) => Ok(collapse_prelude(&self.interpolate(span)?)),
             None => Ok(String::new()),
         }
     }
@@ -749,6 +751,24 @@ impl<'a> Evaluator<'a> {
     /// enclosing rule but disables the implicit parent join
     /// (`implicitParent: !_atRootExcludingStyleRule`), so `@at-root & {…}`
     /// re-emits the parent at the root while `@at-root .x {…}` stays `.x`.
+    /// `@at-root <selector> { … }`: the prelude is the rule's own selector and
+    /// the whole rule is lifted to the document root, so it resolves against no
+    /// parent (dart-sass `_atRootExcludingStyleRule` with the selector applied).
+    pub(super) fn eval_at_root_selector(
+        &mut self,
+        selector: &'a ox::SelectorList<'a>,
+        block: &'a ox::SimpleBlock<'a>,
+        sink: &mut Sink<'_>,
+    ) -> Result<(), Error> {
+        // No parent: the rule sits at the document root.
+        let saved = std::mem::replace(&mut self.at_root_excluding_style_rule, true);
+        let saved_parent = self.current_selector.take();
+        let result = self.eval_style_rule_at(selector.span, block, &[], sink);
+        self.at_root_excluding_style_rule = saved;
+        self.current_selector = saved_parent;
+        result
+    }
+
     /// The optional query is accepted but not yet honoured (the common
     /// no-query case is supported).
     pub(super) fn eval_at_root(
@@ -957,4 +977,38 @@ fn comparison_text(c: &ox::MediaFeatureComparison) -> &'static str {
         ox::MediaFeatureComparisonKind::GreaterThanOrEqual => ">=",
         ox::MediaFeatureComparisonKind::Equal => "=",
     }
+}
+
+/// Re-serialize an at-rule prelude the way dart-sass does: drop comments and
+/// collapse each whitespace run to a single space.
+fn collapse_prelude(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let b = text.as_bytes();
+    let mut i = 0usize;
+    let mut pending_space = false;
+    while i < b.len() {
+        // A `/* … */` comment is trivia in a prelude, not text.
+        if b[i] == b'/' && b.get(i + 1) == Some(&b'*') {
+            match text[i + 2..].find("*/") {
+                Some(rel) => {
+                    i += 2 + rel + 2;
+                    pending_space = true;
+                    continue;
+                }
+                None => break,
+            }
+        }
+        let c = text[i..].chars().next().unwrap_or(' ');
+        if c.is_whitespace() {
+            pending_space = true;
+        } else {
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            pending_space = false;
+            out.push(c);
+        }
+        i += c.len_utf8();
+    }
+    out
 }
