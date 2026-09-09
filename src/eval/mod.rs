@@ -3545,6 +3545,7 @@ impl<'a> Evaluator<'a> {
                             self.current_url = saved_import_url;
                             self.current_key = saved_import_key;
                             self.current_source = saved_import_source;
+                            self.file = saved_import_file;
                             self.current_url_stamp = 0;
                             self.current_file_dir = saved_dir;
                             self.current_canonical = saved_canonical;
