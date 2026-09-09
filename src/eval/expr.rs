@@ -178,7 +178,7 @@ impl<'a> Evaluator<'a> {
     ) -> Result<Value, Error> {
         use ox::ComponentValue as CV;
         match value {
-            CV::Number(n) => Ok(Value::Number(Number::new(number(n)))),
+            CV::Number(n) => Ok(Value::Number(Number::unitless(number(n)))),
             CV::Percentage(p) => Ok(Value::Number(Number::with_unit(
                 number(&p.value),
                 "%".to_string(),
@@ -255,8 +255,8 @@ impl<'a> Evaluator<'a> {
             CV::Url(u) => self.eval_url(u),
             CV::Calc(c) => self.eval_calc_node_value(c),
             CV::Ratio(r) => eval_div(
-                Value::Number(Number::new(number(&r.numerator))),
-                Value::Number(Number::new(number(&r.denominator))),
+                Value::Number(Number::unitless(number(&r.numerator))),
+                Value::Number(Number::unitless(number(&r.denominator))),
                 true,
                 self.file.pos(r.solidus_span),
             ),
@@ -376,7 +376,7 @@ impl<'a> Evaluator<'a> {
     /// Reading a variable drops a bare slash-division's spelling (dart-sass
     /// `withoutSlash`): `$x: 1/2; a {b: $x}` is `0.5`. Slashes nested inside a
     /// stored list are preserved.
-    fn eval_variable(&mut self, name: &str, pos: Pos) -> Result<Value, Error> {
+    pub(super) fn eval_variable(&mut self, name: &str, pos: Pos) -> Result<Value, Error> {
         if let Some(v) = self.lookup(name) {
             // `lookup` already returns an owned clone out of the scope;
             // `without_slash` consumes it, so a second clone is wasted.

@@ -83,7 +83,7 @@ impl<'a> Evaluator<'a> {
                 body: &mut body,
                 group_ends: false,
             };
-            self.exec(stmts, &[], &mut child)
+            self.exec(&block.statements, block.span, &[], &mut child)
         } else {
             let mut items: Vec<OutItem> = Vec::new();
             let mut nested: Vec<OutNode> = Vec::new();
@@ -124,7 +124,7 @@ impl<'a> Evaluator<'a> {
                     // (govuk's contextual rules inside their @media copies).
                     extend_base: self.cur_rule_extend_base,
                 };
-                let r = self.exec(stmts, parents, &mut child);
+                let r = self.exec(&block.statements, block.span, parents, &mut child);
                 if r.is_ok() {
                     child.flush_rule_block();
                 }
@@ -147,8 +147,8 @@ impl<'a> Evaluator<'a> {
     /// to the document root). An empty body produces no output.
     pub(super) fn eval_media(
         &mut self,
-        query: &MediaQueryList,
-        body: &[Stmt],
+        query: &'a ox::MediaQueryList<'a>,
+        body: &'a ox::SimpleBlock<'a>,
         lines: SrcLines,
         parents: &[String],
         sink: &mut Sink<'_>,
@@ -670,20 +670,26 @@ impl<'a> Evaluator<'a> {
     ) -> Result<(), Error> {
         // A style rule nested inside a keyframe block is invalid; each frame
         // (a top-level rule in the body) may only hold declarations.
-        for stmt in body {
-            if let Stmt::Rule(frame) = stmt {
-                for inner in &frame.body {
-                    if matches!(inner, Stmt::Rule(_)) {
-                        let e = Error::unpositioned("Style rules may not be used within keyframe blocks.");
-                        return Err(self.finalize_error(match inner.span() {
-                            Some((pos, len)) => e.or_at(pos, len),
-                            None => e,
-                        }));
-                    }
+        for stmt in &body.statements {
+            let frame = match stmt {
+                ox::Statement::QualifiedRule(r) => &r.block,
+                ox::Statement::KeyframeBlock(k) => &k.block,
+                _ => continue,
+            };
+            for inner in &frame.statements {
+                if matches!(inner, ox::Statement::QualifiedRule(_)) {
+                    let e = Error::unpositioned(
+                        "Style rules may not be used within keyframe blocks.",
+                    );
+                    let span = *inner.span();
+                    return Err(self.finalize_error(e.or_at(
+                        self.file.pos(span),
+                        span.end.saturating_sub(span.start),
+                    )));
                 }
             }
         }
-        let prelude = self.eval_template(prelude)?;
+        let prelude = self.prelude_text(prelude)?;
         let saved_kf = std::mem::replace(&mut self.in_keyframes, true);
         let own_depth = self.at_rule_ctx.len();
         self.at_rule_ctx.push(AtCtx::Keyframes {
@@ -746,13 +752,13 @@ impl<'a> Evaluator<'a> {
     /// no-query case is supported).
     pub(super) fn eval_at_root(
         &mut self,
-        query: Option<&[TplPiece]>,
-        body: &[Stmt],
+        query: Option<Span>,
+        body: &'a ox::SimpleBlock<'a>,
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
         let query_text = match query {
-            Some(tpl) => Some(self.eval_template(tpl)?),
+            Some(span) => Some(self.interpolate(span)?),
             None => None,
         };
         let q = AtRootQuery::parse(query_text.as_deref());
@@ -770,7 +776,7 @@ impl<'a> Evaluator<'a> {
         let any_excluded_layer = first_excluded.is_some();
         // `(with: all)`-style queries that exclude nothing run in place.
         if !any_excluded_layer && !q.excludes_style_rules() {
-            return self.exec(body, parents, sink);
+            return self.exec(&body.statements, body.span, parents, sink);
         }
 
         self.push_scope(false);
@@ -794,7 +800,7 @@ impl<'a> Evaluator<'a> {
                 body: &mut out,
                 group_ends: true,
             };
-            self.exec(body, parents, &mut child)
+            self.exec(&body.statements, body.span, parents, &mut child)
         };
         self.at_root_excluding_style_rule = saved;
         if let Some(m) = saved_media {
