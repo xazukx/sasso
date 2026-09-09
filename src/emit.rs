@@ -1,6 +1,6 @@
 //! Serialize the flattened output tree to CSS.
 
-use crate::ast::SrcLines;
+use crate::lines::SrcLines;
 use crate::eval::{OutItem, OutNode, VarSpan};
 use crate::sourcemap::SmCollector;
 use crate::OutputStyle;

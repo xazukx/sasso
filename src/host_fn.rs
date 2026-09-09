@@ -27,7 +27,23 @@
 
 use std::rc::Rc;
 
-use crate::ast::{Param, ParamList};
+/// A host function's declared parameters.
+///
+/// Host signatures carry no default values (`parse_signature` rejects
+/// them), so this is names plus an optional rest parameter — nothing the
+/// Sass parameter grammar would add.
+#[derive(Debug, Clone)]
+pub struct HostParams {
+    pub params: Vec<HostParam>,
+    /// The name of a trailing `$rest...` parameter, without the `$`.
+    pub rest: Option<String>,
+}
+
+/// One declared host-function parameter.
+#[derive(Debug, Clone)]
+pub struct HostParam {
+    pub name: String,
+}
 use crate::builtins::{legacy_to_modern, make_modern_in};
 use crate::value::{
     unit_lists_factor, CalcNode, CalcOp, Color, ColorSpace, List, ListSep, Map, ModernColor, Number, SassStr,
@@ -47,7 +63,7 @@ pub struct HostFn {
     pub name: String,
     /// The parsed parameter list, or an error message if the signature was
     /// malformed (surfaced as a compile error only if the function is called).
-    pub params: Result<ParamList, String>,
+    pub params: Result<HostParams, String>,
     /// `Fn(serialized args) -> Ok(serialized return) | Err(message)`.
     pub callback: HostFunction,
 }
@@ -60,7 +76,7 @@ pub(crate) fn normalize_name(s: &str) -> String {
 /// Parse a `name($a, $b, $rest...)` signature into a normalized name plus its
 /// parameter list. Default values (`$a: 1`) are not yet supported and yield an
 /// error (kept with the name so calling the function reports it).
-pub(crate) fn parse_signature(sig: &str) -> (String, Result<ParamList, String>) {
+pub(crate) fn parse_signature(sig: &str) -> (String, Result<HostParams, String>) {
     let sig = sig.trim();
     let open = sig.find('(');
     let (raw_name, args_src) = match open {
@@ -112,14 +128,11 @@ pub(crate) fn parse_signature(sig: &str) -> (String, Result<ParamList, String>) 
                 Err("sasso: default values in custom-function signatures are not yet supported".into()),
             );
         }
-        params.push(Param {
+        params.push(HostParam {
             name: var.to_string(),
-            default: None,
-            // A host-function signature has no source text to point at.
-            default_pos: crate::scanner::Pos::NONE,
         });
     }
-    (name, Ok(ParamList { params, rest }))
+    (name, Ok(HostParams { params, rest }))
 }
 
 /// Bind evaluated call arguments to a host function's parameters, producing the

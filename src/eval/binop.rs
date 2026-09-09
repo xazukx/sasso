@@ -1,5 +1,36 @@
 use super::*;
 
+#[derive(Debug, Clone, Copy)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Mod,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    And,
+    Or,
+    /// The single-`=` Microsoft-filter operator, valid only inside a function
+    /// argument list (`alpha(opacity=80)`). It is the lowest-precedence value
+    /// operator: both sides are evaluated and joined with `=` (no spaces) as an
+    /// unquoted string.
+    SingleEq,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnOp {
+    Neg,
+    /// Unary `+`: numeric identity (`+5` -> `5`); on any other operand an
+    /// unquoted string prefixed with `+` (`+foo` -> `+foo`), matching
+    /// dart-sass's `unaryPlus`.
+    Plus,
+    Not,
+}
+
 /// Evaluate the `/` operator. When `slash` is set and both operands are
 /// numbers, produce a slash-separated value that serializes as `a/b` but
 /// behaves numerically as the quotient; otherwise perform real division.

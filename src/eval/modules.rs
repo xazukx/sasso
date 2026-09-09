@@ -1,5 +1,16 @@
 use super::*;
 
+/// One `$name: value [!default]` entry in a `@use`/`@forward` `with (...)`
+/// configuration clause.
+#[derive(Debug, Clone)]
+pub struct ConfigEntry {
+    pub name: String,
+    pub value: Expr,
+    /// `!default` on a `@forward ... with` entry: the override only applies if
+    /// the downstream module does not configure the variable itself.
+    pub is_default: bool,
+}
+
 /// The evaluator file-context fields swapped by [`Evaluator::enter_module_file`]
 /// and restored by [`Evaluator::leave_module_file`]:
 /// `(current_url, current_key, current_source, current_file_dir, current_canonical)`.
@@ -433,7 +444,7 @@ impl<'a> Evaluator<'a> {
         url: &str,
         namespace: Option<&str>,
         star: bool,
-        config: &[crate::ast::ConfigEntry],
+        config: &[ConfigEntry],
         pos: Pos,
         parents: &[String],
         sink: &mut Sink<'_>,
@@ -537,7 +548,7 @@ impl<'a> Evaluator<'a> {
     /// is_default) map.
     fn eval_config(
         &mut self,
-        config: &[crate::ast::ConfigEntry],
+        config: &[ConfigEntry],
     ) -> Result<HashMap<String, (Value, bool)>, Error> {
         let mut map = HashMap::default();
         for entry in config {
@@ -1314,9 +1325,9 @@ impl<'a> Evaluator<'a> {
         &mut self,
         url: &str,
         prefix: Option<&str>,
-        show: &Option<Vec<crate::ast::ForwardMember>>,
-        hide: &Option<Vec<crate::ast::ForwardMember>>,
-        config: &[crate::ast::ConfigEntry],
+        show: &Option<Vec<ForwardMember>>,
+        hide: &Option<Vec<ForwardMember>>,
+        config: &[ConfigEntry],
         pos: Pos,
         parents: &[String],
         sink: &mut Sink<'_>,

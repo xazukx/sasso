@@ -20,6 +20,7 @@ use crate::fxhash::FxHashMap as HashMap;
 use oxc_css_parser::{Allocator, Span, Syntax as OxcSyntax, ast as ox};
 
 use crate::error::Error;
+use crate::lines::SrcLines;
 use crate::scanner::Pos;
 use crate::source::{Item, SourceFile, interleave};
 use crate::value::{CalcNode, CalcOp, List, ListSep, Map, Number, SassFunction, SassMixin, SassStr, Value};
@@ -5808,8 +5809,8 @@ fn default_namespace(url: &str, pos: Pos) -> Result<String, Error> {
 /// Build a predicate deciding whether an upstream `$variable` (by bare name) is
 /// re-exported through a `@forward`'s `show`/`hide` clause.
 fn forward_var_visibility(
-    show: &Option<Vec<crate::ast::ForwardMember>>,
-    hide: &Option<Vec<crate::ast::ForwardMember>>,
+    show: &Option<Vec<modules::ForwardMember>>,
+    hide: &Option<Vec<modules::ForwardMember>>,
 ) -> impl Fn(&str) -> bool {
     let show = member_set(show, true);
     let hide = member_set(hide, true);
@@ -5857,14 +5858,14 @@ fn is_builtin_mixin(module: &str, name: &str) -> bool {
 /// either the `$variable` entries (`vars == true`) or the function/mixin names.
 /// Names are stored in canonical (dashed) form for dash-insensitive matching.
 fn member_set(
-    members: &Option<Vec<crate::ast::ForwardMember>>,
+    members: &Option<Vec<modules::ForwardMember>>,
     vars: bool,
 ) -> Option<std::collections::HashSet<String>> {
     members.as_ref().map(|list| {
         list.iter()
             .filter_map(|m| match (m, vars) {
-                (crate::ast::ForwardMember::Var(n), true) => Some(normalize_var_name(n).into_owned()),
-                (crate::ast::ForwardMember::Name(n), false) => Some(normalize_var_name(n).into_owned()),
+                (modules::ForwardMember::Var(n), true) => Some(normalize_var_name(n).into_owned()),
+                (modules::ForwardMember::Name(n), false) => Some(normalize_var_name(n).into_owned()),
                 _ => None,
             })
             .collect()
