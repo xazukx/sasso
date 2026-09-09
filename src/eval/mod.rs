@@ -50,7 +50,7 @@ pub(crate) use binop::eval_div;
 /// file, shared across repeated imports within a single compile. The file
 /// carries its own source text and syntax, so re-executions can swap it in as
 /// the current diagnostics/stamp context.
-type CachedImport<'a> = (String, &'a SourceFile<'a>);
+type CachedImport<'a> = (String, &'a SourceFile<'a>, &'a ox::Stylesheet<'a>);
 
 /// dart `_preModuleComments`: comments registered on a module's first load,
 /// keyed by its canonical key, shared by reference down nested module
@@ -1630,25 +1630,22 @@ impl<'a> Evaluator<'a> {
         }
         // Unlike `span_at`, this does not depend on `source_map`: the record is
         // a tooling feature of its own, and its key must be real either way.
-        let span = if v.pos.is_known() {
-            VarSpan {
-                file: self.intern_current_file(),
-                line: v.pos.line as u32,
-                col: v.pos.col as u32,
-                offset: v.pos.offset as u32,
-            }
-        } else {
-            VarSpan::default()
+        let pos = self.file.pos(v.span);
+        let span = VarSpan {
+            file: self.intern_current_file(),
+            line: pos.line as u32,
+            col: pos.col as u32,
+            offset: pos.offset as u32,
         };
         self.variable_values.insert(
             span,
             VariableValue {
-                name: v.name.clone(),
+                name: v.name.name.name.to_string(),
                 value: value.clone(),
                 span,
-                is_default: v.is_default,
-                is_global: v.is_global,
-                namespace: v.namespace.clone(),
+                is_default: has_flag(&v.flags, "default"),
+                is_global: has_flag(&v.flags, "global"),
+                namespace: v.namespace.as_ref().map(|i| i.name.to_string()),
                 selector: self.record_parents.clone(),
                 evaluated,
             },
@@ -1869,7 +1866,7 @@ impl<'a> Evaluator<'a> {
         at_idx: usize,
     ) -> Error {
         const MSG: &str = "expected selector.";
-        let spans = &rule.selector_interp_spans;
+        let spans = selector_interp_spans;
         let single_line = !sel_str.contains('\n');
         // Inside an interpolation's output -> dual-span rendering, positioned
         // at the interpolation expression's start.
@@ -1911,7 +1908,7 @@ impl<'a> Evaluator<'a> {
         // interpolations that precede the offending index.
         if single_line
             && spans.len() == interp_bounds.len()
-            && spans.iter().all(|sp| sp.line as usize == rule.selector_pos.line)
+            && spans.iter().all(|sp| sp.line as usize == self.file.pos(selector).line)
         {
             let mut shift: i64 = 0;
             for (k, &(start, len)) in interp_bounds.iter().enumerate() {
@@ -1923,14 +1920,14 @@ impl<'a> Evaluator<'a> {
                     shift += src_total - len as i64;
                 }
             }
-            let col = (rule.selector_pos.col as i64 + at_idx as i64 + shift).max(1) as usize;
+            let col = (self.file.pos(selector).col as i64 + at_idx as i64 + shift).max(1) as usize;
             // The column was recovered arithmetically, so the byte offset has
             // to be resolved against the source rather than carried along.
-            let line = rule.selector_pos.line;
+            let line = self.file.pos(selector).line;
             let offset = crate::diag::byte_offset_of(&self.source_for(&self.current_key.clone()), line, col);
             return Error::at(MSG, Pos { line, col, offset });
         }
-        Error::at(MSG, rule.selector_pos)
+        Error::at(MSG, self.file.pos(selector))
     }
 
     /// Render `Error: <msg>` + the snippet pointing at the innermost frame +
@@ -2516,7 +2513,7 @@ impl<'a> Evaluator<'a> {
                 let r = self.exec_include(
                     &member,
                     &args,
-                    block.as_ref().copied_ref(),
+                    block.as_ref(),
                     content_params,
                     module,
                     pos,
@@ -2614,7 +2611,7 @@ impl<'a> Evaluator<'a> {
             }
             (prelude, Some(block)) if is_keyframes_name(name) => {
                 let lines = self.stamp(self.block_lines(at, block));
-                let prelude = prelude.as_ref().map(|p| p.span());
+                let prelude = prelude.as_ref().map(|p| *p.span());
                 self.eval_keyframes(name, prelude, block, lines, sink)?;
                 self.last_child_invisible = false;
             }
@@ -2631,7 +2628,7 @@ impl<'a> Evaluator<'a> {
                         ..SrcLines::default()
                     }),
                 };
-                let prelude = prelude.as_ref().map(|p| p.span());
+                let prelude = prelude.as_ref().map(|p| *p.span());
                 self.eval_at_rule(name, prelude, block.as_ref(), lines, parents, sink)?;
                 self.last_child_invisible = false;
             }
@@ -3079,30 +3076,16 @@ impl<'a> Evaluator<'a> {
     /// `@import …;` in source order.
     fn eval_imports(
         &mut self,
-        args: &[ImportArg],
+        args: &[(String, Span)],
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
         let importer = self.options.importer;
-        for arg in args {
-            match arg {
-                ImportArg::Css { url, modifiers, .. } => {
-                    let text = self.serialize_css_import(url, modifiers)?;
-                    // Inside a style rule the plain-CSS @import stays in the
-                    // rule's block (dart keeps it nested:
-                    // `foo { @import url(...); }`); at the top level it is a
-                    // Raw node subject to import hoisting.
-                    if matches!(sink, Sink::Rule { .. }) {
-                        sink.push_item(OutItem::ChildlessAtRule {
-                            name: "import".to_string(),
-                            prelude: text,
-                            lines: SrcLines::default(),
-                        });
-                    } else {
-                        sink.push_at_rule(OutNode::Raw(format!("@import {text};")));
-                    }
-                }
-                ImportArg::Sass { path, pos, length } => {
+        for (path, url_span) in args {
+            let pos = &self.file.pos(*url_span);
+            let length = &url_span.end.saturating_sub(url_span.start);
+            {
+                {
                     if is_css_import(path) {
                         sink.push_at_rule(OutNode::Raw(format!("@import \"{path}\";")));
                         continue;
@@ -3172,8 +3155,16 @@ impl<'a> Evaluator<'a> {
                                             "This file is already being loaded.",
                                         ));
                                     }
-                                    let sheet = match parse_with_syntax(&src, syntax) {
-                                        Ok(sheet) => sheet,
+                                    let diag_url =
+                                        self.module_diag_url(path, &resolved_key);
+                                    let parsed = SourceFile::parse(
+                                        self.arena,
+                                        &diag_url,
+                                        &src,
+                                        oxc_syntax(syntax),
+                                    );
+                                    let (file, sheet) = match parsed {
+                                        Ok((file, sheet)) => (file, &*sheet),
                                         Err(err) => {
                                             // A parse error names the IMPORTED
                                             // file: render eagerly under its
@@ -3199,13 +3190,8 @@ impl<'a> Evaluator<'a> {
                                             return Err(err);
                                         }
                                     };
-                                    let e = std::rc::Rc::new((
-                                        resolved_key,
-                                        syntax,
-                                        sheet,
-                                        std::rc::Rc::<str>::from(src.as_str()),
-                                    ));
-                                    self.import_cache.insert(cache_key, e.clone());
+                                    let e = (resolved_key, file, sheet);
+                                    self.import_cache.insert(cache_key, e);
                                     Some(e)
                                 }
                                 None => None,
@@ -3214,7 +3200,8 @@ impl<'a> Evaluator<'a> {
                     };
                     match entry {
                         Some(entry) => {
-                            let (resolved_key, syntax, sheet) = (&entry.0, entry.1, &entry.2);
+                            let (resolved_key, file, sheet) = (&entry.0, entry.1, entry.2);
+                            let syntax = file.syntax_kind();
                             // The diagnostic `@import` frame records the
                             // IMPORTING file at the URL token — push it before
                             // the context swap below rebinds current_url.
@@ -3233,7 +3220,7 @@ impl<'a> Evaluator<'a> {
                                 self.file_sources
                                     .borrow_mut()
                                     .entry(resolved_key.clone())
-                                    .or_insert_with(|| Rc::clone(&entry.3));
+                                    .or_insert_with(|| Rc::from(file.text));
                             }
                             let saved_import_url = std::mem::replace(&mut self.current_url, import_diag);
                             // Identity follows the display name in lockstep, so
@@ -3246,19 +3233,28 @@ impl<'a> Evaluator<'a> {
                                 std::mem::replace(&mut self.current_key, resolved_key.clone())
                             };
                             let saved_import_source =
-                                std::mem::replace(&mut self.current_source, Rc::clone(&entry.3));
+                                std::mem::replace(&mut self.current_source, Rc::from(file.text));
+                            // Positions inside the imported file resolve
+                            // against ITS line table.
+                            let saved_import_file = std::mem::replace(&mut self.file, file);
                             self.current_url_stamp = 0;
                             // A plain-CSS file imports as plain CSS: nesting
                             // preserved, no Sass evaluation (same as `@use`).
                             if matches!(syntax, Syntax::Css) {
                                 self.loading.push(path.clone());
+                                let block = ox::SimpleBlock {
+                                    span: sheet.span,
+                                    statements: sheet.statements.clone_in(self.arena),
+                                };
+                                let block = &*self.arena.alloc(block);
                                 let result = self
-                                    .exec_css(&sheet.stmts, parents, sink)
+                                    .exec_css(block, parents, sink)
                                     .map_err(|e| self.finalize_error(e));
                                 self.loading.pop();
                                 self.current_url = saved_import_url;
                                 self.current_key = saved_import_key;
                                 self.current_source = saved_import_source;
+                                self.file = saved_import_file;
                                 self.current_url_stamp = 0;
                                 self.leave_call(saved_member);
                                 result?;
@@ -3279,7 +3275,7 @@ impl<'a> Evaluator<'a> {
                             // statically visible).
                             {
                                 let mut slots: Vec<String> = Vec::new();
-                                collect_global_var_decls(&sheet.stmts, &mut slots);
+                                collect_global_var_decls(&sheet.statements, &mut slots);
                                 if let Some(g) = self.scopes.first() {
                                     let mut g = g.borrow_mut();
                                     for name in slots {
@@ -3301,10 +3297,17 @@ impl<'a> Evaluator<'a> {
                             // configuration (an enclosing `with (...)` still
                             // flows into its `!default`s). Unconsumed implicit
                             // entries are never an error.
-                            let loads_modules = sheet
-                                .stmts
-                                .iter()
-                                .any(|s| matches!(s, Stmt::Use { .. } | Stmt::Forward { .. }));
+                            let loads_modules = sheet.statements.iter().any(|s| {
+                                matches!(
+                                    s,
+                                    ox::Statement::AtRule(at)
+                                        if matches!(
+                                            at.prelude,
+                                            Some(ox::AtRulePrelude::SassUse(_))
+                                                | Some(ox::AtRulePrelude::SassForward(_))
+                                        )
+                                )
+                            });
                             let saved_pending_consumed = if loads_modules {
                                 let mut implicit_config: HashMap<String, (Value, bool)> = HashMap::default();
                                 for scope in &self.scopes {

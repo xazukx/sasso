@@ -302,22 +302,25 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    pub(super) fn apply_var(&mut self, v: &VarDecl) -> Result<(), Error> {
+    pub(super) fn apply_var(
+        &mut self,
+        v: &'a ox::SassVariableDeclaration<'a>,
+    ) -> Result<(), Error> {
         // A namespaced assignment `ns.$name: value` updates the variable in the
         // `@use`d module bound to `ns`.
-        if let Some(ns) = &v.namespace {
+        if let Some(ns) = v.name.name.namespace {
             return self.assign_module_var(ns, v);
         }
         // A top-level `!default` declaration whose name is exposed by more than
         // one `@use … as *` module can't resolve which global it shadows.
-        if v.is_default
+        if has_flag(&v.flags, "default")
             && self.scopes.len() == 1
-            && self.lookup(&v.name).is_none()
-            && !is_private_member(&v.name)
+            && self.lookup(v.name.name.name).is_none()
+            && !is_private_member(v.name.name.name)
             && self
                 .star_user_modules
                 .iter()
-                .filter(|m| m.var(&v.name).is_some())
+                .filter(|m| m.var(v.name.name.name).is_some())
                 .count()
                 > 1
         {
@@ -329,11 +332,11 @@ impl<'a> Evaluator<'a> {
         // configuration: the supplied value overrides the default (unless the
         // override itself is `!default` and the variable already has a value).
         // Configuration is keyed by the canonical (dashed) variable name.
-        if v.is_default && self.scopes.len() == 1 {
-            let key = normalize_var_name(&v.name);
+        if has_flag(&v.flags, "default") && self.scopes.len() == 1 {
+            let key = normalize_var_name(v.name.name.name);
             if let Some((cfg_val, cfg_is_default)) = self.pending_config.get(key.as_ref()).cloned() {
                 self.consumed_config.push(key.into_owned());
-                let already_set = matches!(self.lookup(&v.name), Some(x) if !matches!(x, Value::Null));
+                let already_set = matches!(self.lookup(v.name.name.name), Some(x) if !matches!(x, Value::Null));
                 // A `null` configuration value leaves the `!default` in place;
                 // a `@forward ... with ($x !default)` only applies if the module
                 // hasn't already defined the variable.
@@ -342,7 +345,7 @@ impl<'a> Evaluator<'a> {
                     // to, even though its own RHS never ran.
                     self.record_variable_value(v, &cfg_val, false);
                     if let Some(g) = self.scopes.first_mut() {
-                        g.borrow_mut().insert(v.name.clone(), cfg_val);
+                        g.borrow_mut().insert(v.name.name.name.to_string(), cfg_val);
                     }
                     // dart blames `override.assignmentNode` here — the span of
                     // the value inside the `@use … with (...)` clause, which
@@ -352,7 +355,7 @@ impl<'a> Evaluator<'a> {
                     // text we are overriding: an unknown span emits no mapping
                     // segment, whereas a wrong one would emit a wrong segment.
                     if let Some(g) = self.var_spans.first_mut() {
-                        g.borrow_mut().insert(v.name.clone(), VarSpan::default());
+                        g.borrow_mut().insert(v.name.name.name.to_string(), VarSpan::default());
                     }
                     return Ok(());
                 }
@@ -364,8 +367,8 @@ impl<'a> Evaluator<'a> {
         // expression). Evaluating it would surface errors from an expression
         // that is never actually used, e.g. Bootstrap's
         // `$x: 1rem + .5em !default` after `$x` was already set to a `rem`.
-        if v.is_default {
-            if let Some(existing) = self.lookup(&v.name) {
+        if has_flag(&v.flags, "default") {
+            if let Some(existing) = self.lookup(v.name.name.name) {
                 if !matches!(existing, Value::Null) {
                     // Guarded and already set: the existing value is the one
                     // this declaration resolves to.
@@ -374,11 +377,11 @@ impl<'a> Evaluator<'a> {
                 }
             }
             // Same guard for a name owned by exactly one `@use … as *` module.
-            if (self.scopes.len() == 1 || v.is_global) && !is_private_member(&v.name) {
+            if (self.scopes.len() == 1 || has_flag(&v.flags, "global")) && !is_private_member(v.name.name.name) {
                 let mut resolved = None;
                 if let Some(g) = self.scopes.first() {
-                    if !g.borrow().contains_key(&v.name) {
-                        let mut targets = self.star_user_modules.iter().filter_map(|m| m.var(&v.name));
+                    if !g.borrow().contains_key(v.name.name.name) {
+                        let mut targets = self.star_user_modules.iter().filter_map(|m| m.var(v.name.name.name));
                         if let Some(existing) = targets.next() {
                             if targets.next().is_none() && !matches!(existing, Value::Null) {
                                 resolved = Some(existing);
@@ -392,7 +395,7 @@ impl<'a> Evaluator<'a> {
                 }
             }
         }
-        let val = self.eval_expr(&v.value)?;
+        let val = self.eval_value(&v.value)?;
         self.record_variable_value(v, &val, true);
         // dart `visitVariableDeclaration` stores `_expressionNode(node
         // .expression)` as the binding's node (evaluate.dart:2721): a bare
@@ -400,39 +403,39 @@ impl<'a> Evaluator<'a> {
         // maps `c`'s value all the way back to `red`. Computed AFTER the RHS is
         // evaluated so `$x: $x` still sees the outgoing binding, matching dart's
         // evaluation order.
-        let span = self.expression_node(&v.value, v.value_pos);
+        let span = self.expression_node_value(&v.value);
         // A top-level (or nested `!global`) assignment to a name not in the
         // global scope but exposed by exactly one `@use … as *` module updates
         // that module's variable (so the module's own functions/mixins observe
         // the change).
-        if (self.scopes.len() == 1 || v.is_global) && !is_private_member(&v.name) {
+        if (self.scopes.len() == 1 || has_flag(&v.flags, "global")) && !is_private_member(v.name.name.name) {
             if let Some(g) = self.scopes.first() {
-                if !g.borrow().contains_key(&v.name) {
+                if !g.borrow().contains_key(v.name.name.name) {
                     let targets: Vec<Rc<Module>> = self
                         .star_user_modules
                         .iter()
-                        .filter(|m| m.var(&v.name).is_some())
+                        .filter(|m| m.var(v.name.name.name).is_some())
                         .cloned()
                         .collect();
                     if targets.len() == 1 {
-                        targets[0].vars.borrow_mut().insert(v.name.clone(), val);
+                        targets[0].vars.borrow_mut().insert(v.name.name.name.to_string(), val);
                         if self.options.source_map {
-                            targets[0].var_spans.borrow_mut().insert(v.name.clone(), span);
+                            targets[0].var_spans.borrow_mut().insert(v.name.name.name.to_string(), span);
                         }
                         return Ok(());
                     }
                 }
             }
         }
-        if v.is_global {
+        if has_flag(&v.flags, "global") {
             if let Some(g) = self.scopes.first_mut() {
-                g.borrow_mut().insert(v.name.clone(), val);
+                g.borrow_mut().insert(v.name.name.name.to_string(), val);
             }
             if let Some(g) = self.var_spans.first_mut() {
-                g.borrow_mut().insert(v.name.clone(), span);
+                g.borrow_mut().insert(v.name.name.name.to_string(), span);
             }
         } else {
-            self.assign(&v.name, val, span);
+            self.assign(v.name.name.name, val, span);
         }
         Ok(())
     }
@@ -441,7 +444,7 @@ impl<'a> Evaluator<'a> {
     /// must already exist in the module and be public; `!default` only assigns
     /// when the existing value is null; built-in modules are immutable.
     pub(super) fn assign_module_var(&mut self, ns: &str, v: &VarDecl) -> Result<(), Error> {
-        if is_private_member(&v.name) {
+        if is_private_member(v.name.name.name) {
             return Err(Error::unpositioned(
                 "Private members can't be accessed from outside their modules.",
             ));
@@ -459,9 +462,9 @@ impl<'a> Evaluator<'a> {
         };
         // A forwarded variable writes through to its defining module (under
         // its ORIGINAL name), so the module's own functions see the new value.
-        let (target, name) = match module.var_write_origin(&v.name) {
+        let (target, name) = match module.var_write_origin(v.name.name.name) {
             Some((m, o)) => (m, o),
-            None => (Rc::clone(&module), v.name.clone()),
+            None => (Rc::clone(&module), v.name.name.name.to_string()),
         };
         // One lookup feeds both the existence check and the `!default` guard
         // (`Module::var` clones the value, so don't call it twice).
@@ -471,7 +474,7 @@ impl<'a> Evaluator<'a> {
         }
         // Short-circuit a `!default` no-op before evaluating the RHS, so an
         // unused guarded expression can't raise an error (matches dart-sass).
-        if v.is_default {
+        if has_flag(&v.flags, "default") {
             if let Some(x) = &existing {
                 if !matches!(x, Value::Null) {
                     let x = x.clone();
@@ -480,9 +483,9 @@ impl<'a> Evaluator<'a> {
                 }
             }
         }
-        let val = self.eval_expr(&v.value)?.without_slash();
+        let val = self.eval_value(&v.value)?.without_slash();
         self.record_variable_value(v, &val, true);
-        let span = self.expression_node(&v.value, v.value_pos);
+        let span = self.expression_node_value(&v.value);
         target.vars.borrow_mut().insert(name.clone(), val);
         if self.options.source_map {
             target.var_spans.borrow_mut().insert(name, span);
