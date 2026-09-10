@@ -291,7 +291,13 @@ impl CalcNode {
 
     /// Format `operand` as a child of a parent `op`, wrapping in parens when
     /// the child binds more loosely (or equally on the right of `-`/`/`).
-    fn fmt_operand(&self, operand: &CalcNode, parent: CalcOp, is_right: bool, compressed: bool) -> String {
+    fn fmt_operand(
+        &self,
+        operand: &CalcNode,
+        parent: CalcOp,
+        is_right: bool,
+        compressed: bool,
+    ) -> String {
         // A unit-carrying non-finite number renders as a `*` operation
         // (`infinity * 1px`), so it parenthesizes like a `Mul`-precedence
         // child rather than a bare leaf number.
@@ -645,7 +651,10 @@ impl Map {
 
     /// Look up a value by key (Sass `==`), or `None` when absent.
     pub fn get(&self, key: &Value) -> Option<&Value> {
-        self.entries.iter().find(|(k, _)| k.sass_eq(key)).map(|(_, v)| v)
+        self.entries
+            .iter()
+            .find(|(k, _)| k.sass_eq(key))
+            .map(|(_, v)| v)
     }
 
     /// Insert or overwrite an entry, preserving the position of an existing
@@ -985,7 +994,10 @@ impl Value {
                 a.sep == b.sep
                     && a.bracketed == b.bracketed
                     && a.items.len() == b.items.len()
-                    && a.items.iter().zip(b.items.iter()).all(|(x, y)| x.sass_eq(y))
+                    && a.items
+                        .iter()
+                        .zip(b.items.iter())
+                        .all(|(x, y)| x.sass_eq(y))
             }
             // Maps compare by content regardless of entry order.
             (Value::Map(a), Value::Map(b)) => {
@@ -1028,7 +1040,12 @@ fn fuzzy_eq(a: f64, b: f64) -> bool {
 /// side, or any missing (`none`) channel — they must share a color space and
 /// have channel-by-channel equal (and equally-missing) channels and alpha.
 fn color_sass_eq(a: &Color, b: &Color) -> bool {
-    let space = |c: &Color| c.modern.as_ref().map(|m| m.space).unwrap_or(ColorSpace::Rgb);
+    let space = |c: &Color| {
+        c.modern
+            .as_ref()
+            .map(|m| m.space)
+            .unwrap_or(ColorSpace::Rgb)
+    };
     let chan_eq = |x: Option<f64>, y: Option<f64>| match (x, y) {
         (Some(p), Some(q)) => fuzzy_eq(p, q),
         (None, None) => true,
@@ -1048,7 +1065,10 @@ fn color_sass_eq(a: &Color, b: &Color) -> bool {
         // their sRGB bytes (with `none` resolved); a non-legacy space never
         // equals a different space.
         if sa.is_legacy() && sb.is_legacy() {
-            return fuzzy_eq(a.r, b.r) && fuzzy_eq(a.g, b.g) && fuzzy_eq(a.b, b.b) && fuzzy_eq(a.a, b.a);
+            return fuzzy_eq(a.r, b.r)
+                && fuzzy_eq(a.g, b.g)
+                && fuzzy_eq(a.b, b.b)
+                && fuzzy_eq(a.a, b.a);
         }
         return false;
     }
@@ -1077,7 +1097,9 @@ fn numbers_eq(a: &Number, b: &Number) -> bool {
     // Conversion is keyed on canonical lowercase units, matching dart-sass's
     // unit table; an authored uppercase unit (`IN`) is treated as unknown and
     // never converts.
-    if a.unit().bytes().any(|c| c.is_ascii_uppercase()) || b.unit().bytes().any(|c| c.is_ascii_uppercase()) {
+    if a.unit().bytes().any(|c| c.is_ascii_uppercase())
+        || b.unit().bytes().any(|c| c.is_ascii_uppercase())
+    {
         return false;
     }
     match convert_factor(b.unit(), a.unit()) {
@@ -1090,7 +1112,10 @@ fn numbers_eq(a: &Number, b: &Number) -> bool {
 /// character (a decoded `1\9` IE hack) re-serializes as a hex escape with
 /// its terminating space (`1\9 `); ordinary units append verbatim.
 fn push_unit_escaped(out: &mut String, unit: &str) {
-    if unit.chars().all(|c| (c as u32) >= 0x20 && (c as u32) != 0x7F) {
+    if unit
+        .chars()
+        .all(|c| (c as u32) >= 0x20 && (c as u32) != 0x7F)
+    {
         out.push_str(unit);
         return;
     }
@@ -1218,7 +1243,9 @@ pub fn unit_lists_factor(from: (&[String], &[String]), to: (&[String], &[String]
         let mut factor = 1.0;
         let mut remaining: Vec<&String> = to.iter().collect();
         for f in from {
-            let i = remaining.iter().position(|t| cancel_factor(f, t).is_some())?;
+            let i = remaining
+                .iter()
+                .position(|t| cancel_factor(f, t).is_some())?;
             if let Some(fac) = cancel_factor(f, remaining[i]) {
                 factor *= fac;
             }
@@ -1714,7 +1741,8 @@ impl Color {
         if compressed {
             let in_gamut = |v: f64| (-1e-9..=255.0 + 1e-9).contains(&v);
             if in_gamut(self.r) && in_gamut(self.g) && in_gamut(self.b) {
-                let hsl = crate::builtins::srgb_to_hsl([self.r / 255.0, self.g / 255.0, self.b / 255.0]);
+                let hsl =
+                    crate::builtins::srgb_to_hsl([self.r / 255.0, self.g / 255.0, self.b / 255.0]);
                 // dart nulls the hue when saturation is fuzzy-zero (srgb.dart:
                 // `fuzzyEquals(saturation, 0) ? null : hue`), and a missing hue
                 // serializes as 0 — float dust in a gray triple must not leak
@@ -2044,7 +2072,9 @@ impl ModernColor {
         // relative color syntax, not exercised by the spec suite and left
         // as-is here). NaN lightness also fails the range check.
         if matches!(self.space, Lab | Lch | Oklab | Oklch) {
-            if let (Some(l), Some(_), Some(_)) = (self.channels[0], self.channels[1], self.channels[2]) {
+            if let (Some(l), Some(_), Some(_)) =
+                (self.channels[0], self.channels[1], self.channels[2])
+            {
                 let max = if matches!(self.space, Lab | Lch) {
                     100.0
                 } else {
@@ -2134,7 +2164,10 @@ impl ModernColor {
                 if self.is_opaque() {
                     format!("color({space}{sp}{body})")
                 } else {
-                    format!("color({space}{sp}{body}{sp}/{sp}{})", self.alpha_str(compressed))
+                    format!(
+                        "color({space}{sp}{body}{sp}/{sp}{})",
+                        self.alpha_str(compressed)
+                    )
                 }
             }
         }
@@ -2162,8 +2195,9 @@ impl ModernColor {
                     };
                 }
                 ColorSpace::Rgb => {
-                    let in_gamut =
-                        |i: usize| (-1e-9..=255.0 + 1e-9).contains(&self.channels[i].unwrap_or(0.0));
+                    let in_gamut = |i: usize| {
+                        (-1e-9..=255.0 + 1e-9).contains(&self.channels[i].unwrap_or(0.0))
+                    };
                     if !(in_gamut(0) && in_gamut(1) && in_gamut(2)) {
                         let r = fmt_num(self.channels[0].unwrap_or(0.0), false);
                         let g = fmt_num(self.channels[1].unwrap_or(0.0), false);
@@ -2332,7 +2366,15 @@ impl ModernColor {
     }
 
     /// Serialize the classic `hsl(h, s%, l%)` / `hsla(…)` comma form.
-    fn hsl_comma_css(&self, h: f64, s: f64, l: f64, a: f64, opaque: bool, compressed: bool) -> String {
+    fn hsl_comma_css(
+        &self,
+        h: f64,
+        s: f64,
+        l: f64,
+        a: f64,
+        opaque: bool,
+        compressed: bool,
+    ) -> String {
         // dart-sass normalizes a negative HSL saturation — which arises when an
         // out-of-range hwb color converts to hsl — by flipping the hue 180° and
         // taking the saturation's magnitude. A non-negative saturation (every
@@ -2847,7 +2889,10 @@ mod tests {
         // 2^63 saturates to int64 max and still round-trips (dart VM).
         assert_eq!(fmt_num(9223372036854775808.0, false), "9223372036854775807");
         // Beyond int64 the shortest round-tripping form matches dart-sass.
-        assert_eq!(fmt_num(92233720368547758070.0, false), "92233720368547760000");
+        assert_eq!(
+            fmt_num(92233720368547758070.0, false),
+            "92233720368547760000"
+        );
         assert_eq!(
             fmt_num(99999999999999999999999999999.0, false),
             "100000000000000000000000000000"
@@ -2907,7 +2952,10 @@ mod tests {
                 right: Box::new(CalcNode::Str("var(--c)".into())),
             }),
         };
-        assert_eq!(Value::Calc(node).to_css(false), "calc(1px - (2% + var(--c)))");
+        assert_eq!(
+            Value::Calc(node).to_css(false),
+            "calc(1px - (2% + var(--c)))"
+        );
         // `1% + -1px` serializes as `1% - 1px`.
         let flip = CalcNode::Op {
             op: CalcOp::Add,
@@ -3015,7 +3063,10 @@ mod tests {
         // shorter than hsl); the new hsl candidate must not regress this.
         let integer = Color::from_hsl(210.0, 0.5, 0.4, 1.0); // == #336699
         assert_eq!(integer.to_css(true), "#369");
-        assert_eq!(Color::rgb(0.0, 0.0, 0.0, 0.5).to_css(true), "rgba(0,0,0,.5)");
+        assert_eq!(
+            Color::rgb(0.0, 0.0, 0.0, 0.5).to_css(true),
+            "rgba(0,0,0,.5)"
+        );
     }
 
     #[test]
@@ -3128,7 +3179,12 @@ mod tests {
         // `purple` (128,0,128) equals an HSL color that resolves to channels
         // a tiny epsilon away (127.999999999998607...).
         let purple = Value::Color(Color::rgb(128.0, 0.0, 128.0, 1.0));
-        let computed = Value::Color(Color::rgb(127.999_999_999_998_6, 0.0, 127.999_999_999_998_6, 1.0));
+        let computed = Value::Color(Color::rgb(
+            127.999_999_999_998_6,
+            0.0,
+            127.999_999_999_998_6,
+            1.0,
+        ));
         assert!(purple.sass_eq(&computed));
         // Genuinely different channels are not equal.
         assert!(!purple.sass_eq(&Value::Color(Color::rgb(255.0, 0.0, 0.0, 1.0))));

@@ -18,7 +18,9 @@ use super::color_ext::{computed, named_repr};
 use super::{arg, as_color, channel, max_positional, num, require, require_legacy_color};
 use crate::error::Error;
 use crate::lines::Pos;
-use crate::value::{fmt_num, CalcNode, Color, ColorSpace, List, ListSep, ModernColor, Number, Value};
+use crate::value::{
+    fmt_num, CalcNode, Color, ColorSpace, List, ListSep, ModernColor, Number, Value,
+};
 
 // Bring every sibling submodule item into this module's scope so the glue
 // `try_call` below (and each submodule's `use super::*;`) can name them.
@@ -32,7 +34,8 @@ use modern::*;
 pub(crate) use legacy::call_module_member;
 pub(crate) use math::{convert_modern, legacy_to_modern, make_modern_in, space_arg};
 pub(crate) use modern::{
-    grayscale_modern, invert_in_space, modify_in_space, modify_in_space_full, modify_in_space_opt, ModifyOp,
+    grayscale_modern, invert_in_space, modify_in_space, modify_in_space_full, modify_in_space_opt,
+    ModifyOp,
 };
 
 /// Whether a value is a "special" channel argument that cannot be evaluated

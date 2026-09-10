@@ -62,7 +62,8 @@ fn entry_is_resolved_through_the_importer() {
 fn entry_requires_an_importer() {
     let arena = Allocator::default();
     let options = Options::default();
-    let err = Compiler::new(&arena, "in.scss", &options).expect_err("expected a missing-importer error");
+    let err =
+        Compiler::new(&arena, "in.scss", &options).expect_err("expected a missing-importer error");
     assert!(err.message.contains("No importer configured"), "{err}");
 }
 
@@ -74,9 +75,12 @@ fn a_syntax_error_surfaces_at_parse_not_construction() {
     let arena = Allocator::default();
     let files = one(".page {\n  padding: 2rem;\n  df\n  background: red;\n}\n");
     let options = Options::default().with_importer(&files);
-    let compiler = Compiler::new(&arena, "in.scss", &options).expect("the entry loads without being parsed");
+    let compiler =
+        Compiler::new(&arena, "in.scss", &options).expect("the entry loads without being parsed");
 
-    let err = compiler.parse().expect_err("`df` is neither a declaration nor a selector");
+    let err = compiler
+        .parse()
+        .expect_err("`df` is neither a declaration nor a selector");
     // A stray identifier is not part of the next property's name, so the parser
     // runs on to `background` looking for the `:` that `df` never had. The
     // wording and the caret are `oxc-css-parser`'s; dart-sass 1.104 instead
@@ -141,8 +145,8 @@ fn staged_evaluate_validates_modified_sheet() {
     assert_eq!(compiler.compile().unwrap(), "c {\n  d: e;\n}");
 
     // Move the `@mixin` inside the `@if`, which Sass forbids.
-    let mixin = parsed.sheet.statements.remove(0);
-    let Statement::SassIfAtRule(conditional) = &mut parsed.sheet.statements[0] else {
+    let mixin = parsed.stylesheet.statements.remove(0);
+    let Statement::SassIfAtRule(conditional) = &mut parsed.stylesheet.statements[0] else {
         panic!("expected the @if to be the remaining statement");
     };
     conditional.if_clause.block.statements.push(mixin);
@@ -172,11 +176,11 @@ fn stylesheet_is_modifiable_before_evaluation() {
     let options = Options::default().with_importer(&files);
     let compiler = Compiler::new(&arena, "in.scss", &options).unwrap();
     let parsed = compiler.parse().unwrap();
-    assert_eq!(parsed.sheet.statements.len(), 2);
+    assert_eq!(parsed.stylesheet.statements.len(), 2);
 
     // Put `b` first, then drop `a` entirely.
-    parsed.sheet.statements.swap(0, 1);
-    parsed.sheet.statements.truncate(1);
+    parsed.stylesheet.statements.swap(0, 1);
+    parsed.stylesheet.statements.truncate(1);
 
     let run = compiler.evaluate(parsed).unwrap();
     assert_eq!(compiler.emit(&run.nodes), "b {\n  color: blue;\n}");
@@ -194,7 +198,10 @@ fn out_nodes_are_modifiable_before_emit() {
     let mut run = compiler.evaluate(sheet).unwrap();
 
     for node in &mut run.nodes {
-        if let OutNode::Rule { selectors, items, .. } = node {
+        if let OutNode::Rule {
+            selectors, items, ..
+        } = node
+        {
             *selectors = RuleSelectors::Raw(
                 selectors
                     .to_strings()
@@ -273,7 +280,9 @@ fn one_tree_emits_under_several_styles() {
         .with_importer(&files);
     assert_eq!(compiler.emit(&run.nodes), "a {\n  color: red;\n}");
     assert_eq!(
-        Compiler::new(&arena, "in.scss", &compressed).unwrap().emit(&run.nodes),
+        Compiler::new(&arena, "in.scss", &compressed)
+            .unwrap()
+            .emit(&run.nodes),
         compile(src, &compressed).unwrap()
     );
 }
@@ -317,7 +326,14 @@ $top: 1px;
         .evaluator
         .variable_values()
         .values()
-        .map(|v| (v.name.as_str(), v.span.line, v.span.col, v.value.to_css(false)))
+        .map(|v| {
+            (
+                v.name.as_str(),
+                v.span.line,
+                v.span.col,
+                v.value.to_css(false),
+            )
+        })
         .collect();
     // Spans carry 1-based line/column, exactly like a diagnostic's position.
     assert_eq!(
@@ -363,7 +379,14 @@ fn record_variable_values_marks_short_circuited_defaults() {
         .evaluator
         .variable_values()
         .values()
-        .map(|v| (v.name.as_str(), v.is_default, v.evaluated, v.value.to_css(false)))
+        .map(|v| {
+            (
+                v.name.as_str(),
+                v.is_default,
+                v.evaluated,
+                v.value.to_css(false),
+            )
+        })
         .collect();
     assert_eq!(
         recorded,
@@ -387,7 +410,10 @@ fn record_variable_values_does_not_change_output() {
         .record_variable_values(true)
         .with_importer(&files);
     assert_eq!(
-        Compiler::new(&arena, "in.scss", &recording).unwrap().compile().unwrap(),
+        Compiler::new(&arena, "in.scss", &recording)
+            .unwrap()
+            .compile()
+            .unwrap(),
         compile(src, &plain).unwrap()
     );
 }
@@ -406,8 +432,14 @@ fn recorded_values_are_typed() {
     let run = compiler.evaluate(sheet).unwrap();
 
     let mut values = run.evaluator.variable_values().values();
-    assert!(matches!(values.next().map(|v| &v.value), Some(Value::List(_))));
-    assert!(matches!(values.next().map(|v| &v.value), Some(Value::Color(_))));
+    assert!(matches!(
+        values.next().map(|v| &v.value),
+        Some(Value::List(_))
+    ));
+    assert!(matches!(
+        values.next().map(|v| &v.value),
+        Some(Value::Color(_))
+    ));
 }
 
 /// Declarations in a `@use`d file are recorded too, keyed by that file's own
@@ -466,7 +498,12 @@ fn same_named_partials_in_different_directories_stay_distinct() {
         .evaluator
         .variable_values()
         .values()
-        .map(|v| (run.evaluator.file_url(v.span.file).unwrap_or(""), v.name.as_str()))
+        .map(|v| {
+            (
+                run.evaluator.file_url(v.span.file).unwrap_or(""),
+                v.name.as_str(),
+            )
+        })
         .collect();
     captured.sort();
     assert_eq!(
@@ -527,7 +564,9 @@ fn source_map_sources_are_per_file() {
     let options = Options::default()
         .with_importer(&files)
         .with_source_map_include_sources(true);
-    let compiler = Compiler::new(&arena, "in.scss", &options).unwrap().with_source_map(true);
+    let compiler = Compiler::new(&arena, "in.scss", &options)
+        .unwrap()
+        .with_source_map(true);
     let sheet = compiler.parse().unwrap();
     let mut run = compiler.evaluate(sheet).unwrap();
     let result = compiler.emit_with_source_map(&run.nodes, &mut run.evaluator);
@@ -539,8 +578,14 @@ fn source_map_sources_are_per_file() {
         "sources must be the canonical URLs: {sources:?}"
     );
     let contents = result.source_map.sources_content.expect("sourcesContent");
-    let theme = sources.iter().position(|s| s == "theme/_colors.scss").unwrap();
-    let base = sources.iter().position(|s| s == "base/_colors.scss").unwrap();
+    let theme = sources
+        .iter()
+        .position(|s| s == "theme/_colors.scss")
+        .unwrap();
+    let base = sources
+        .iter()
+        .position(|s| s == "base/_colors.scss")
+        .unwrap();
     assert_eq!(contents[theme], ".t { color: red; }\n");
     assert_eq!(contents[base], ".b { color: blue; }\n");
 }
@@ -565,7 +610,12 @@ fn imported_files_keep_their_own_identity() {
         .evaluator
         .variable_values()
         .values()
-        .map(|v| (run.evaluator.file_url(v.span.file).unwrap_or(""), v.name.as_str()))
+        .map(|v| {
+            (
+                run.evaluator.file_url(v.span.file).unwrap_or(""),
+                v.name.as_str(),
+            )
+        })
         .collect();
     captured.sort();
     assert_eq!(
@@ -585,6 +635,9 @@ fn relative_loads_resolve_against_the_containing_file() {
         .with_file("pkg/_local.scss", "$v: from-pkg;\n")
         .with_file("_local.scss", "$v: from-root;\n");
     let options = Options::default().with_importer(&files);
-    let css = Compiler::new(&arena, "in.scss", &options).unwrap().compile().unwrap();
+    let css = Compiler::new(&arena, "in.scss", &options)
+        .unwrap()
+        .compile()
+        .unwrap();
     assert_eq!(css, "a {\n  x: from-pkg;\n}");
 }

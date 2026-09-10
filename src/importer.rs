@@ -428,7 +428,9 @@ fn resolve_in_base(base: &Path, path: &str, allow_import_only: bool) -> Resoluti
     }
 
     // Explicit `.scss`/`.sass` extension: only that extension is considered.
-    let explicit_ext = [".scss", ".sass"].into_iter().find(|ext| file.ends_with(ext));
+    let explicit_ext = [".scss", ".sass"]
+        .into_iter()
+        .find(|ext| file.ends_with(ext));
 
     if let Some(ext) = explicit_ext {
         let stem = &file[..file.len() - ext.len()];
@@ -549,7 +551,10 @@ fn tier_exact(dir: &Path, stem: &str, exts: &[&str], import_only: bool) -> Tier 
     let mut found = Vec::new();
     let suffix = if import_only { ".import" } else { "" };
     for ext in exts {
-        for name in [format!("_{stem}{suffix}.{ext}"), format!("{stem}{suffix}.{ext}")] {
+        for name in [
+            format!("_{stem}{suffix}.{ext}"),
+            format!("{stem}{suffix}.{ext}"),
+        ] {
             let cand = dir.join(&name);
             if cand.is_file() {
                 found.push(cand);

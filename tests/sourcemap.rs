@@ -17,7 +17,9 @@
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn b64_val(c: u8) -> i64 {
-    B64.iter().position(|&b| b == c).expect("valid base64 digit") as i64
+    B64.iter()
+        .position(|&b| b == c)
+        .expect("valid base64 digit") as i64
 }
 
 /// Decode every Base64-VLQ value packed in one segment string.
@@ -107,7 +109,11 @@ fn leading_ident(s: &str) -> String {
 /// bounds-checked, since source flattening (`.a .b` <- `.b`) means the generated
 /// token is not a literal prefix of the source. Returns the count of strictly
 /// verified (identifier-matched) mappings.
-fn check_declaration_invariants(sources: &[(&str, &str)], output_css: &str, mappings: &str) -> usize {
+fn check_declaration_invariants(
+    sources: &[(&str, &str)],
+    output_css: &str,
+    mappings: &str,
+) -> usize {
     let maps = decode_mappings(mappings);
     let mut strict = 0;
     for m in &maps {
@@ -117,8 +123,8 @@ fn check_declaration_invariants(sources: &[(&str, &str)], output_css: &str, mapp
             .1;
         let gen = at(output_css, m.gen_line, m.gen_col)
             .unwrap_or_else(|| panic!("generated pos {:?} out of bounds", m));
-        let src =
-            at(src_text, m.src_line, m.src_col).unwrap_or_else(|| panic!("source pos {:?} out of bounds", m));
+        let src = at(src_text, m.src_line, m.src_col)
+            .unwrap_or_else(|| panic!("source pos {:?} out of bounds", m));
         let gen_id = leading_ident(gen);
         if gen_id.is_empty() {
             continue; // selector / symbol-leading token: bounds-checked only
@@ -183,7 +189,11 @@ fn decoder_matches_known_dart_map() {
 fn invariant_checker_accepts_known_good_dart_map() {
     // The machinery must ACCEPT a known-correct map (and strictly verify the two
     // declaration names `color` and `width`).
-    let strict = check_declaration_invariants(&[("sm_in.scss", DART_INPUT)], DART_OUTPUT_CSS, DART_MAPPINGS);
+    let strict = check_declaration_invariants(
+        &[("sm_in.scss", DART_INPUT)],
+        DART_OUTPUT_CSS,
+        DART_MAPPINGS,
+    );
     assert_eq!(
         strict, 2,
         "expected to strictly verify the 2 declaration-name mappings"
@@ -246,8 +256,12 @@ fn sasso_css_matches_plain_compile() {
 fn sasso_nested_rule_map_is_valid() {
     // The DART_INPUT fixture: nested rule, two declarations, selector flattening.
     let (css, _maps, json) = sasso_map(DART_INPUT, &Options::default().with_url("sm_in.scss"));
-    assert_eq!(css, DART_OUTPUT_CSS, "sasso css must match the dart fixture css");
-    let strict = check_declaration_invariants(&[("sm_in.scss", DART_INPUT)], &css, &sasso_mappings(&json));
+    assert_eq!(
+        css, DART_OUTPUT_CSS,
+        "sasso css must match the dart fixture css"
+    );
+    let strict =
+        check_declaration_invariants(&[("sm_in.scss", DART_INPUT)], &css, &sasso_mappings(&json));
     assert!(
         strict >= 2,
         "expected to strictly verify >=2 decl names, got {strict}"
@@ -270,7 +284,10 @@ fn sasso_multiline_decl_block_map_is_valid() {
     let (css, _m, json) = sasso_map(src, &Options::default().with_url("in.scss"));
     let strict = check_declaration_invariants(&[("in.scss", src)], &css, &sasso_mappings(&json));
     // color, background, border — three strictly-verified declaration names.
-    assert!(strict >= 3, "expected >=3 strict decl mappings, got {strict}");
+    assert!(
+        strict >= 3,
+        "expected >=3 strict decl mappings, got {strict}"
+    );
 }
 
 #[test]
@@ -284,7 +301,10 @@ fn sasso_media_block_map_is_valid() {
 ";
     let (css, maps, json) = sasso_map(src, &Options::default().with_url("in.scss"));
     let strict = check_declaration_invariants(&[("in.scss", src)], &css, &sasso_mappings(&json));
-    assert!(strict >= 1, "expected the `color` decl mapped, got {strict}");
+    assert!(
+        strict >= 1,
+        "expected the `color` decl mapped, got {strict}"
+    );
     // The `@media` keyword should map to the source `@` (line 0, col 0).
     assert!(
         maps.iter().any(|m| m.src_line == 0 && m.src_col == 0),
@@ -370,15 +390,24 @@ fn sasso_compressed_bubbled_media_matches_dart() {
             .with_style(OutputStyle::Compressed)
             .with_url("in.scss"),
     );
-    assert_eq!(css, ".a{color:red}@media screen{.a{width:1px}}.a{height:2px}");
+    assert_eq!(
+        css,
+        ".a{color:red}@media screen{.a{width:1px}}.a{height:2px}"
+    );
     // 7 segments: .a(l0), color(l1), @media(l2), bubbled .a(l0), width(l2),
     // trailing .a(l0), height(l3) — none consecutive-same-line, so none dropped.
-    assert_eq!(sasso_mappings(&json), "AAAA,GACE,UACA,cAFF,GAEkB,WAFlB,GAGE");
+    assert_eq!(
+        sasso_mappings(&json),
+        "AAAA,GACE,UACA,cAFF,GAEkB,WAFlB,GAGE"
+    );
 
     // Expanded maps the bubbled selector too (dart parity): the `EAFF` segment
     // at generated line 4 is the bubbled `.a` mapping back to source 0:0.
     let (_c, _m, json) = sasso_map(src, &Options::default().with_url("in.scss"));
-    assert_eq!(sasso_mappings(&json), "AAAA;EACE;;AACA;EAFF;IAEkB;;;AAFlB;EAGE");
+    assert_eq!(
+        sasso_mappings(&json),
+        "AAAA;EACE;;AACA;EAFF;IAEkB;;;AAFlB;EAGE"
+    );
 }
 
 #[test]
@@ -444,7 +473,10 @@ fn sasso_bare_variable_value_maps_to_its_definition() {
     // A mixin/function PARAMETER resolves too — to the ARGUMENT at the call
     // site, because `getVariableNode` returns the CURRENT binding: `pad: $p`
     // maps back to the `4px` in `@include m(4px)` (src 1:16).
-    let (_c, _m, json) = sasso_map("@mixin m($p) { pad: $p; }\n.a { @include m(4px); }\n", &opts);
+    let (_c, _m, json) = sasso_map(
+        "@mixin m($p) { pad: $p; }\n.a { @include m(4px); }\n",
+        &opts,
+    );
     assert_eq!(sasso_mappings(&json), "AACA;EADe,KACC");
 
     // ONLY a bare variable resolves. Every other expression shape keeps its own
@@ -466,7 +498,10 @@ fn sasso_bare_variable_value_maps_to_its_definition() {
         "}\n",
     );
     let (_c, _m, json) = sasso_map(src, &opts);
-    assert_eq!(sasso_mappings(&json), "AAGA;EACE,GAJE;EAKF;EACA;EACA;EACA;EACA");
+    assert_eq!(
+        sasso_mappings(&json),
+        "AAGA;EACE,GAJE;EAKF;EACA;EACA;EACA;EACA"
+    );
 }
 
 #[test]
@@ -558,7 +593,9 @@ fn sasso_mappings(json: &str) -> String {
 // =====================================================================
 
 fn dart_enabled() -> bool {
-    std::env::var("SASSO_PARITY").map(|v| v != "0").unwrap_or(false)
+    std::env::var("SASSO_PARITY")
+        .map(|v| v != "0")
+        .unwrap_or(false)
 }
 
 /// Run dart-sass with `--source-map` over a temp input file and return its
@@ -610,7 +647,9 @@ fn dart_map(src: &str) -> Option<(Vec<Mapping>, Vec<String>)> {
 /// differs between impls, but the SOURCE side a declaration/selector points to
 /// should agree.
 fn source_positions(maps: &[Mapping]) -> std::collections::BTreeSet<(u32, u32, u32)> {
-    maps.iter().map(|m| (m.src_id, m.src_line, m.src_col)).collect()
+    maps.iter()
+        .map(|m| (m.src_id, m.src_line, m.src_col))
+        .collect()
 }
 
 #[test]
@@ -708,7 +747,9 @@ fn importer_source_map_url_override_appears_in_sources() {
     // The loaded module's `sources[]` entry uses the importer's source_map_url
     // (not its canonical key), while the entry file keeps its own URL.
     let imp = SourceMapUrlImporter;
-    let opts = Options::default().with_importer(&imp).with_url("entry.scss");
+    let opts = Options::default()
+        .with_importer(&imp)
+        .with_url("entry.scss");
     // Both the entry and the module emit a rule, so both are mapped sources.
     let r = compile_with_source_map("@use \"mod\";\n.a { y: 2px; }\n", &opts).unwrap();
     assert!(

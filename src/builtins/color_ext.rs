@@ -22,7 +22,11 @@ fn modify_with_space(
     pos: Pos,
 ) -> Option<Result<Value, Error>> {
     let space_arg_v = named.iter().find(|(n, _)| n == "space").map(|(_, v)| v);
-    let is_legacy = c.modern.as_ref().map(|m| m.space.is_legacy()).unwrap_or(true);
+    let is_legacy = c
+        .modern
+        .as_ref()
+        .map(|m| m.space.is_legacy())
+        .unwrap_or(true);
     if space_arg_v.is_none() && is_legacy {
         return None;
     }
@@ -31,7 +35,11 @@ fn modify_with_space(
             Ok(s) => s,
             Err(e) => return Some(Err(e)),
         },
-        None => c.modern.as_ref().map(|m| m.space).unwrap_or(ColorSpace::Rgb),
+        None => c
+            .modern
+            .as_ref()
+            .map(|m| m.space)
+            .unwrap_or(ColorSpace::Rgb),
     };
     // `$color` (when passed by name) and `$space` are not channels.
     let chans: Vec<(String, &Value)> = named
@@ -307,7 +315,12 @@ pub(super) fn call_module_member(
 
 /// Error when more than `max` positional/named arguments were supplied to a
 /// fixed-arity builtin, matching dart-sass's message.
-fn check_max_args(pos_args: &[Value], named: &[(String, Value)], max: usize, pos: Pos) -> Result<(), Error> {
+fn check_max_args(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    max: usize,
+    pos: Pos,
+) -> Result<(), Error> {
     let n = pos_args.len() + named.len();
     if n > max {
         let plural = if max == 1 { "argument" } else { "arguments" };
@@ -347,9 +360,15 @@ fn plain_filter(name: &str, arg: &Value) -> Value {
 fn fn_adjust_hue(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
     let params = ["color", "degrees"];
     check_max_args(pos_args, named, 2, pos)?;
-    let c = as_color(require(&params, pos_args, named, 0, "adjust-hue", pos)?, pos)?;
+    let c = as_color(
+        require(&params, pos_args, named, 0, "adjust-hue", pos)?,
+        pos,
+    )?;
     require_legacy_color(&c, "adjust-hue", pos)?;
-    let degrees = angle_degrees(require(&params, pos_args, named, 1, "adjust-hue", pos)?, pos)?;
+    let degrees = angle_degrees(
+        require(&params, pos_args, named, 1, "adjust-hue", pos)?,
+        pos,
+    )?;
     Ok(Value::Color(rotate_hue(&c, degrees)))
 }
 
@@ -376,9 +395,16 @@ fn angle_degrees(v: &Value, pos: Pos) -> Result<f64, Error> {
 fn fn_complement(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
     let params = ["color", "space"];
     check_max_args(pos_args, named, 2, pos)?;
-    let c = as_color(require(&params, pos_args, named, 0, "complement", pos)?, pos)?;
+    let c = as_color(
+        require(&params, pos_args, named, 0, "complement", pos)?,
+        pos,
+    )?;
     let space_v = arg(&params, pos_args, named, 1);
-    let is_legacy = c.modern.as_ref().map(|m| m.space.is_legacy()).unwrap_or(true);
+    let is_legacy = c
+        .modern
+        .as_ref()
+        .map(|m| m.space.is_legacy())
+        .unwrap_or(true);
     let space = match space_v {
         Some(v) => space_arg(v, pos)?,
         None if is_legacy => ColorSpace::Hsl,
@@ -398,7 +424,10 @@ fn fn_complement(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Res
         ColorSpace::Hsl | ColorSpace::Hwb | ColorSpace::Lch | ColorSpace::Oklch
     ) {
         return Err(Error::at(
-            format!("$space: Color space {} doesn't have a hue channel.", space.name()),
+            format!(
+                "$space: Color space {} doesn't have a hue channel.",
+                space.name()
+            ),
             pos,
         ));
     }
@@ -435,7 +464,11 @@ fn from_hsl(h: f64, s: f64, l: f64, a: f64) -> Color {
 /// When the single argument is a plain-CSS special value (a number, `var()`,
 /// …) this is the CSS `invert()` filter and is preserved verbatim; passing a
 /// weight alongside that form is an error.
-fn fn_invert(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Option<Result<Value, Error>> {
+fn fn_invert(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Option<Result<Value, Error>> {
     let params = ["color", "weight"];
     if let Err(e) = check_max_args(pos_args, named, 3, pos) {
         return Some(Err(e));
@@ -461,7 +494,10 @@ fn fn_invert(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Option<
                 let n = num(v, pos)?;
                 if !(0.0..=100.0).contains(&n) {
                     return Err(Error::at(
-                        format!("$weight: Expected {} to be within 0% and 100%.", v.to_css(false)),
+                        format!(
+                            "$weight: Expected {} to be within 0% and 100%.",
+                            v.to_css(false)
+                        ),
                         pos,
                     ));
                 }
@@ -471,7 +507,11 @@ fn fn_invert(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Option<
         };
         let w = (weight / 100.0).clamp(0.0, 1.0);
         let space_v = arg(&params, pos_args, named, 2);
-        let is_legacy = c.modern.as_ref().map(|m| m.space.is_legacy()).unwrap_or(true);
+        let is_legacy = c
+            .modern
+            .as_ref()
+            .map(|m| m.space.is_legacy())
+            .unwrap_or(true);
         // The modern form (`$space` given, or a non-legacy color) inverts each
         // channel in that space; a non-legacy color without $space errors.
         if space_v.is_some() || !is_legacy {
@@ -480,9 +520,9 @@ fn fn_invert(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Option<
                 None => {
                     return Err(Error::at(
                         format!(
-                        "$color: To use color.invert() with non-legacy color {}, you must provide a $space.",
-                        c.to_css(false)
-                    ),
+                            "$color: To use color.invert() with non-legacy color {}, you must provide a $space.",
+                            c.to_css(false)
+                        ),
                         pos,
                     ))
                 }
@@ -510,7 +550,11 @@ fn fn_invert(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Option<
 
 /// `grayscale($color)` — set the HSL saturation to 0. With a plain-CSS
 /// special argument it is the CSS `grayscale()` filter, preserved verbatim.
-fn fn_grayscale(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Option<Result<Value, Error>> {
+fn fn_grayscale(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Option<Result<Value, Error>> {
     let params = ["color"];
     if let Err(e) = check_max_args(pos_args, named, 1, pos) {
         return Some(Err(e));
@@ -527,7 +571,11 @@ fn fn_grayscale(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Opti
         // A non-legacy color is desaturated by setting its oklch chroma to 0
         // and converting back to its own space; legacy colors set HSL
         // saturation to 0.
-        let is_legacy = c.modern.as_ref().map(|m| m.space.is_legacy()).unwrap_or(true);
+        let is_legacy = c
+            .modern
+            .as_ref()
+            .map(|m| m.space.is_legacy())
+            .unwrap_or(true);
         if !is_legacy {
             return Ok(Value::Color(super::color::grayscale_modern(&c)));
         }
@@ -592,9 +640,10 @@ fn fn_saturate_two(
     // result rides exactly the same conversion path as
     // `color.change($saturation: …)` — including its float dust, which decides
     // whether the legacy serialization can use integer rgb channels.
-    let current = crate::builtins::convert_modern(&crate::builtins::legacy_to_modern(&c), ColorSpace::Hsl)
-        .channels[1]
-        .unwrap_or(0.0);
+    let current =
+        crate::builtins::convert_modern(&crate::builtins::legacy_to_modern(&c), ColorSpace::Hsl)
+            .channels[1]
+            .unwrap_or(0.0);
     let target = Value::Number(crate::value::Number::with_unit(
         (current + sign * amount).clamp(0.0, 100.0),
         "%",
@@ -678,7 +727,11 @@ fn fn_hsl_getter(
     check_max_args(pos_args, named, 1, pos)?;
     let c = as_color(require(&params, pos_args, named, 0, name, pos)?, pos)?;
     // These legacy getters only support legacy colors.
-    let is_legacy = c.modern.as_ref().map(|m| m.space.is_legacy()).unwrap_or(true);
+    let is_legacy = c
+        .modern
+        .as_ref()
+        .map(|m| m.space.is_legacy())
+        .unwrap_or(true);
     if !is_legacy {
         let space = if matches!(name, "whiteness" | "blackness") {
             "hwb"
@@ -727,7 +780,11 @@ fn fn_hsl_getter(
 
 /// `opacity($color)` returns the alpha; `opacity($number)` (CSS filter
 /// overload) is preserved verbatim.
-fn fn_opacity(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Option<Result<Value, Error>> {
+fn fn_opacity(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Option<Result<Value, Error>> {
     let params = ["color"];
     if let Err(e) = check_max_args(pos_args, named, 1, pos) {
         return Some(Err(e));
@@ -749,7 +806,10 @@ fn fn_opacity(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Option
 fn fn_ie_hex_str(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
     let params = ["color"];
     check_max_args(pos_args, named, 1, pos)?;
-    let c = as_color(require(&params, pos_args, named, 0, "ie-hex-str", pos)?, pos)?;
+    let c = as_color(
+        require(&params, pos_args, named, 0, "ie-hex-str", pos)?,
+        pos,
+    )?;
     let byte = |v: f64| v.round().clamp(0.0, 255.0) as u8;
     let text = format!(
         "#{:02X}{:02X}{:02X}{:02X}",
@@ -859,9 +919,16 @@ fn resolve_channels<'v>(
 /// `adjust-color($color, channels…)` — add each amount to the matching
 /// channel (rgb values 0–255, hsl/hwb percentages, hue degrees, alpha 0–1),
 /// then clamp.
-fn fn_adjust_color(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_adjust_color(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["color"];
-    let c = as_color(require(&params, pos_args, named, 0, "adjust-color", pos)?, pos)?;
+    let c = as_color(
+        require(&params, pos_args, named, 0, "adjust-color", pos)?,
+        pos,
+    )?;
     if pos_args.len() > 1 {
         return Err(Error::at(
             "Only one positional argument is allowed. All other arguments must be passed by name."
@@ -887,9 +954,16 @@ fn fn_adjust_color(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> R
 
 /// `change-color($color, channels…)` — set each channel to the given value
 /// (alpha validated to `[0, 1]`).
-fn fn_change_color(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_change_color(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["color"];
-    let c = as_color(require(&params, pos_args, named, 0, "change-color", pos)?, pos)?;
+    let c = as_color(
+        require(&params, pos_args, named, 0, "change-color", pos)?,
+        pos,
+    )?;
     if pos_args.len() > 1 {
         return Err(Error::at(
             "Only one positional argument is allowed. All other arguments must be passed by name."
@@ -918,7 +992,10 @@ fn fn_change_color(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> R
 /// 100]`.
 fn fn_scale_color(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
     let params = ["color"];
-    let c = as_color(require(&params, pos_args, named, 0, "scale-color", pos)?, pos)?;
+    let c = as_color(
+        require(&params, pos_args, named, 0, "scale-color", pos)?,
+        pos,
+    )?;
     if pos_args.len() > 1 {
         return Err(Error::at(
             "Only one positional argument is allowed. All other arguments must be passed by name."
@@ -1024,8 +1101,14 @@ mod tests {
 
     #[test]
     fn adjust_hue_and_complement() {
-        assert_eq!(css("adjust-hue", &[col("#6b717f"), n(60.0, "deg")]), "#796b7f");
-        assert_eq!(css("adjust-hue", &[col("#6b717f"), n(-60.0, "deg")]), "#6b7f79");
+        assert_eq!(
+            css("adjust-hue", &[col("#6b717f"), n(60.0, "deg")]),
+            "#796b7f"
+        );
+        assert_eq!(
+            css("adjust-hue", &[col("#6b717f"), n(-60.0, "deg")]),
+            "#6b7f79"
+        );
         assert_eq!(css("complement", &[col("#6b717f")]), "#7f796b");
     }
 
@@ -1049,7 +1132,10 @@ mod tests {
             css("saturate", &[col("#cc6699"), n(30.0, "%")]),
             "rgb(92%, 28%, 60%)"
         );
-        assert_eq!(css("desaturate", &[col("#6b717f"), n(20.0, "%")]), "#757575");
+        assert_eq!(
+            css("desaturate", &[col("#6b717f"), n(20.0, "%")]),
+            "#757575"
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use super::value_read::{Arg, args_of, is_equal, is_solidus, split_commas};
+use super::value_read::{args_of, is_equal, is_solidus, split_commas, Arg};
 use super::*;
 
 impl<'a> Evaluator<'a> {
@@ -81,10 +81,7 @@ impl<'a> Evaluator<'a> {
     /// `/` binds tighter than juxtaposition, so `1 2 3 / 0.5` is the
     /// three-element space list `1 2 (3/0.5)` — which is how `rgb(1 2 3 / 0.5)`
     /// reaches the builtin as a list whose last element carries the slash.
-    fn eval_element_run(
-        &mut self,
-        values: &'a [ox::ComponentValue<'a>],
-    ) -> Result<Value, Error> {
+    fn eval_element_run(&mut self, values: &'a [ox::ComponentValue<'a>]) -> Result<Value, Error> {
         if values.is_empty() {
             return Ok(Value::List(List {
                 items: Vec::new().into(),
@@ -176,10 +173,7 @@ impl<'a> Evaluator<'a> {
     /// file and call context it was raised in. Since this runs at every level
     /// of the value tree, the innermost node that HAS a span is the one that
     /// gets blamed — which is where dart-sass blames it too.
-    pub(super) fn eval_value(
-        &mut self,
-        value: &'a ox::ComponentValue<'a>,
-    ) -> Result<Value, Error> {
+    pub(super) fn eval_value(&mut self, value: &'a ox::ComponentValue<'a>) -> Result<Value, Error> {
         match self.eval_value_inner(value) {
             Ok(v) => Ok(v),
             Err(e) => {
@@ -190,10 +184,7 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    fn eval_value_inner(
-        &mut self,
-        value: &'a ox::ComponentValue<'a>,
-    ) -> Result<Value, Error> {
+    fn eval_value_inner(&mut self, value: &'a ox::ComponentValue<'a>) -> Result<Value, Error> {
         use ox::ComponentValue as CV;
         match value {
             CV::Number(n) => Ok(Value::Number(Number::unitless(number(n)))),
@@ -226,9 +217,7 @@ impl<'a> Evaluator<'a> {
                     // The caret covers the whole `ns.$name` reference, exactly
                     // as dart-sass blames `MemberExpression`'s span.
                     .eval_module_var(q.module.name, v.name.name, self.file.pos(q.span))
-                    .map_err(|e| {
-                        e.with_length(q.module.name.len() + 2 + v.name.name.len())
-                    }),
+                    .map_err(|e| e.with_length(q.module.name.len() + 2 + v.name.name.len())),
                 // A bare `ns.member` with no `$` is only a value when it is a
                 // call, which the parser reports as a `Function` instead.
                 ox::SassModuleMemberName::Ident(_) => self.eval_text_value(q.span),
@@ -241,9 +230,7 @@ impl<'a> Evaluator<'a> {
             },
             // Parentheses force the deprecated slash to perform real
             // division: `(1/2)` is `0.5`, not the slash value `1/2`.
-            CV::SassParenthesizedExpression(p) => {
-                Ok(self.eval_value(&p.expr)?.without_slash())
-            }
+            CV::SassParenthesizedExpression(p) => Ok(self.eval_value(&p.expr)?.without_slash()),
             CV::SassUnaryExpression(u) => self.eval_unary(u),
             CV::SassBinaryExpression(b) => self.eval_binary_expr(b),
             CV::SassList(l) => self.eval_sass_list(l, false),
@@ -259,9 +246,7 @@ impl<'a> Evaluator<'a> {
                     (vals, ListSep::Comma)
                 } else {
                     match self.eval_element_run(groups.first().copied().unwrap_or(&[]))? {
-                        Value::List(l) if !l.bracketed => {
-                            (l.items.to_vec(), l.sep)
-                        }
+                        Value::List(l) if !l.bracketed => (l.items.to_vec(), l.sep),
                         one => (vec![one], ListSep::Undecided),
                     }
                 };
@@ -522,10 +507,7 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    fn eval_binary_expr(
-        &mut self,
-        b: &'a ox::SassBinaryExpression<'a>,
-    ) -> Result<Value, Error> {
+    fn eval_binary_expr(&mut self, b: &'a ox::SassBinaryExpression<'a>) -> Result<Value, Error> {
         use ox::SassBinaryOperatorKind as K;
         let pos = self.file.pos(b.op.span);
 
@@ -569,11 +551,7 @@ impl<'a> Evaluator<'a> {
         eval_binary(op, l.without_slash(), r.without_slash(), pos)
     }
 
-    fn eval_sass_list(
-        &mut self,
-        l: &'a ox::SassList<'a>,
-        bracketed: bool,
-    ) -> Result<Value, Error> {
+    fn eval_sass_list(&mut self, l: &'a ox::SassList<'a>, bracketed: bool) -> Result<Value, Error> {
         let mut vals = Vec::with_capacity(l.elements.len());
         for e in &l.elements {
             vals.push(self.eval_value(e)?);
@@ -818,12 +796,7 @@ impl<'a> Evaluator<'a> {
 
     /// A call whose result is preserved verbatim: the arguments evaluate but
     /// no function is looked up.
-    fn eval_plain_call(
-        &mut self,
-        name: &str,
-        args: &[Arg<'a>],
-        pos: Pos,
-    ) -> Result<Value, Error> {
+    fn eval_plain_call(&mut self, name: &str, args: &[Arg<'a>], pos: Pos) -> Result<Value, Error> {
         let _ = pos;
         let mut parts: Vec<String> = Vec::with_capacity(args.len());
         for a in args {
@@ -888,8 +861,7 @@ fn is_slash_operand_node(v: &ox::ComponentValue<'_>) -> bool {
                 if id.name.eq_ignore_ascii_case("calc")
         ),
         CV::SassUnaryExpression(u) => {
-            matches!(u.op.kind, ox::SassUnaryOperatorKind::Minus)
-                && is_slash_operand_node(&u.expr)
+            matches!(u.op.kind, ox::SassUnaryOperatorKind::Minus) && is_slash_operand_node(&u.expr)
         }
         CV::SassBinaryExpression(b) => {
             matches!(b.op.kind, ox::SassBinaryOperatorKind::Division)

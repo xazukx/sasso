@@ -356,7 +356,11 @@ fn run(cli: Cli) -> ExitCode {
         }
         let elapsed = start.elapsed();
         let per = elapsed.as_secs_f64() * 1000.0 / f64::from(n);
-        let per_sec = if per > 0.0 { 1000.0 / per } else { f64::INFINITY };
+        let per_sec = if per > 0.0 {
+            1000.0 / per
+        } else {
+            f64::INFINITY
+        };
         eprintln!("sasso: {n} compiles in {elapsed:.3?} => {per:.3} ms/compile, {per_sec:.1} compiles/sec");
         if !cli.quiet && !last.is_empty() {
             // Match the CLI's single trailing newline (the library API omits it;
@@ -429,7 +433,12 @@ fn write_output(
         let css = append_source_map_footer(&result.css, &map_url, style);
         // Build the map JSON in dart's field order, rewriting `file`/`sources`.
         let file = path_basename(output);
-        let sources = adjust_sources(&result.source_map.sources, input_url, &map_path, source_map_urls);
+        let sources = adjust_sources(
+            &result.source_map.sources,
+            input_url,
+            &map_path,
+            source_map_urls,
+        );
         let map_json = dart_map_json(
             &file,
             &sources,
@@ -484,7 +493,12 @@ fn append_source_map_footer(css: &str, url: &str, style: OutputStyle) -> String 
 /// Serialize the map JSON in dart-sass's exact field order:
 /// `version, sourceRoot:"", sources, names:[], mappings, file[, sourcesContent]`.
 /// Hand-built (zero-dep) with the same string escaping dart uses.
-fn dart_map_json(file: &str, sources: &[String], contents: Option<&[String]>, mappings: &str) -> String {
+fn dart_map_json(
+    file: &str,
+    sources: &[String],
+    contents: Option<&[String]>,
+    mappings: &str,
+) -> String {
     let mut s = String::from("{\"version\":3,\"sourceRoot\":\"\",\"sources\":[");
     for (i, src) in sources.iter().enumerate() {
         if i > 0 {
@@ -550,19 +564,29 @@ fn append_ext(p: &Path, ext: &str) -> PathBuf {
 /// to the source (URL-encoded); `absolute` = a canonicalized `file://` URL.
 /// The library hands us the input path(s) as stamped during eval (the entry is
 /// `input_url`); we adjust each one the same way dart does.
-fn adjust_sources(sources: &[String], input_url: &str, map_path: &Path, mode: SourceMapUrls) -> Vec<String> {
+fn adjust_sources(
+    sources: &[String],
+    input_url: &str,
+    map_path: &Path,
+    mode: SourceMapUrls,
+) -> Vec<String> {
     let cwd = std::env::current_dir().unwrap_or_default();
     sources
         .iter()
         .map(|src| {
             // The entry source equals `input_url`; imports carry their own paths.
             // Treat each as a filesystem path relative to cwd.
-            let raw: &str = if src == "stdin" { input_url } else { src.as_str() };
+            let raw: &str = if src == "stdin" {
+                input_url
+            } else {
+                src.as_str()
+            };
             let abs = normalize_path(&cwd.join(raw));
             match mode {
                 SourceMapUrls::Absolute => file_url(&abs),
                 SourceMapUrls::Relative => {
-                    let map_dir = normalize_path(&cwd.join(map_path.parent().unwrap_or(Path::new(""))));
+                    let map_dir =
+                        normalize_path(&cwd.join(map_path.parent().unwrap_or(Path::new(""))));
                     let rel = relative_path(&map_dir, &abs);
                     encode_url_path(&rel)
                 }
@@ -600,7 +624,11 @@ fn relative_path(base: &Path, target: &Path) -> String {
     use std::path::Component;
     let base: Vec<Component<'_>> = base.components().collect();
     let target: Vec<Component<'_>> = target.components().collect();
-    let common = base.iter().zip(target.iter()).take_while(|(a, b)| a == b).count();
+    let common = base
+        .iter()
+        .zip(target.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
     let mut parts: Vec<String> = Vec::new();
     for _ in common..base.len() {
         parts.push("..".to_string());

@@ -14,6 +14,10 @@ fn main() {
     let expanded = compile(scss, &Options::default()).expect("compile");
     println!("/* expanded */\n{expanded}");
 
-    let compressed = compile(scss, &Options::default().with_style(OutputStyle::Compressed)).expect("compile");
+    let compressed = compile(
+        scss,
+        &Options::default().with_style(OutputStyle::Compressed),
+    )
+    .expect("compile");
     println!("/* compressed */\n{compressed}");
 }

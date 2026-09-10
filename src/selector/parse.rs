@@ -139,7 +139,9 @@ pub(super) fn parse_compound(chars: &[char], i: &mut usize) -> Option<Compound> 
                     let after = read_type_after_ns(chars, i)?;
                     // prepend namespace to the rendered text
                     match after {
-                        Simple::Universal { .. } => simples.push(Simple::Universal { ns: Some(name) }),
+                        Simple::Universal { .. } => {
+                            simples.push(Simple::Universal { ns: Some(name) })
+                        }
                         Simple::Type(t) => simples.push(Simple::Type(format!("{name}|{t}"))),
                         other => simples.push(other),
                     }

@@ -141,7 +141,10 @@ fn require_index(
             // tolerance, but a genuine fraction like `0.5` is an error).
             if (value - value.round()).abs() > 1e-11 {
                 return Err(Error::at(
-                    format!("${pname}: {} is not an int.", crate::value::fmt_num(value, false)),
+                    format!(
+                        "${pname}: {} is not an int.",
+                        crate::value::fmt_num(value, false)
+                    ),
                     pos,
                 ));
             }
@@ -182,7 +185,11 @@ fn fn_change_case(
     pos: Pos,
     upper: bool,
 ) -> Result<Value, Error> {
-    let fname = if upper { "to-upper-case" } else { "to-lower-case" };
+    let fname = if upper {
+        "to-upper-case"
+    } else {
+        "to-lower-case"
+    };
     let (text, quoted) = require_string(&["string"], pos_args, named, 0, fname, pos)?;
     let mapped: String = if upper {
         text.chars().map(|c| c.to_ascii_uppercase()).collect()
@@ -353,7 +360,10 @@ fn fn_split(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<V
             }
             let l = num.value.round() as i64;
             if l < 1 {
-                return Err(Error::at(format!("$limit: Must be 1 or greater, was {l}."), pos));
+                return Err(Error::at(
+                    format!("$limit: Must be 1 or greater, was {l}."),
+                    pos,
+                ));
             }
             Some(l as usize)
         }
@@ -447,7 +457,10 @@ mod tests {
 
     #[test]
     fn quote_and_unquote_flip_quotedness() {
-        assert_eq!(call("quote", &[s("hello", false)]).to_css(false), "\"hello\"");
+        assert_eq!(
+            call("quote", &[s("hello", false)]).to_css(false),
+            "\"hello\""
+        );
         assert_eq!(call("unquote", &[s("foo", true)]).to_css(false), "foo");
     }
 
@@ -465,7 +478,10 @@ mod tests {
             call("to-upper-case", &[s("aBc-Def", true)]).to_css(false),
             "\"ABC-DEF\""
         );
-        assert_eq!(call("to-lower-case", &[s("ABC", false)]).to_css(false), "abc");
+        assert_eq!(
+            call("to-lower-case", &[s("ABC", false)]).to_css(false),
+            "abc"
+        );
     }
 
     #[test]

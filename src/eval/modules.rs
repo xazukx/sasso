@@ -27,7 +27,13 @@ pub struct ConfigEntry {
 /// The evaluator file-context fields swapped by [`Evaluator::enter_module_file`]
 /// and restored by [`Evaluator::leave_module_file`]:
 /// `(current_url, current_key, current_source, current_file_dir, current_canonical)`.
-type SavedModuleFile = (String, String, Rc<str>, Option<String>, Option<CanonicalUrl>);
+type SavedModuleFile = (
+    String,
+    String,
+    Rc<str>,
+    Option<String>,
+    Option<CanonicalUrl>,
+);
 
 impl<'a> Evaluator<'a> {
     /// Register an `@extend` directive: validate the (interpolation-resolved)
@@ -46,9 +52,15 @@ impl<'a> Evaluator<'a> {
         // dart checks `_styleRule` (null inside `@at-root` before any nested
         // rule), not `_styleRuleIgnoringAtRoot` (which still feeds `&`).
         if parents.is_empty() || self.at_root_excluding_style_rule {
-            return Err(Error::at("@extend may only be used within style rules.", pos));
+            return Err(Error::at(
+                "@extend may only be used within style rules.",
+                pos,
+            ));
         }
-        let extenders = self.current_selector.clone().unwrap_or_else(|| parents.to_vec());
+        let extenders = self
+            .current_selector
+            .clone()
+            .unwrap_or_else(|| parents.to_vec());
         let target = self.interpolate(selector)?;
         if target.trim().is_empty() {
             return Err(Error::at("expected selector.", pos));
@@ -156,10 +168,11 @@ impl<'a> Evaluator<'a> {
         }
         drop(copies);
         drop(deps);
-        let closure_cache: HashMap<String, std::rc::Rc<std::collections::HashSet<String>>> = raw_cache
-            .into_iter()
-            .map(|(k, v)| (k, std::rc::Rc::new(v)))
-            .collect();
+        let closure_cache: HashMap<String, std::rc::Rc<std::collections::HashSet<String>>> =
+            raw_cache
+                .into_iter()
+                .map(|(k, v)| (k, std::rc::Rc::new(v)))
+                .collect();
         let mut extensions: Vec<crate::selector::Extension> = Vec::new();
         for (reg_idx, pe) in self.extends.iter().enumerate() {
             let mut extenders = Vec::new();
@@ -225,7 +238,10 @@ impl<'a> Evaluator<'a> {
         let mut rev_deps: HashMap<String, Vec<String>> = HashMap::default();
         for (loader, loadeds) in self.module_deps.borrow().iter() {
             for loaded in loadeds {
-                rev_deps.entry(loaded.clone()).or_default().push(loader.clone());
+                rev_deps
+                    .entry(loaded.clone())
+                    .or_default()
+                    .push(loader.clone());
             }
         }
         let mut first_reg: HashMap<String, usize> = HashMap::default();
@@ -386,7 +402,10 @@ impl<'a> Evaluator<'a> {
                 }
                 return Ok(());
             }
-            return Err(Error::at("Can't find stylesheet to import.".to_string(), pos));
+            return Err(Error::at(
+                "Can't find stylesheet to import.".to_string(),
+                pos,
+            ));
         }
         let conf_keys: Vec<String> = config.keys().cloned().collect();
         // Evaluate the module into a fresh TOP-LEVEL buffer so its body runs in
@@ -401,8 +420,15 @@ impl<'a> Evaluator<'a> {
             } else {
                 self.fresh_config_id()
             };
-            let (_module, consumed) =
-                self.load_module(&url, config, config_id, pos, parents, true, &mut module_sink)?;
+            let (_module, consumed) = self.load_module(
+                &url,
+                config,
+                config_id,
+                pos,
+                parents,
+                true,
+                &mut module_sink,
+            )?;
             consumed
         };
         if conf_keys.iter().any(|k| !consumed.contains(k)) {
@@ -421,13 +447,22 @@ impl<'a> Evaluator<'a> {
         SavedModuleEnv {
             scopes: std::mem::replace(&mut self.scopes, env.scopes),
             var_spans: std::mem::replace(&mut self.var_spans, env.var_spans),
-            scope_semi_global: std::mem::replace(&mut self.scope_semi_global, env.scope_semi_global),
+            scope_semi_global: std::mem::replace(
+                &mut self.scope_semi_global,
+                env.scope_semi_global,
+            ),
             functions: std::mem::replace(&mut self.functions, env.functions),
             mixins: std::mem::replace(&mut self.mixins, env.mixins),
             used_modules: std::mem::replace(&mut self.used_modules, env.used_modules),
             star_modules: std::mem::replace(&mut self.star_modules, env.star_modules),
-            used_user_modules: std::mem::replace(&mut self.used_user_modules, env.used_user_modules),
-            star_user_modules: std::mem::replace(&mut self.star_user_modules, env.star_user_modules),
+            used_user_modules: std::mem::replace(
+                &mut self.used_user_modules,
+                env.used_user_modules,
+            ),
+            star_user_modules: std::mem::replace(
+                &mut self.star_user_modules,
+                env.star_user_modules,
+            ),
             write_back: None,
         }
     }
@@ -465,7 +500,10 @@ impl<'a> Evaluator<'a> {
         // Built-in `sass:<mod>` modules.
         if let Some(m) = url.strip_prefix("sass:") {
             if !crate::builtins::is_module(m) {
-                return Err(Error::at("Can't find stylesheet to import.".to_string(), pos));
+                return Err(Error::at(
+                    "Can't find stylesheet to import.".to_string(),
+                    pos,
+                ));
             }
             if !config.is_empty() {
                 return Err(Error::at(
@@ -521,9 +559,7 @@ impl<'a> Evaluator<'a> {
                 for name in module.vars.borrow().keys() {
                     if !is_private_member(name) && g.borrow().contains_key(name) {
                         return Err(Error::at(
-                            format!(
-                                "This module and the new module both define a variable named \"${name}\"."
-                            ),
+                            format!("This module and the new module both define a variable named \"${name}\"."),
                             pos,
                         ));
                     }
@@ -745,7 +781,10 @@ impl<'a> Evaluator<'a> {
         let (key, src, syntax, source_map_url) = match two_phase {
             Some(quad) => quad,
             None => {
-                return Err(Error::at("Can't find stylesheet to import.".to_string(), pos));
+                return Err(Error::at(
+                    "Can't find stylesheet to import.".to_string(),
+                    pos,
+                ));
             }
         };
         // dart moves the comments textually preceding a `@use`/`@forward`
@@ -868,7 +907,8 @@ impl<'a> Evaluator<'a> {
                     return Ok((existing, consumed));
                 }
                 return Err(Error::at(
-                    "This module was already loaded, so it can't be configured using \"with\".".to_string(),
+                    "This module was already loaded, so it can't be configured using \"with\"."
+                        .to_string(),
                     pos,
                 ));
             }
@@ -908,7 +948,10 @@ impl<'a> Evaluator<'a> {
                 && (nodes_visible(&existing.css) || existing.phantom_css)
             {
                 if let Sink::Top(out) = sink {
-                    let lead = own_run.iter().take_while(|n| matches!(n, OutNode::Blank)).count();
+                    let lead = own_run
+                        .iter()
+                        .take_while(|n| matches!(n, OutNode::Blank))
+                        .count();
                     let mut run = own_run;
                     let tail = run.split_off(lead);
                     out.extend(run);
@@ -990,7 +1033,7 @@ impl<'a> Evaluator<'a> {
             &src,
             oxc_syntax(syntax),
         ) {
-            Ok(parsed) => (parsed.0, &*parsed.1),
+            Ok(parsed) => (parsed.source_file, &*parsed.stylesheet),
             Err(e) => {
                 // A parse error names the LOADED file: render eagerly under
                 // its url/source (the caller's `@use`/`@forward` frame is
@@ -998,7 +1041,8 @@ impl<'a> Evaluator<'a> {
                 // `_mod.scss 3:19  @use` + loader chain.
                 let saved_url = std::mem::replace(&mut self.current_url, diag_url.clone());
                 let saved_key = std::mem::replace(&mut self.current_key, key.clone());
-                let saved_source = std::mem::replace(&mut self.current_source, Rc::from(src.as_str()));
+                let saved_source =
+                    std::mem::replace(&mut self.current_source, Rc::from(src.as_str()));
                 let e = self.finalize_error(e);
                 self.current_url = saved_url;
                 self.current_key = saved_key;
@@ -1056,7 +1100,8 @@ impl<'a> Evaluator<'a> {
         // emission; later edges re-emit from the map. A map created here is
         // deliberately assigned to `self` so sibling loads and nested module
         // evaluations see it (dart's inherited-reference quirk).
-        let did_register = !own_comments.is_empty() && (nodes_visible(&css_buf) || module.phantom_css);
+        let did_register =
+            !own_comments.is_empty() && (nodes_visible(&css_buf) || module.phantom_css);
         if did_register {
             let map = self
                 .pre_module_comments
@@ -1359,7 +1404,10 @@ impl<'a> Evaluator<'a> {
         // be configured.
         if let Some(m) = url.strip_prefix("sass:") {
             if !crate::builtins::is_module(m) {
-                return Err(Error::at("Can't find stylesheet to import.".to_string(), pos));
+                return Err(Error::at(
+                    "Can't find stylesheet to import.".to_string(),
+                    pos,
+                ));
             }
             if !config.is_empty() {
                 return Err(Error::at(
@@ -1572,7 +1620,10 @@ impl<'a> Evaluator<'a> {
         for (name, f) in module.functions.borrow().iter() {
             let key = format!("{pfx}{name}");
             if !is_private_member(name) && visible_name(&key) {
-                let f_src: *const Module<'_> = module.fn_origin(name).map(|m| Rc::as_ptr(&m)).unwrap_or(src);
+                let f_src: *const Module<'_> = module
+                    .fn_origin(name)
+                    .map(|m| Rc::as_ptr(&m))
+                    .unwrap_or(src);
                 if let Some(prev) = self.forwarded.fn_src.get(&key) {
                     if *prev != f_src {
                         return Err(Error::at(
@@ -1590,7 +1641,10 @@ impl<'a> Evaluator<'a> {
         for (name, m) in module.mixins.borrow().iter() {
             let key = format!("{pfx}{name}");
             if !is_private_member(name) && visible_name(&key) {
-                let m_src: *const Module<'_> = module.mixin_origin(name).map(|m| Rc::as_ptr(&m)).unwrap_or(src);
+                let m_src: *const Module<'_> = module
+                    .mixin_origin(name)
+                    .map(|m| Rc::as_ptr(&m))
+                    .unwrap_or(src);
                 if let Some(prev) = self.forwarded.mixin_src.get(&key) {
                     if *prev != m_src {
                         return Err(Error::at(
@@ -1599,7 +1653,9 @@ impl<'a> Evaluator<'a> {
                         ));
                     }
                 }
-                let origin = module.mixin_origin(name).unwrap_or_else(|| Rc::clone(&module));
+                let origin = module
+                    .mixin_origin(name)
+                    .unwrap_or_else(|| Rc::clone(&module));
                 self.forwarded.mixins.insert(key.clone(), Rc::clone(m));
                 self.forwarded.mixin_origins.insert(key.clone(), origin);
                 self.forwarded.mixin_src.insert(key, m_src);
@@ -1631,7 +1687,11 @@ impl<'a> Evaluator<'a> {
         }
         // A captured origin with no canonical URL (nothing resolved it) falls
         // back to its display name as its identity, as the entry file does.
-        let key = if canonical.is_empty() { diag_url } else { canonical };
+        let key = if canonical.is_empty() {
+            diag_url
+        } else {
+            canonical
+        };
         let source = self.source_for(key);
         let dir = if file_dir.is_empty() {
             None
@@ -1723,10 +1783,19 @@ impl<'a> Evaluator<'a> {
             scopes: std::mem::replace(&mut self.scopes, vec![module_scope]),
             var_spans: std::mem::replace(&mut self.var_spans, module_spans),
             scope_semi_global: std::mem::replace(&mut self.scope_semi_global, vec![true]),
-            functions: std::mem::replace(&mut self.functions, vec![std::rc::Rc::clone(&module.functions)]),
+            functions: std::mem::replace(
+                &mut self.functions,
+                vec![std::rc::Rc::clone(&module.functions)],
+            ),
             mixins: std::mem::replace(&mut self.mixins, vec![std::rc::Rc::clone(&module.mixins)]),
-            used_modules: std::mem::replace(&mut self.used_modules, module.used_builtin_modules.clone()),
-            star_modules: std::mem::replace(&mut self.star_modules, module.star_builtin_modules.clone()),
+            used_modules: std::mem::replace(
+                &mut self.used_modules,
+                module.used_builtin_modules.clone(),
+            ),
+            star_modules: std::mem::replace(
+                &mut self.star_modules,
+                module.star_builtin_modules.clone(),
+            ),
             used_user_modules: std::mem::replace(
                 &mut self.used_user_modules,
                 module.used_user_modules.clone(),

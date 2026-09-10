@@ -649,7 +649,10 @@ pub(super) fn modern_alpha(v: Option<&Value>) -> Option<f64> {
 
 /// The space of a [`Color`] as a [`ColorSpace`] (`rgb` for plain legacy).
 pub(super) fn color_space_of(c: &Color) -> ColorSpace {
-    c.modern.as_ref().map(|m| m.space).unwrap_or(ColorSpace::Rgb)
+    c.modern
+        .as_ref()
+        .map(|m| m.space)
+        .unwrap_or(ColorSpace::Rgb)
 }
 
 /// Look up a channel name within `space`, returning its index (and the special
@@ -685,7 +688,8 @@ pub(crate) fn space_arg(v: &Value, pos: Pos) -> Result<ColorSpace, Error> {
 /// `modern` tag attached. Plain-legacy rgb (no missing channels) drops the
 /// `modern` field so it serializes like a normal sRGB color.
 pub(crate) fn make_modern_in(mc: ModernColor, _space: ColorSpace) -> Color {
-    if mc.space == ColorSpace::Rgb && mc.channels.iter().all(|c| c.is_some()) && mc.alpha.is_some() {
+    if mc.space == ColorSpace::Rgb && mc.channels.iter().all(|c| c.is_some()) && mc.alpha.is_some()
+    {
         let r = mc.channels[0].unwrap_or(0.0);
         let g = mc.channels[1].unwrap_or(0.0);
         let b = mc.channels[2].unwrap_or(0.0);
@@ -1064,7 +1068,9 @@ pub(super) fn scale_bounds(space: ColorSpace, idx: usize) -> Option<(f64, f64)> 
     }
     Some(match space {
         Rgb => (0.0, 255.0),
-        Srgb | SrgbLinear | DisplayP3 | DisplayP3Linear | A98Rgb | ProphotoRgb | Rec2020 => (0.0, 1.0),
+        Srgb | SrgbLinear | DisplayP3 | DisplayP3Linear | A98Rgb | ProphotoRgb | Rec2020 => {
+            (0.0, 1.0)
+        }
         Hsl | Hwb => (0.0, 100.0),
         Lab => {
             if idx == 0 {
@@ -1121,7 +1127,9 @@ fn channel_pct_base(space: ColorSpace, idx: usize) -> f64 {
     let names = space.channel_names();
     match (space, names[idx]) {
         (Rgb, _) => 255.0,
-        (Srgb | SrgbLinear | DisplayP3 | DisplayP3Linear | A98Rgb | ProphotoRgb | Rec2020, _) => 1.0,
+        (Srgb | SrgbLinear | DisplayP3 | DisplayP3Linear | A98Rgb | ProphotoRgb | Rec2020, _) => {
+            1.0
+        }
         (Hsl | Hwb, _) => 100.0,
         (Lab, "lightness") | (Lch, "lightness") => 100.0,
         (Oklab, "lightness") | (Oklch, "lightness") => 1.0,
@@ -1219,7 +1227,10 @@ pub(super) fn validate_modify_unit(
         // error message has no "or no units" — unitless is also rejected).
         if num.unit() != "%" {
             return Err(Error::at(
-                format!("${name}: Expected {} to have unit \"%\".", num.to_css(false)),
+                format!(
+                    "${name}: Expected {} to have unit \"%\".",
+                    num.to_css(false)
+                ),
                 pos,
             ));
         }
@@ -1270,8 +1281,12 @@ pub(super) fn invert_channels(space: ColorSpace, src: &ModernColor) -> ModernCol
             inv_max(ch[1], 255.0),
             inv_max(ch[2], 255.0),
         ],
-        Srgb | SrgbLinear | DisplayP3 | DisplayP3Linear | A98Rgb | ProphotoRgb | Rec2020 | XyzD65
-        | XyzD50 => [inv_max(ch[0], 1.0), inv_max(ch[1], 1.0), inv_max(ch[2], 1.0)],
+        Srgb | SrgbLinear | DisplayP3 | DisplayP3Linear | A98Rgb | ProphotoRgb | Rec2020
+        | XyzD65 | XyzD50 => [
+            inv_max(ch[0], 1.0),
+            inv_max(ch[1], 1.0),
+            inv_max(ch[2], 1.0),
+        ],
         Hsl => [shift_hue(ch[0]), ch[1], inv_max(ch[2], 100.0)],
         Hwb => [shift_hue(ch[0]), ch[2], ch[1]],
         Lab => [inv_max(ch[0], 100.0), negate(ch[1]), negate(ch[2])],

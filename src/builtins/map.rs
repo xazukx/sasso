@@ -123,7 +123,10 @@ fn key_path<'v>(
         keys.push(v);
     }
     if keys.is_empty() {
-        return Err(Error::at(format!("Missing argument $key for {fname}()."), pos));
+        return Err(Error::at(
+            format!("Missing argument $key for {fname}()."),
+            pos,
+        ));
     }
     keys.extend(pos_args.iter().skip(2));
     Ok(keys)
@@ -299,7 +302,11 @@ fn fn_map_merge(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Resu
 }
 
 /// `map-deep-merge($map1, $map2)`: like `map-merge` but recursive.
-fn fn_map_deep_merge(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_map_deep_merge(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     merge_impl(pos_args, named, pos, "map-deep-merge", true)
 }
 
@@ -348,7 +355,11 @@ fn merge_impl(
         };
         Value::Map(merge(child_entries, map2.clone()))
     };
-    Ok(Value::Map(Map::new(modify_map(map1, &keys, &mut transform))))
+    Ok(Value::Map(Map::new(modify_map(
+        map1,
+        &keys,
+        &mut transform,
+    ))))
 }
 
 /// `map-set($map, $key, $keys..., $value)`: set the value at the nested key
@@ -373,7 +384,11 @@ fn fn_map_set(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result
         }
     };
     let mut transform = |_old: Option<Value>| value.clone();
-    Ok(Value::Map(Map::new(modify_map(entries, &keys, &mut transform))))
+    Ok(Value::Map(Map::new(modify_map(
+        entries,
+        &keys,
+        &mut transform,
+    ))))
 }
 
 /// `map-remove($map, $keys...)`: drop every entry whose key matches one of the
@@ -401,7 +416,11 @@ fn fn_map_remove(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Res
 
 /// `map-deep-remove($map, $key, $keys...)`: remove the entry at the nested key
 /// path. Needs at least one key (dart-sass).
-fn fn_map_deep_remove(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_map_deep_remove(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let map_v = super::require(&["map"], pos_args, named, 0, "map-deep-remove", pos)?;
     let entries = as_map_named(map_v, "map", pos)?;
     let keys = key_path(pos_args, named, "map-deep-remove", pos)?;
@@ -415,7 +434,11 @@ fn fn_map_deep_remove(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -
 
 /// Navigate `entries` along `parents`; at the located submap, drop `last`. A
 /// missing intermediate map leaves the structure unchanged.
-fn deep_remove(entries: Vec<(Value, Value)>, parents: &[&Value], last: &Value) -> Vec<(Value, Value)> {
+fn deep_remove(
+    entries: Vec<(Value, Value)>,
+    parents: &[&Value],
+    last: &Value,
+) -> Vec<(Value, Value)> {
     match parents.split_first() {
         None => {
             let mut entries = entries;
@@ -514,7 +537,9 @@ mod tests {
     }
 
     fn map(pairs: &[(&str, Value)]) -> Value {
-        Value::Map(Map::new(pairs.iter().map(|(k, v)| (s(k), v.clone())).collect()))
+        Value::Map(Map::new(
+            pairs.iter().map(|(k, v)| (s(k), v.clone())).collect(),
+        ))
     }
 
     fn call(name: &str, args: &[Value]) -> Value {
@@ -533,14 +558,20 @@ mod tests {
     #[test]
     fn map_keys_and_values_are_comma_lists() {
         let m = map(&[("c", n(1.0)), ("d", n(2.0))]);
-        assert_eq!(call("map-keys", std::slice::from_ref(&m)).to_css(false), "c, d");
+        assert_eq!(
+            call("map-keys", std::slice::from_ref(&m)).to_css(false),
+            "c, d"
+        );
         assert_eq!(call("map-values", &[m]).to_css(false), "1, 2");
     }
 
     #[test]
     fn map_has_key_reports_presence() {
         let m = map(&[("c", s("d"))]);
-        assert_eq!(call("map-has-key", &[m.clone(), s("c")]).to_css(false), "true");
+        assert_eq!(
+            call("map-has-key", &[m.clone(), s("c")]).to_css(false),
+            "true"
+        );
         assert_eq!(call("map-has-key", &[m, s("z")]).to_css(false), "false");
     }
 
@@ -582,7 +613,10 @@ mod tests {
             bracketed: false,
             keywords: None,
         });
-        assert_eq!(call("map-keys", std::slice::from_ref(&empty)).to_css(false), "");
+        assert_eq!(
+            call("map-keys", std::slice::from_ref(&empty)).to_css(false),
+            ""
+        );
         assert!(matches!(call("map-get", &[empty, s("a")]), Value::Null));
     }
 }

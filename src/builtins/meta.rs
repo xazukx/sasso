@@ -42,7 +42,8 @@ pub(super) fn try_call(
     }
     // Fixed-arity members reject extra positional arguments before running.
     let max = match name {
-        "type-of" | "unit" | "unitless" | "inspect" | "feature-exists" | "calc-name" | "calc-args" => Some(1),
+        "type-of" | "unit" | "unitless" | "inspect" | "feature-exists" | "calc-name"
+        | "calc-args" => Some(1),
         "comparable" => Some(2),
         _ => None,
     };
@@ -224,7 +225,11 @@ fn fn_comparable(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Res
 /// feature this implementation supports. dart-sass recognizes a fixed set of
 /// feature names (accepting both quoted and unquoted strings); any other name
 /// is `false`, and a non-string argument is an error.
-fn fn_feature_exists(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_feature_exists(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let v = super::require(&["feature"], pos_args, named, 0, "feature-exists", pos)?;
     let name = match v {
         Value::Str(s) => &s.text,
@@ -255,7 +260,11 @@ fn fn_feature_exists(pos_args: &[Value], named: &[(String, Value)], pos: Pos) ->
 /// dart-sass for built-ins and for genuinely-absent names. (A `$module`
 /// argument requires `@use`, which is unsupported, so it is accepted and
 /// ignored.)
-fn fn_function_exists(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_function_exists(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["name", "module"];
     if pos_args.len() > params.len() {
         return Err(Error::at(
@@ -288,7 +297,11 @@ fn fn_function_exists(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -
 /// fall through to verbatim CSS. Returning `Some(Err(..))` for the bad-arity /
 /// bad-type cases converts those spec cases from a silent pass-through into the
 /// error dart-sass raises.
-fn fn_get_function(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Option<Result<Value, Error>> {
+fn fn_get_function(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Option<Result<Value, Error>> {
     let params = ["name", "css", "module"];
     if pos_args.len() > params.len() {
         return Some(Err(Error::at(
@@ -495,7 +508,11 @@ mod tests {
             "color"
         );
         assert_eq!(
-            call("type-of", &[list(vec![n(1.0, ""), n(2.0, "")], ListSep::Comma)]).to_css(false),
+            call(
+                "type-of",
+                &[list(vec![n(1.0, ""), n(2.0, "")], ListSep::Comma)]
+            )
+            .to_css(false),
             "list"
         );
         assert_eq!(call("type-of", &[Value::Bool(true)]).to_css(false), "bool");
@@ -507,13 +524,18 @@ mod tests {
         assert_eq!(call("unit", &[n(1.0, "px")]).to_css(false), "\"px\"");
         assert_eq!(call("unit", &[n(5.0, "%")]).to_css(false), "\"%\"");
         assert_eq!(call("unit", &[n(5.0, "")]).to_css(false), "\"\"");
-        assert!(call_err("unit", &[sq("x")]).message.contains("is not a number"));
+        assert!(call_err("unit", &[sq("x")])
+            .message
+            .contains("is not a number"));
     }
 
     #[test]
     fn unitless_reports_bool() {
         assert!(matches!(call("unitless", &[n(5.0, "")]), Value::Bool(true)));
-        assert!(matches!(call("unitless", &[n(5.0, "px")]), Value::Bool(false)));
+        assert!(matches!(
+            call("unitless", &[n(5.0, "px")]),
+            Value::Bool(false)
+        ));
     }
 
     #[test]
@@ -566,7 +588,10 @@ mod tests {
         assert_eq!(
             call(
                 "inspect",
-                &[list(vec![n(1.0, ""), n(2.0, ""), n(3.0, "")], ListSep::Comma)]
+                &[list(
+                    vec![n(1.0, ""), n(2.0, ""), n(3.0, "")],
+                    ListSep::Comma
+                )]
             )
             .to_css(false),
             "1, 2, 3"
@@ -574,7 +599,10 @@ mod tests {
         assert_eq!(
             call(
                 "inspect",
-                &[list(vec![n(1.0, ""), n(2.0, ""), n(3.0, "")], ListSep::Space)]
+                &[list(
+                    vec![n(1.0, ""), n(2.0, ""), n(3.0, "")],
+                    ListSep::Space
+                )]
             )
             .to_css(false),
             "1 2 3"
@@ -655,7 +683,11 @@ mod tests {
         );
         // empty list nested keeps its own parens
         assert_eq!(
-            call("inspect", &[comma2(list(vec![], ListSep::Space), n(1.0, ""))]).to_css(false),
+            call(
+                "inspect",
+                &[comma2(list(vec![], ListSep::Space), n(1.0, ""))]
+            )
+            .to_css(false),
             "(), 1"
         );
     }
@@ -673,7 +705,10 @@ mod tests {
         };
         assert!(matches!(t("at-error", false), Value::Bool(true)));
         assert!(matches!(t("custom-property", true), Value::Bool(true)));
-        assert!(matches!(t("global-variable-shadowing", false), Value::Bool(true)));
+        assert!(matches!(
+            t("global-variable-shadowing", false),
+            Value::Bool(true)
+        ));
         assert!(matches!(t("nope", false), Value::Bool(false)));
         // A non-string argument errors.
         assert!(call_err("feature-exists", &[n(1.0, "")])

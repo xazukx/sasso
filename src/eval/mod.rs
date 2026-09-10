@@ -16,16 +16,17 @@ use std::rc::Rc;
 // declarations below read normally; only the construction sites differ
 // (`HashMap::default()` rather than `::new()`, since the hasher is non-default).
 use crate::fxhash::FxHashMap as HashMap;
+use crate::source::ParseOutput;
 
-use oxc_css_parser::{Allocator, Span, Syntax as OxcSyntax, ast as ox};
+use oxc_css_parser::{ast as ox, Allocator, Span, Syntax as OxcSyntax};
 
 use crate::error::Error;
-use crate::lines::SrcLines;
 use crate::lines::Pos;
-use crate::source::{Item, SourceFile, interleave};
+use crate::lines::SrcLines;
+use crate::source::{interleave, Item, SourceFile};
 use crate::value::{
-    CalcNode, CalcOp, CallableId, List, ListSep, Map, ModuleId, Number, SassFunction,
-    SassMixin, SassStr, Value,
+    CalcNode, CalcOp, CallableId, List, ListSep, Map, ModuleId, Number, SassFunction, SassMixin,
+    SassStr, Value,
 };
 use crate::{CanonicalUrl, CanonicalizeContext, Importer, OutputStyle, Syntax};
 
@@ -207,7 +208,8 @@ fn new_span_scope() -> SpanScope {
 /// One function/mixin scope frame, parallel to the variable chain (dart's
 /// `Environment._functions`/`_mixins` are lists of maps pushed and popped in
 /// lockstep with `_variables`).
-pub(crate) type FnScope<'a> = std::rc::Rc<std::cell::RefCell<HashMap<String, Rc<UserCallable<'a>>>>>;
+pub(crate) type FnScope<'a> =
+    std::rc::Rc<std::cell::RefCell<HashMap<String, Rc<UserCallable<'a>>>>>;
 
 fn new_fn_scope<'a>() -> FnScope<'a> {
     std::rc::Rc::new(std::cell::RefCell::new(HashMap::default()))
@@ -287,7 +289,9 @@ impl RuleSelectors {
     pub fn to_strings(&self) -> std::borrow::Cow<'_, [String]> {
         match self {
             RuleSelectors::Raw(v) => std::borrow::Cow::Borrowed(v),
-            RuleSelectors::Parsed(v) => std::borrow::Cow::Owned(v.iter().map(|c| c.render()).collect()),
+            RuleSelectors::Parsed(v) => {
+                std::borrow::Cow::Owned(v.iter().map(|c| c.render()).collect())
+            }
         }
     }
 
@@ -564,7 +568,11 @@ impl Sink<'_> {
     /// top level or inside an at-rule body it is a bubbled-out `OutNode`.
     fn push_childless_at_rule(&mut self, name: String, prelude: String, lines: SrcLines) {
         match self {
-            Sink::Rule { items, .. } => items.push(OutItem::ChildlessAtRule { name, prelude, lines }),
+            Sink::Rule { items, .. } => items.push(OutItem::ChildlessAtRule {
+                name,
+                prelude,
+                lines,
+            }),
             _ => self.push_at_rule(OutNode::childless_at_rule(name, prelude, lines)),
         }
     }
@@ -615,9 +623,11 @@ impl Sink<'_> {
                     value_span,
                 }),
                 OutItem::Comment(text, lines) => body.push(OutNode::Comment(text, lines)),
-                OutItem::ChildlessAtRule { name, prelude, lines } => {
-                    body.push(OutNode::childless_at_rule(name, prelude, lines))
-                }
+                OutItem::ChildlessAtRule {
+                    name,
+                    prelude,
+                    lines,
+                } => body.push(OutNode::childless_at_rule(name, prelude, lines)),
                 // A plain-CSS nested rule reaching an at-root sink becomes a
                 // top-level rule carrying its items.
                 OutItem::NestedRule { selectors, items } => {
@@ -625,7 +635,11 @@ impl Sink<'_> {
                 }
                 // Likewise a plain-CSS nested at-rule becomes a top-level one,
                 // its items wrapped as bare at-rule children.
-                OutItem::NestedAtRule { name, prelude, items } => body.push(OutNode::AtRule {
+                OutItem::NestedAtRule {
+                    name,
+                    prelude,
+                    items,
+                } => body.push(OutNode::AtRule {
                     name,
                     prelude,
                     body: items
@@ -650,13 +664,23 @@ impl Sink<'_> {
                             OutItem::NestedRule { selectors, items } => {
                                 OutNode::plain_rule(selectors, items, SrcLines::default())
                             }
-                            OutItem::ChildlessAtRule { name, prelude, lines } => {
-                                OutNode::childless_at_rule(name, prelude, lines)
-                            }
-                            OutItem::NestedAtRule { name, prelude, items } => OutNode::AtRule {
+                            OutItem::ChildlessAtRule {
                                 name,
                                 prelude,
-                                body: vec![OutNode::plain_rule(Vec::new(), items, SrcLines::default())],
+                                lines,
+                            } => OutNode::childless_at_rule(name, prelude, lines),
+                            OutItem::NestedAtRule {
+                                name,
+                                prelude,
+                                items,
+                            } => OutNode::AtRule {
+                                name,
+                                prelude,
+                                body: vec![OutNode::plain_rule(
+                                    Vec::new(),
+                                    items,
+                                    SrcLines::default(),
+                                )],
                                 has_block: true,
                                 lines: SrcLines::default(),
                             },
@@ -707,7 +731,9 @@ impl Sink<'_> {
                     // when only escaped batches landed between them (dart's
                     // entry copy has no following sibling inside this node).
                     if insert_at > 0 && **flushed == Some(insert_at - 1) {
-                        if let Some(OutNode::Rule { items: prev, .. }) = nested.get_mut(insert_at - 1) {
+                        if let Some(OutNode::Rule { items: prev, .. }) =
+                            nested.get_mut(insert_at - 1)
+                        {
                             prev.append(*items);
                             return true;
                         }
@@ -747,9 +773,12 @@ impl Sink<'_> {
                 // becomes `previous` in _visitChildren — it must not leave a
                 // group-end behind, or the next sibling gains a phantom blank
                 // line (bootstrap: two @media from consecutive @each rounds).
-                let produced = output
-                    .iter()
-                    .any(|n| !matches!(n, OutNode::Blank | OutNode::AtRootPackTight | OutNode::GroupEnd));
+                let produced = output.iter().any(|n| {
+                    !matches!(
+                        n,
+                        OutNode::Blank | OutNode::AtRootPackTight | OutNode::GroupEnd
+                    )
+                });
                 push_group(out, output);
                 // A completed top-level style rule marks its LAST produced
                 // node (which may be a bubbled at-rule) as a group end: the
@@ -780,9 +809,12 @@ impl Sink<'_> {
                 // wrapper rule arrive inside ONE batch and pack tight); an
                 // invisible trailing child packs the next group tight.
                 let produced = *group_ends
-                    && output
-                        .iter()
-                        .any(|n| !matches!(n, OutNode::Blank | OutNode::AtRootPackTight | OutNode::GroupEnd));
+                    && output.iter().any(|n| {
+                        !matches!(
+                            n,
+                            OutNode::Blank | OutNode::AtRootPackTight | OutNode::GroupEnd
+                        )
+                    });
                 body.extend(output);
                 if produced {
                     body.push(if allow_group_end {
@@ -1622,7 +1654,10 @@ impl<'a> Evaluator<'a> {
             return self.current_url_stamp;
         }
         let next = self.file_ids.len() as u32 + 1;
-        let id = *self.file_ids.entry(self.current_key.clone()).or_insert(next);
+        let id = *self
+            .file_ids
+            .entry(self.current_key.clone())
+            .or_insert(next);
         self.current_url_stamp = id;
         id
     }
@@ -1992,7 +2027,8 @@ impl<'a> Evaluator<'a> {
             // The column was recovered arithmetically, so the byte offset has
             // to be resolved against the source rather than carried along.
             let line = sel_pos.line;
-            let offset = crate::diag::byte_offset_of(&self.source_for(&self.current_key.clone()), line, col);
+            let offset =
+                crate::diag::byte_offset_of(&self.source_for(&self.current_key.clone()), line, col);
             return Error::at(MSG, Pos { line, col, offset });
         }
         Error::at(MSG, sel_pos)
@@ -2135,16 +2171,16 @@ impl<'a> Evaluator<'a> {
     /// Execute a `@warn`: emit `WARNING: <message>` + the 4-space-indented stack
     /// trace + a trailing blank line to stderr. The message is the string value
     /// unquoted; exit code is unaffected.
-    fn emit_warn(
-        &mut self,
-        value: &'a ox::ComponentValue<'a>,
-        pos: Pos,
-    ) -> Result<(), Error> {
+    fn emit_warn(&mut self, value: &'a ox::ComponentValue<'a>, pos: Pos) -> Result<(), Error> {
         let v = self.eval_value(value)?;
         let msg = v.to_message();
         let formatted = if self.diag_enabled() {
             let frames = self.frames_for(pos);
-            format!("WARNING: {}\n{}\n", msg, Self::render_frame_block(&frames, 4))
+            format!(
+                "WARNING: {}\n{}\n",
+                msg,
+                Self::render_frame_block(&frames, 4)
+            )
         } else {
             format!("WARNING: {msg}")
         };
@@ -2162,11 +2198,7 @@ impl<'a> Evaluator<'a> {
 
     /// Execute a `@debug`: emit `<path>:<line> DEBUG: <value>` to stderr (the
     /// value serialized as in CSS, a string unquoted). No snippet, no frames.
-    fn emit_debug(
-        &mut self,
-        value: &'a ox::ComponentValue<'a>,
-        pos: Pos,
-    ) -> Result<(), Error> {
+    fn emit_debug(&mut self, value: &'a ox::ComponentValue<'a>, pos: Pos) -> Result<(), Error> {
         let v = self.eval_value(value)?;
         let msg = v.to_message();
         let url = self.current_url.clone();
@@ -2192,12 +2224,7 @@ impl<'a> Evaluator<'a> {
     /// call site (so an `@error` inside a mixin highlights the `@include`), or
     /// at the `@error` statement itself when there is no enclosing call. dart's
     /// "unspanned exception attaches at the boundary" rule.
-    fn build_error(
-        &mut self,
-        value: &'a ox::ComponentValue<'a>,
-        pos: Pos,
-        length: usize,
-    ) -> Error {
+    fn build_error(&mut self, value: &'a ox::ComponentValue<'a>, pos: Pos, length: usize) -> Error {
         let msg = match self.eval_value(value) {
             Ok(v) => v.to_error_message(),
             Err(e) => return e,
@@ -2299,10 +2326,7 @@ impl<'a> Evaluator<'a> {
     /// AST node it visits — blames it too.
     fn blame_stmt(&self, e: Error, stmt: &'a ox::Statement<'a>) -> Error {
         let span = blame_span(stmt);
-        let e = e.or_at(
-            self.file.pos(span),
-            span.end.saturating_sub(span.start),
-        );
+        let e = e.or_at(self.file.pos(span), span.end.saturating_sub(span.start));
         self.finalize_error(e)
     }
 
@@ -2345,8 +2369,10 @@ impl<'a> Evaluator<'a> {
                 // when every enclosing scope is semi-global), while a freshly
                 // declared variable stays local to the branch (dart-sass
                 // `visitIf`).
-                let mut clauses: Vec<(Option<&'a ox::ComponentValue<'a>>, &'a ox::SimpleBlock<'a>)> =
-                    Vec::with_capacity(1 + node.else_if_clauses.len() + 1);
+                let mut clauses: Vec<(
+                    Option<&'a ox::ComponentValue<'a>>,
+                    &'a ox::SimpleBlock<'a>,
+                )> = Vec::with_capacity(1 + node.else_if_clauses.len() + 1);
                 clauses.push((Some(&node.if_clause.condition), &node.if_clause.block));
                 for c in &node.else_if_clauses {
                     clauses.push((Some(&c.condition), &c.block));
@@ -2394,10 +2420,7 @@ impl<'a> Evaluator<'a> {
             // produces it for CSS; treat the prelude as a selector so the
             // failure is reported where the text is.
             ox::Statement::UnknownQualifiedRule(r) => {
-                return Err(Error::at(
-                    "expected \"{\".",
-                    self.file.pos(r.prelude.span),
-                ));
+                return Err(Error::at("expected \"{\".", self.file.pos(r.prelude.span)));
             }
             // Every remaining statement kind is Less-only, which an SCSS or
             // CSS parse never produces.
@@ -2571,13 +2594,14 @@ impl<'a> Evaluator<'a> {
                 let (member, module) = include_target(&inc.name);
                 let args =
                     value_read::args_presplit(inc.arguments.as_ref().map_or(&[], |a| &a.args));
-                let content_params = inc
-                    .content_block_params
-                    .as_ref()
-                    .map(|p| &p.params);
+                let content_params = inc.content_block_params.as_ref().map(|p| &p.params);
                 // Push a diagnostic call frame so an error/warning raised in
                 // the mixin body unwinds through this `@include` call site.
-                let saved = self.enter_call(pos, length, &mixin_frame_name(&member, &module.map(str::to_string)));
+                let saved = self.enter_call(
+                    pos,
+                    length,
+                    &mixin_frame_name(&member, &module.map(str::to_string)),
+                );
                 let r = self.exec_include(
                     &member,
                     &args,
@@ -2614,7 +2638,15 @@ impl<'a> Evaluator<'a> {
                     },
                 };
                 let config = self.module_config(u.config.as_ref())?;
-                self.exec_use(&url, namespace.as_deref(), star, &config, pos, parents, sink)?
+                self.exec_use(
+                    &url,
+                    namespace.as_deref(),
+                    star,
+                    &config,
+                    pos,
+                    parents,
+                    sink,
+                )?
             }
             (Some(P::SassForward(f)), None) => {
                 let url = self.eval_interp_str(&f.path)?;
@@ -2777,7 +2809,9 @@ impl<'a> Evaluator<'a> {
         parents: &[String],
         sink: &mut Sink<'_>,
     ) -> Result<(), Error> {
-        let bare = imp.layer.is_none() && imp.supports.is_none() && imp.media.is_none()
+        let bare = imp.layer.is_none()
+            && imp.supports.is_none()
+            && imp.media.is_none()
             && imp.modifiers.is_none();
         if bare {
             if let ox::ImportPreludeHref::Str(s) = &imp.href {
@@ -2901,7 +2935,8 @@ impl<'a> Evaluator<'a> {
         // list and no inherited parent breaks means every flag is false — an
         // EMPTY vec, which all consumers read as all-false. Keyframe selector
         // lists always take it (dart re-serializes stops joined with ", ").
-        let lbs_fast = self.in_keyframes || (self.current_linebreaks.is_empty() && !sel_str.contains('\n'));
+        let lbs_fast =
+            self.in_keyframes || (self.current_linebreaks.is_empty() && !sel_str.contains('\n'));
         let part_lbs: Vec<bool> = if lbs_fast {
             Vec::new()
         } else {
@@ -3004,7 +3039,8 @@ impl<'a> Evaluator<'a> {
         // selector out; that copy maps back to THIS selector's source position
         // (dart parity). Source-map only — never touches CSS.
         let prev_rule_lines = std::mem::replace(&mut self.cur_rule_lines, rule_lines);
-        let prev_rule_extend_base = std::mem::replace(&mut self.cur_rule_extend_base, self.extends.len());
+        let prev_rule_extend_base =
+            std::mem::replace(&mut self.cur_rule_extend_base, self.extends.len());
         let mut items: Vec<OutItem> = Vec::new();
         let mut nested: Vec<OutNode> = Vec::new();
         let mut flushed: Option<usize> = None;
@@ -3149,10 +3185,7 @@ impl<'a> Evaluator<'a> {
     /// templates whose `#{…}` interpolation resolves; the value is otherwise
     /// emitted exactly as written (no SassScript evaluation). An empty value
     /// (`--x: ;`) still emits.
-    fn eval_custom_decl(
-        &mut self,
-        d: &'a ox::Declaration<'a>,
-    ) -> Result<Option<OutItem>, Error> {
+    fn eval_custom_decl(&mut self, d: &'a ox::Declaration<'a>) -> Result<Option<OutItem>, Error> {
         let prop = trim_owned(self.decl_name(d)?);
         // A custom property's value is text as dart-sass reads it: only
         // `#{...}` resolves, everything else is emitted exactly as written —
@@ -3245,12 +3278,7 @@ impl<'a> Evaluator<'a> {
             }
         }
         let saved = self.decl_prefix.replace(full);
-        let result = self.exec(
-            &nested.block.statements,
-            nested.block.span,
-            parents,
-            sink,
-        );
+        let result = self.exec(&nested.block.statements, nested.block.span, parents, sink);
         self.decl_prefix = saved;
         result
     }
@@ -3277,7 +3305,11 @@ impl<'a> Evaluator<'a> {
                     }
                     // Every Sass `@import` of a non-CSS file fires the `[import]`
                     // deprecation, pointing at the quoted URL token.
-                    self.emit_deprecation(&crate::deprecation::Deprecation::import(), *pos, *length);
+                    self.emit_deprecation(
+                        &crate::deprecation::Deprecation::import(),
+                        *pos,
+                        *length,
+                    );
                     let base = self.current_file_dir.clone();
                     // Per-compile import cache (dart-sass ImportCache): the
                     // same URL imported from the same base directory shares
@@ -3288,7 +3320,9 @@ impl<'a> Evaluator<'a> {
                     let entry = match self.import_cache.get(&cache_key) {
                         Some(e) => {
                             if self.loading.iter().any(|p| p == path) {
-                                return Err(Error::unpositioned("This file is already being loaded."));
+                                return Err(Error::unpositioned(
+                                    "This file is already being loaded.",
+                                ));
                             }
                             Some(e.clone())
                         }
@@ -3324,9 +3358,11 @@ impl<'a> Evaluator<'a> {
                                             // distinct source-map entry (its tokens map under the
                                             // importing file). Only `@use`/`@forward` (modules.rs)
                                             // record the override.
-                                            Ok(Some(res)) => {
-                                                Some((canon.as_str().to_string(), res.contents, res.syntax))
-                                            }
+                                            Ok(Some(res)) => Some((
+                                                canon.as_str().to_string(),
+                                                res.contents,
+                                                res.syntax,
+                                            )),
                                         },
                                     }
                                 }
@@ -3340,8 +3376,7 @@ impl<'a> Evaluator<'a> {
                                             "This file is already being loaded.",
                                         ));
                                     }
-                                    let diag_url =
-                                        self.module_diag_url(path, &resolved_key);
+                                    let diag_url = self.module_diag_url(path, &resolved_key);
                                     let parsed = SourceFile::parse(
                                         self.arena,
                                         &diag_url,
@@ -3349,7 +3384,11 @@ impl<'a> Evaluator<'a> {
                                         oxc_syntax(syntax),
                                     );
                                     let (file, sheet) = match parsed {
-                                        Ok((file, sheet)) => (file, &*sheet),
+                                        Ok(ParseOutput {
+                                            source_file,
+                                            stylesheet,
+                                            ..
+                                        }) => (source_file, &*stylesheet),
                                         Err(err) => {
                                             // A parse error names the IMPORTED
                                             // file: render eagerly under its
@@ -3357,8 +3396,10 @@ impl<'a> Evaluator<'a> {
                                             // frame at the URL token (dart:
                                             // `_mod.scss 3:19  @import`).
                                             let diag = self.module_diag_url(path, &resolved_key);
-                                            let saved_member = self.enter_call(*pos, *length, "@import");
-                                            let saved_url = std::mem::replace(&mut self.current_url, diag);
+                                            let saved_member =
+                                                self.enter_call(*pos, *length, "@import");
+                                            let saved_url =
+                                                std::mem::replace(&mut self.current_url, diag);
                                             let saved_key = std::mem::replace(
                                                 &mut self.current_key,
                                                 resolved_key.clone(),
@@ -3407,7 +3448,8 @@ impl<'a> Evaluator<'a> {
                                     .entry(resolved_key.clone())
                                     .or_insert_with(|| Rc::from(file.text));
                             }
-                            let saved_import_url = std::mem::replace(&mut self.current_url, import_diag);
+                            let saved_import_url =
+                                std::mem::replace(&mut self.current_url, import_diag);
                             // Identity follows the display name in lockstep, so
                             // spans stamped inside the imported file intern to
                             // ITS id even when its basename collides with
@@ -3489,11 +3531,14 @@ impl<'a> Evaluator<'a> {
                                 )
                             });
                             let saved_pending_consumed = if loads_modules {
-                                let mut implicit_config: HashMap<String, (Value, bool)> = HashMap::default();
+                                let mut implicit_config: HashMap<String, (Value, bool)> =
+                                    HashMap::default();
                                 for scope in &self.scopes {
                                     for (k, v) in scope.borrow().iter() {
-                                        implicit_config
-                                            .insert(normalize_var_name(k).into_owned(), (v.clone(), false));
+                                        implicit_config.insert(
+                                            normalize_var_name(k).into_owned(),
+                                            (v.clone(), false),
+                                        );
                                     }
                                 }
                                 Some((
@@ -3510,7 +3555,10 @@ impl<'a> Evaluator<'a> {
                             let saved_dir = if resolved_key.is_empty() {
                                 self.current_file_dir.clone()
                             } else {
-                                std::mem::replace(&mut self.current_file_dir, dirname_of(resolved_key))
+                                std::mem::replace(
+                                    &mut self.current_file_dir,
+                                    dirname_of(resolved_key),
+                                )
                             };
                             // Track the imported file's canonical URL in lockstep
                             // (so a nested relative `@use`/`@import` inside it
@@ -3524,8 +3572,10 @@ impl<'a> Evaluator<'a> {
                             let saved_clone = if loads_modules {
                                 let n = self.copy_counter.get() + 1;
                                 self.copy_counter.set(n);
-                                self.import_clone
-                                    .replace((format!("#import{n}"), std::collections::HashSet::new()))
+                                self.import_clone.replace((
+                                    format!("#import{n}"),
+                                    std::collections::HashSet::new(),
+                                ))
                             } else {
                                 self.import_clone.take()
                             };
@@ -3541,8 +3591,7 @@ impl<'a> Evaluator<'a> {
                             // here (the `@import` frame is on the stack).
                             if let Some(span) = top_decl_span(&sheet.statements) {
                                 let pos = self.file.pos_at(span.end);
-                                return Err(self
-                                    .finalize_error(Error::at("expected \"{\".", pos)));
+                                return Err(self.finalize_error(Error::at("expected \"{\".", pos)));
                             }
                             // Render any error before the context restores
                             // below strip its attribution (the `@import`
@@ -3603,8 +3652,11 @@ impl<'a> Evaluator<'a> {
                                         // intervening assignment, while a
                                         // forward from a DIFFERENT module
                                         // overrides it (sass/dart-sass#888).
-                                        let src_ptr =
-                                            imported_fwd.var_src.get(&k).map(|p| *p as usize).unwrap_or(0);
+                                        let src_ptr = imported_fwd
+                                            .var_src
+                                            .get(&k)
+                                            .map(|p| *p as usize)
+                                            .unwrap_or(0);
                                         match self.forwarded_globals.get(&k) {
                                             Some(prev) if *prev == src_ptr => {
                                                 g.entry(k).or_insert(val);
@@ -3666,9 +3718,7 @@ fn collect_global_var_decls<'a>(stmts: &'a [ox::Statement<'a>], out: &mut Vec<St
             {
                 out.push(v.name.name.name.to_string())
             }
-            ox::Statement::QualifiedRule(r) => {
-                collect_global_var_decls(&r.block.statements, out)
-            }
+            ox::Statement::QualifiedRule(r) => collect_global_var_decls(&r.block.statements, out),
             ox::Statement::SassIfAtRule(node) => {
                 collect_global_var_decls(&node.if_clause.block.statements, out);
                 for c in &node.else_if_clauses {
@@ -3829,7 +3879,9 @@ fn nested_calc_needs_parens(s: &str) -> bool {
 
 fn is_complete_calculation(s: &str) -> bool {
     let s = s.trim();
-    let Some(open) = s.find('(') else { return false };
+    let Some(open) = s.find('(') else {
+        return false;
+    };
     if !s.ends_with(')') {
         return false;
     }
@@ -4037,7 +4089,11 @@ fn fold_numbers(op: CalcOp, a: &Number, b: &Number, pos: Pos) -> Result<Option<N
 /// distinct from the arithmetic "have incompatible units." wording).
 fn calc_incompatible(a: &Number, b: &Number, pos: Pos) -> Error {
     Error::at(
-        format!("{} and {} are incompatible.", a.to_css(false), b.to_css(false)),
+        format!(
+            "{} and {} are incompatible.",
+            a.to_css(false),
+            b.to_css(false)
+        ),
         pos,
     )
 }
@@ -4155,8 +4211,10 @@ fn validate_decl_stmt<'a>(
             ox::Statement::AtRule(at) => {
                 let ok = matches!(
                     at.prelude,
-                    Some(P::SassEach(_)) | Some(P::SassFor(_))
-                        | Some(P::SassMixin(_)) | Some(P::SassFunction(_))
+                    Some(P::SassEach(_))
+                        | Some(P::SassFor(_))
+                        | Some(P::SassMixin(_))
+                        | Some(P::SassFunction(_))
                 ) || matches!(
                     &*at.name.name.to_ascii_lowercase(),
                     "return" | "warn" | "debug" | "error" | "while" | "if" | "else"
@@ -4234,9 +4292,7 @@ fn validate_decl_stmt<'a>(
                 // level, or a control directive not inside a style rule —
                 // dart-sass errors at parse time.
                 Some(P::SassExtend(_))
-                    if !ctx.defer_extend
-                        && !ctx.in_style_rule
-                        && scope != DeclScope::Mixin =>
+                    if !ctx.defer_extend && !ctx.in_style_rule && scope != DeclScope::Mixin =>
                 {
                     return Err(Error::unpositioned(
                         "@extend may only be used within style rules.".to_string(),
@@ -4337,7 +4393,11 @@ fn decl_error(scope: DeclScope, kind: &str) -> Option<String> {
         DeclScope::Allowed => None,
         DeclScope::Control => Some(format!(
             "{} may not be declared in control directives.",
-            if kind == "function" { "Functions" } else { "Mixins" }
+            if kind == "function" {
+                "Functions"
+            } else {
+                "Mixins"
+            }
         )),
         DeclScope::Function => Some("This at-rule is not allowed here.".to_string()),
         DeclScope::Mixin => Some(format!("Mixins may not contain {kind} declarations.")),
@@ -4649,7 +4709,10 @@ fn push_group(out: &mut Vec<OutNode>, mut group: Vec<OutNode>) {
         // module wrapper's last child can be) pack tight; only a group-end marker
         // forces the separator.
         Some(
-            OutNode::Raw(_) | OutNode::MediaHoist | OutNode::AtRootHoist { .. } | OutNode::AtRootPackTight,
+            OutNode::Raw(_)
+            | OutNode::MediaHoist
+            | OutNode::AtRootHoist { .. }
+            | OutNode::AtRootPackTight,
         ) => true,
         _ => false,
     };
@@ -4761,7 +4824,9 @@ fn calc_node_has_opaque(node: &CalcNode) -> bool {
     match node {
         CalcNode::Number(_) => false,
         CalcNode::Str(_) => true,
-        CalcNode::Op { left, right, .. } => calc_node_has_opaque(left) || calc_node_has_opaque(right),
+        CalcNode::Op { left, right, .. } => {
+            calc_node_has_opaque(left) || calc_node_has_opaque(right)
+        }
         // A nested calculation function is already preserved, so a calc holding
         // it cannot reduce to a single number.
         CalcNode::Func { .. } => true,
@@ -5126,7 +5191,9 @@ fn at_body_to_items(nodes: Vec<OutNode>) -> Vec<OutItem> {
             }),
             OutNode::Comment(t, lines) => items.push(OutItem::Comment(t, lines)),
             OutNode::Rule {
-                selectors, items: ri, ..
+                selectors,
+                items: ri,
+                ..
             } => items.push(OutItem::NestedRule {
                 selectors: selectors.into_strings(),
                 items: ri,
@@ -5145,7 +5212,11 @@ fn at_body_to_items(nodes: Vec<OutNode>) -> Vec<OutItem> {
                         items: at_body_to_items(body),
                     });
                 } else {
-                    items.push(OutItem::ChildlessAtRule { name, prelude, lines });
+                    items.push(OutItem::ChildlessAtRule {
+                        name,
+                        prelude,
+                        lines,
+                    });
                 }
             }
             OutNode::ModuleScope { nodes, .. } => items.extend(at_body_to_items(nodes)),
@@ -5199,7 +5270,8 @@ fn validate_plain_css_selector(part: &str, top_level: bool) -> Result<(), Error>
             }
             '&' => {
                 let next = chars.get(i + 1).copied();
-                if matches!(next, Some(n) if n.is_ascii_alphanumeric() || n == '-' || n == '_' || n == '\\') {
+                if matches!(next, Some(n) if n.is_ascii_alphanumeric() || n == '-' || n == '_' || n == '\\')
+                {
                     return Err(Error::unpositioned(
                         "Parent selectors can't have suffixes in plain CSS.",
                     ));
@@ -5297,7 +5369,9 @@ fn validate_selector(sel: &str, has_parent: bool) -> Result<(), Error> {
     let mut has_sigil = false;
     for &b in sel.as_bytes() {
         match b {
-            b'\\' | b'"' | b'\'' | b'[' | b'(' | b')' | b']' | b'&' | b'%' | b'/' => needs_slow = true,
+            b'\\' | b'"' | b'\'' | b'[' | b'(' | b')' | b']' | b'&' | b'%' | b'/' => {
+                needs_slow = true
+            }
             b'#' | b'.' => has_sigil = true,
             _ => {}
         }
@@ -5768,7 +5842,9 @@ fn rewrite_nodes_scoped(
             let reachable =
                 o.as_str() == scope || closures.get(o.as_str()).is_some_and(|c| c.contains(scope));
             let private_ok = match &e.target {
-                Some(crate::selector::Simple::Placeholder(n)) if n.starts_with('-') || n.starts_with('_') => {
+                Some(crate::selector::Simple::Placeholder(n))
+                    if n.starts_with('-') || n.starts_with('_') =>
+                {
                     o.as_str() == scope
                 }
                 _ => true,
@@ -6039,7 +6115,9 @@ fn member_set(
         list.iter()
             .filter_map(|m| match (m, vars) {
                 (modules::ForwardMember::Var(n), true) => Some(normalize_var_name(n).into_owned()),
-                (modules::ForwardMember::Name(n), false) => Some(normalize_var_name(n).into_owned()),
+                (modules::ForwardMember::Name(n), false) => {
+                    Some(normalize_var_name(n).into_owned())
+                }
                 _ => None,
             })
             .collect()
@@ -6119,7 +6197,10 @@ fn extend_selector_list(
     if result.all_placeholders {
         return SelectorRewrite::Drop;
     }
-    SelectorRewrite::Changed(RuleSelectors::Parsed(result.selectors.into()), result.breaks)
+    SelectorRewrite::Changed(
+        RuleSelectors::Parsed(result.selectors.into()),
+        result.breaks,
+    )
 }
 
 /// For each non-empty top-level comma part of a selector list, whether the
@@ -6147,7 +6228,10 @@ fn comma_linebreaks(sel: &str, nested: bool) -> Vec<bool> {
         }
         // dart marks a complex as line-broken when ANY newline sits between
         // it and the previous one — including BEFORE the comma (`a\n, b`).
-        let leading_nl = seg.chars().take_while(|c| c.is_whitespace()).any(|c| c == '\n');
+        let leading_nl = seg
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .any(|c| c == '\n');
         let prev_trailing_nl = i > 0
             && segs[i - 1]
                 .chars()
@@ -6332,7 +6416,9 @@ fn resolve_selectors_opt(
                     // simple (`&.x`, `&:h`) bails to the normal path.
                     let mut suffix = String::new();
                     let mut j = i + 1;
-                    while j < chars.len() && (chars[j].is_alphanumeric() || matches!(chars[j], '-' | '_')) {
+                    while j < chars.len()
+                        && (chars[j].is_alphanumeric() || matches!(chars[j], '-' | '_'))
+                    {
                         suffix.push(chars[j]);
                         j += 1;
                     }
@@ -6412,7 +6498,9 @@ fn resolve_selectors_opt(
             let s = substitute_pseudo_refs(&s).unwrap_or(s);
             // The combo's flag ORs its chosen parents' flags (mastodon's
             // adjacent-state selectors break per combo, not per template).
-            let flag = idx.iter().any(|&pi| parent_lbs.get(pi).copied().unwrap_or(false));
+            let flag = idx
+                .iter()
+                .any(|&pi| parent_lbs.get(pi).copied().unwrap_or(false));
             result.push((normalize_selector(&s), flag));
             // Increment with the LAST ref fastest (dart's order).
             let mut j = k;
@@ -6968,7 +7056,16 @@ fn has_bogus_trigger(s: &str) -> bool {
 fn is_selector_pseudo(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "not" | "is" | "matches" | "where" | "current" | "any" | "has" | "host" | "host-context" | "slotted"
+        "not"
+            | "is"
+            | "matches"
+            | "where"
+            | "current"
+            | "any"
+            | "has"
+            | "host"
+            | "host-context"
+            | "slotted"
     )
 }
 
@@ -7036,7 +7133,8 @@ fn compound_has_bogus_pseudo(compound: &str) -> bool {
                     let arg: String = chars[open + 1..k.min(chars.len())].iter().collect();
                     for part in split_commas(&arg) {
                         let part = part.trim();
-                        if !part.is_empty() && complex_selector_is_bogus(part, true, allow_leading) {
+                        if !part.is_empty() && complex_selector_is_bogus(part, true, allow_leading)
+                        {
                             return true;
                         }
                     }
@@ -7463,7 +7561,10 @@ fn serialize_media_queries(queries: &[ResolvedQuery], compressed: bool) -> Strin
 /// `_mergeMediaQueries`). Returns `None` if any pair is unrepresentable (keep
 /// the nested rule in place); otherwise the merged list, which is empty when
 /// every pair is mutually exclusive (the rule is dropped).
-fn merge_media_query_lists(outer: &[ResolvedQuery], inner: &[ResolvedQuery]) -> Option<Vec<ResolvedQuery>> {
+fn merge_media_query_lists(
+    outer: &[ResolvedQuery],
+    inner: &[ResolvedQuery],
+) -> Option<Vec<ResolvedQuery>> {
     let mut merged = Vec::new();
     for a in outer {
         for b in inner {
@@ -7514,7 +7615,11 @@ fn merge_media_query(this: &ResolvedQuery, other: &ResolvedQuery) -> MergeResult
                 return MergeResult::Empty;
             }
             return MergeResult::Unrepresentable;
-        } else if our_type.is_none() || is_all(&our_type) || their_type.is_none() || is_all(&their_type) {
+        } else if our_type.is_none()
+            || is_all(&our_type)
+            || their_type.is_none()
+            || is_all(&their_type)
+        {
             return MergeResult::Unrepresentable;
         }
         if our_not {
@@ -7609,8 +7714,16 @@ impl RCond {
         match self {
             RCond::Css(s) => s.clone(),
             RCond::Not(c) => format!("not {}", c.to_css()),
-            RCond::And(items) => items.iter().map(RCond::to_css).collect::<Vec<_>>().join(" and "),
-            RCond::Or(items) => items.iter().map(RCond::to_css).collect::<Vec<_>>().join(" or "),
+            RCond::And(items) => items
+                .iter()
+                .map(RCond::to_css)
+                .collect::<Vec<_>>()
+                .join(" and "),
+            RCond::Or(items) => items
+                .iter()
+                .map(RCond::to_css)
+                .collect::<Vec<_>>()
+                .join(" or "),
             RCond::Paren(c) => format!("({})", c.to_css()),
         }
     }
@@ -7698,7 +7811,10 @@ fn include_target<'a>(name: &'a ox::FunctionName<'a>) -> (String, Option<&'a str
 #[allow(clippy::type_complexity)]
 fn forward_visibility<'a>(
     v: Option<&'a ox::SassForwardVisibility<'a>>,
-) -> (Option<Vec<modules::ForwardMember>>, Option<Vec<modules::ForwardMember>>) {
+) -> (
+    Option<Vec<modules::ForwardMember>>,
+    Option<Vec<modules::ForwardMember>>,
+) {
     let Some(v) = v else {
         return (None, None);
     };

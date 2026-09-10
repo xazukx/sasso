@@ -10,14 +10,39 @@
 //! references into a file's tree while still loading more files.
 
 use oxc_css_parser::token::{Comment, CommentKind};
-use oxc_css_parser::{Allocator, ParserBuilder, Span, Syntax as OxcSyntax, ast as ox};
+use oxc_css_parser::{ast as ox, Allocator, ParserBuilder, Span, Syntax as OxcSyntax};
 
 use crate::error::Error;
 use crate::lines::Pos;
 
+/// A parsed entry file: the tree, plus the source context that positions and
+/// diagnostics resolve against.
+///
+/// The tree is the parser's own [`Stylesheet`], borrowed mutably from the
+/// arena — rewrite it in place before handing it to
+/// [`evaluate`](Compiler::evaluate), which takes it by value because the
+/// evaluator keeps the borrow for the rest of the compile.
+pub struct ParseOutput<'a> {
+    pub source_file: &'a SourceFile<'a>,
+    pub stylesheet: &'a mut ox::Stylesheet<'a>,
+    pub recoverable_errors: Vec<Error>,
+}
+
+/// Names the tree's extent and size; the nodes themselves are the parser's and
+/// print through [`ast::Stylesheet`]'s own `Debug`.
+impl std::fmt::Debug for ParseOutput<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Parsed")
+            .field("url", &self.source_file.url)
+            .field("span", &self.stylesheet.span)
+            .field("statements", &self.stylesheet.statements.len())
+            .finish()
+    }
+}
+
 /// One parsed stylesheet, with the context needed to blame a span on it.
 #[derive(Clone, Copy)]
-pub(crate) struct SourceFile<'a> {
+pub struct SourceFile<'a> {
     /// The file's URL as it appears in diagnostics.
     pub url: &'a str,
     /// The BOM-stripped text. Every [`Span`] in [`Self::sheet`] indexes into
@@ -27,7 +52,7 @@ pub(crate) struct SourceFile<'a> {
     /// offset so it indexes the text as the embedder passed it.
     bom: usize,
     /// Byte offset of the start of each line, for offset -> line/column.
-    line_starts: &'a [usize],
+    pub line_starts: &'a [usize],
     /// The file's loud (`/* … */`) comments, in source order. Silent (`//`)
     /// comments are dropped: dart-sass never emits them.
     ///
@@ -47,12 +72,12 @@ impl<'a> SourceFile<'a> {
     /// The tree is returned separately, and mutably: it is the caller's to
     /// rewrite before evaluation (the staged API's whole point), while the
     /// file metadata around it stays shared and [`Copy`].
-    pub(crate) fn parse(
+    pub fn parse(
         arena: &'a Allocator,
         url: &str,
         text: &str,
         syntax: OxcSyntax,
-    ) -> Result<(&'a SourceFile<'a>, &'a mut ox::Stylesheet<'a>), Error> {
+    ) -> Result<ParseOutput<'a>, Error> {
         // The parser strips a leading BOM and reports offsets into the
         // stripped text; sasso's positions index the text as the embedder
         // passed it, so the stripped bytes are added back in `pos`.
@@ -81,19 +106,18 @@ impl<'a> SourceFile<'a> {
 
         // A syntax error needs a position, and positions come from the line
         // table — which exists before the tree does.
-        let blame = |err: &oxc_css_parser::error::Error| {
-            syntax_error(url, text, bom, line_starts, err)
-        };
+        let blame =
+            |err: &oxc_css_parser::error::Error| syntax_error(url, text, bom, line_starts, err);
 
-        let sheet = parser.parse::<ox::Stylesheet<'a>>().map_err(|e| blame(&e))?;
+        let sheet = parser
+            .parse::<ox::Stylesheet<'a>>()
+            .map_err(|e| blame(&e))?;
         // Recoverable errors are diagnostics the parser raised while still
         // building a usable tree. dart-sass rejects the same inputs outright,
         // so the first one is surfaced rather than dropped: the parser's
         // recovery exists to keep a tree walkable for a formatter, not to
         // widen what a compiler accepts.
-        if let Some(first) = parser.recoverable_errors().first() {
-            return Err(blame(first));
-        }
+        let errors = parser.recoverable_errors().iter().map(blame).collect();
 
         let comments: &'a [Comment<'a>] = arena.alloc_slice_copy(
             &parser
@@ -103,8 +127,8 @@ impl<'a> SourceFile<'a> {
                 .copied()
                 .collect::<Vec<_>>(),
         );
-        Ok((
-            arena.alloc(SourceFile {
+        Ok(ParseOutput {
+            source_file: arena.alloc(SourceFile {
                 url,
                 text,
                 bom,
@@ -112,12 +136,13 @@ impl<'a> SourceFile<'a> {
                 comments,
                 syntax,
             }),
-            arena.alloc(sheet),
-        ))
+            stylesheet: arena.alloc(sheet),
+            recoverable_errors: errors,
+        })
     }
 
     /// The 1-based line/column and byte offset of `offset`.
-    pub(crate) fn pos_at(&self, offset: usize) -> Pos {
+    pub fn pos_at(&self, offset: usize) -> Pos {
         let line = self.line_starts.partition_point(|&s| s <= offset).max(1);
         let bol = self.line_starts[line - 1];
         // dart-sass counts a column in characters, not bytes.
@@ -126,27 +151,27 @@ impl<'a> SourceFile<'a> {
     }
 
     /// The position a span starts at.
-    pub(crate) fn pos(&self, span: Span) -> Pos {
+    pub fn pos(&self, span: Span) -> Pos {
         self.pos_at(span.start)
     }
 
     /// The source text of `span`, verbatim.
-    pub(crate) fn text_of(&self, span: Span) -> &'a str {
+    pub fn text_of(&self, span: Span) -> &'a str {
         self.text.get(span.start..span.end).unwrap_or("")
     }
 
     /// The 1-based line `offset` sits on.
-    pub(crate) fn line_at(&self, offset: usize) -> u32 {
+    pub fn line_at(&self, offset: usize) -> u32 {
         self.line_starts.partition_point(|&s| s <= offset).max(1) as u32
     }
 
     /// The grammar this file was parsed under.
-    pub(crate) fn syntax(&self) -> OxcSyntax {
+    pub fn syntax(&self) -> OxcSyntax {
         self.syntax
     }
 
     /// The same, as the crate's own [`Syntax`](crate::Syntax).
-    pub(crate) fn file_syntax(&self) -> crate::Syntax {
+    pub fn file_syntax(&self) -> crate::Syntax {
         match self.syntax {
             OxcSyntax::Css => crate::Syntax::Css,
             _ => crate::Syntax::Scss,

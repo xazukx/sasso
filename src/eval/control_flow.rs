@@ -1,5 +1,5 @@
 use super::value_read::{
-    Arg, is_colon, params_of, rest_of, split_clause, split_clauses, values_span,
+    is_colon, params_of, rest_of, split_clause, split_clauses, values_span, Arg,
 };
 use super::*;
 
@@ -81,7 +81,10 @@ impl<'a> Evaluator<'a> {
             }
         };
         let start_i = to_int(start.value, start.clone())?;
-        let end_i = to_int(end_value, Number::with_unit(end_value, start.unit().to_string()))?;
+        let end_i = to_int(
+            end_value,
+            Number::with_unit(end_value, start.unit().to_string()),
+        )?;
         Ok((start_i, end_i, start.unit().to_string()))
     }
 
@@ -90,7 +93,10 @@ impl<'a> Evaluator<'a> {
     /// `Rc<[Value]>` handle directly (a refcount bump) so the loop can clone
     /// one element per iteration instead of deep-copying the whole collection
     /// up front; maps and scalars build a small owned set.
-    pub(super) fn eval_each_items(&mut self, e: &'a ox::ComponentValue<'a>) -> Result<EachItems, Error> {
+    pub(super) fn eval_each_items(
+        &mut self,
+        e: &'a ox::ComponentValue<'a>,
+    ) -> Result<EachItems, Error> {
         match self.eval_value(e)? {
             Value::List(l) => Ok(EachItems::Shared(l.items)),
             // `@each` over a map yields each `key value` pair as a two-element
@@ -286,7 +292,12 @@ impl<'a> Evaluator<'a> {
     /// name, then declared defaults; extra positionals collect into a
     /// `$rest...` parameter or are an error. The parallel definition-span frame
     /// comes along for the source map.
-    fn bind_args(&mut self, params: Option<&'a ox::SassParameters<'a>>, args: &[Arg<'a>], name: &str) -> Result<ArgFrame, Error> {
+    fn bind_args(
+        &mut self,
+        params: Option<&'a ox::SassParameters<'a>>,
+        args: &[Arg<'a>],
+        name: &str,
+    ) -> Result<ArgFrame, Error> {
         let (evaled, spans) = self.eval_call_args_spanned(args)?;
         self.bind_evaled(params, evaled, &spans, name)
     }
@@ -321,7 +332,9 @@ impl<'a> Evaluator<'a> {
         for param in params_of(params) {
             let (val, span) = if let Some((i, v)) = pos_iter.next() {
                 (v, spans.positional(i))
-            } else if let Some(v) = keyword.remove(normalize_arg_name(param.name.name.name).as_ref()) {
+            } else if let Some(v) =
+                keyword.remove(normalize_arg_name(param.name.name.name).as_ref())
+            {
                 (v, spans.named(param.name.name.name))
             } else if let Some(def) = param.default_value.as_ref().map(|d| &d.value) {
                 let v = self.eval_value(def)?;
@@ -336,10 +349,13 @@ impl<'a> Evaluator<'a> {
                 )));
             };
             if let Some(sc) = self.scopes.last() {
-                sc.borrow_mut().insert(param.name.name.name.to_string(), val);
+                sc.borrow_mut()
+                    .insert(param.name.name.name.to_string(), val);
             }
             if let Some(frame) = self.var_spans.last() {
-                frame.borrow_mut().insert(param.name.name.name.to_string(), span);
+                frame
+                    .borrow_mut()
+                    .insert(param.name.name.name.to_string(), span);
             }
         }
         if let Some(rest) = rest_of(params) {
@@ -373,7 +389,9 @@ impl<'a> Evaluator<'a> {
             // (evaluate.dart:3609), which is not a value position sasso maps;
             // record "unknown" so no segment is emitted for it.
             if let Some(frame) = self.var_spans.last() {
-                frame.borrow_mut().insert(rest.to_string(), VarSpan::default());
+                frame
+                    .borrow_mut()
+                    .insert(rest.to_string(), VarSpan::default());
             }
         } else if pos_iter.next().is_some() {
             return Err(Error::unpositioned(format!(
@@ -433,7 +451,9 @@ impl<'a> Evaluator<'a> {
         for param in params_of(params) {
             let (val, span) = if let Some((i, v)) = pos_iter.next() {
                 (v, spans.positional(i))
-            } else if let Some(v) = keyword.remove(normalize_arg_name(param.name.name.name).as_ref()) {
+            } else if let Some(v) =
+                keyword.remove(normalize_arg_name(param.name.name.name).as_ref())
+            {
                 (v, spans.named(param.name.name.name))
             } else if let Some(def) = param.default_value.as_ref().map(|d| &d.value) {
                 let v = self.eval_value(def)?;
@@ -524,7 +544,8 @@ impl<'a> Evaluator<'a> {
         // Arguments evaluate in the CALLER's environment; the body (and the
         // parameter defaults) run against the callable's LEXICAL closure.
         let (evaled, arg_spans) = self.eval_call_args_spanned(args)?;
-        let saved = call.map(|(pos, len)| self.enter_call(pos, len, &format!("{}()", func.def.name)));
+        let saved =
+            call.map(|(pos, len)| self.enter_call(pos, len, &format!("{}()", func.def.name)));
         let saved_scopes = std::mem::replace(&mut self.scopes, func.env.clone());
         let saved_var_spans = std::mem::replace(&mut self.var_spans, func.env_spans.clone());
         let saved_semi = std::mem::replace(&mut self.scope_semi_global, func.env_semi.clone());
@@ -782,7 +803,15 @@ impl<'a> Evaluator<'a> {
                     .ok_or_else(|| Error::unpositioned("Undefined mixin."))?;
                 // A forwarded mixin runs in its DEFINING module's environment.
                 let exec = target.mixin_origin(name).unwrap_or(target);
-                return self.run_module_mixin(&exec, &mixin, args, content, content_params, parents, sink);
+                return self.run_module_mixin(
+                    &exec,
+                    &mixin,
+                    args,
+                    content,
+                    content_params,
+                    parents,
+                    sink,
+                );
             }
             if !self.used_modules.contains_key(ns) {
                 return Err(Error::unpositioned(format!(
@@ -793,7 +822,9 @@ impl<'a> Evaluator<'a> {
         }
         // A bare `@include` may resolve a user module mixin exposed unprefixed
         // via `@use … as *`.
-        if self.lookup_mixin(name).is_none() && !self.star_user_modules.is_empty() && !is_private_member(name)
+        if self.lookup_mixin(name).is_none()
+            && !self.star_user_modules.is_empty()
+            && !is_private_member(name)
         {
             let hits: Vec<(Rc<Module<'a>>, Rc<UserCallable<'a>>)> = self
                 .star_user_modules
@@ -806,7 +837,15 @@ impl<'a> Evaluator<'a> {
                 ));
             }
             if let Some((m, mx)) = hits.into_iter().next() {
-                return self.run_module_mixin(&m, &mx, args, content, content_params, parents, sink);
+                return self.run_module_mixin(
+                    &m,
+                    &mx,
+                    args,
+                    content,
+                    content_params,
+                    parents,
+                    sink,
+                );
             }
         }
         let mixin = self
@@ -962,7 +1001,8 @@ impl<'a> Evaluator<'a> {
         } else {
             return Err(Error::unpositioned("Missing argument $mixin."));
         };
-        let rest_named: Vec<(String, Value)> = named.into_iter().filter(|(n, _)| n != "mixin").collect();
+        let rest_named: Vec<(String, Value)> =
+            named.into_iter().filter(|(n, _)| n != "mixin").collect();
         let mixin = match mixin_val {
             Value::Mixin(m) => m,
             other => {
@@ -1035,7 +1075,9 @@ impl<'a> Evaluator<'a> {
         // no `Module` in hand, so it carries a lightweight `origin` snapshot.
         let saved_file = match (module.as_ref(), &mixin.origin) {
             (Some(m), _) => Some(self.enter_module_file(m)),
-            (None, Some(o)) => Some(self.enter_file_context(&o.diag_url, &o.file_dir, &o.canonical)),
+            (None, Some(o)) => {
+                Some(self.enter_file_context(&o.diag_url, &o.file_dir, &o.canonical))
+            }
             (None, None) => None,
         };
         let saved_scopes = std::mem::replace(&mut self.scopes, callable.env.clone());
@@ -1230,7 +1272,10 @@ impl<'a> Evaluator<'a> {
                 Some(name) => match slot_index(name) {
                     Some(i) => named[i] = Some(IfArg::Lazy(&a.values)),
                     None => {
-                        return Err(Error::at(format!("if() has no argument named ${name}."), pos));
+                        return Err(Error::at(
+                            format!("if() has no argument named ${name}."),
+                            pos,
+                        ));
                     }
                 },
                 None => by_pos.push(IfArg::Lazy(&a.values)),
@@ -1350,10 +1395,7 @@ impl<'a> Evaluator<'a> {
     ///
     /// The parser already read `and`/`or`/`not`/parentheses as its own
     /// operators, so this walks that tree rather than re-splitting text.
-    fn eval_if_cond(
-        &mut self,
-        values: &'a [ox::ComponentValue<'a>],
-    ) -> Result<CondEval, Error> {
+    fn eval_if_cond(&mut self, values: &'a [ox::ComponentValue<'a>]) -> Result<CondEval, Error> {
         match values {
             [one] => self.eval_if_cond_value(one),
             // A run the operator grammar did not join is arbitrary
@@ -1364,10 +1406,7 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    fn eval_if_cond_value(
-        &mut self,
-        value: &'a ox::ComponentValue<'a>,
-    ) -> Result<CondEval, Error> {
+    fn eval_if_cond_value(&mut self, value: &'a ox::ComponentValue<'a>) -> Result<CondEval, Error> {
         use ox::ComponentValue as CV;
         match value {
             CV::SassBinaryExpression(b)
@@ -1391,9 +1430,7 @@ impl<'a> Evaluator<'a> {
                 }
                 Ok(combine_residuals(residuals, and))
             }
-            CV::SassUnaryExpression(u)
-                if matches!(u.op.kind, ox::SassUnaryOperatorKind::Not) =>
-            {
+            CV::SassUnaryExpression(u) if matches!(u.op.kind, ox::SassUnaryOperatorKind::Not) => {
                 match self.eval_if_cond_value(&u.expr)? {
                     CondEval::Bool(b) => Ok(CondEval::Bool(!b)),
                     CondEval::Css(rc) => Ok(CondEval::Css(RCond::Not(Box::new(rc)))),
@@ -1440,4 +1477,3 @@ fn collapse_if_cond(text: &str) -> String {
     }
     collapsed.replace("( ", "(")
 }
-

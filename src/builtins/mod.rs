@@ -185,7 +185,10 @@ pub(super) fn num(v: &Value, pos: Pos) -> Result<f64, Error> {
 pub(super) fn as_color(v: &Value, pos: Pos) -> Result<Color, Error> {
     match v {
         Value::Color(c) => Ok(c.clone()),
-        other => Err(Error::at(format!("{} is not a color.", other.to_css(false)), pos)),
+        other => Err(Error::at(
+            format!("{} is not a color.", other.to_css(false)),
+            pos,
+        )),
     }
 }
 
@@ -712,13 +715,17 @@ mod tests {
         ];
         // The exact pre-refactor `is_math_builtin_name` arms (lowercase).
         const OLD_MATH: &[&str] = &[
-            "abs", "ceil", "floor", "round", "min", "max", "clamp", "sign", "pow", "sqrt", "exp", "log",
-            "hypot", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "rem", "mod", "random",
+            "abs", "ceil", "floor", "round", "min", "max", "clamp", "sign", "pow", "sqrt", "exp",
+            "log", "hypot", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "rem", "mod",
+            "random",
         ];
 
         // Direction 1: every name the old set owned is still a builtin.
         for &name in OLD_NON_MATH.iter().chain(OLD_MATH.iter()) {
-            assert!(is_builtin(name), "old builtin `{name}` no longer classified");
+            assert!(
+                is_builtin(name),
+                "old builtin `{name}` no longer classified"
+            );
         }
 
         // Direction 2: the new union introduces no name the old set lacked.
@@ -734,8 +741,11 @@ mod tests {
             .chain(super::math::NAMES.iter())
             .copied()
             .collect();
-        let old_set: std::collections::BTreeSet<&str> =
-            OLD_NON_MATH.iter().chain(OLD_MATH.iter()).copied().collect();
+        let old_set: std::collections::BTreeSet<&str> = OLD_NON_MATH
+            .iter()
+            .chain(OLD_MATH.iter())
+            .copied()
+            .collect();
         for name in &new_union {
             assert!(
                 old_set.contains(name),
@@ -744,7 +754,11 @@ mod tests {
         }
         // Cardinality match (no duplicates within the families, exact size).
         let new_set: std::collections::BTreeSet<&str> = new_union.iter().copied().collect();
-        assert_eq!(new_set.len(), new_union.len(), "duplicate name in family NAMES");
+        assert_eq!(
+            new_set.len(),
+            new_union.len(),
+            "duplicate name in family NAMES"
+        );
         assert_eq!(new_set, old_set, "new union != historical builtin set");
     }
 }

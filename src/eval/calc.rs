@@ -1,4 +1,4 @@
-use super::value_read::{Arg, is_solidus};
+use super::value_read::{is_solidus, Arg};
 use super::*;
 
 impl<'a> Evaluator<'a> {
@@ -20,7 +20,9 @@ impl<'a> Evaluator<'a> {
         }
         let mut parts = Vec::with_capacity(args.len());
         for a in args {
-            let inner = self.eval_calc_values(a.values)?.to_calc_css(self.compressed());
+            let inner = self
+                .eval_calc_values(a.values)?
+                .to_calc_css(self.compressed());
             // A named argument (`min($a: 1)`) is not valid in a calculation,
             // but we preserve any name verbatim to mirror the surface syntax.
             match a.name {
@@ -89,11 +91,7 @@ impl<'a> Evaluator<'a> {
     /// keeps a `var()`/calculation operand the call is preserved
     /// (`clamp(1% + 1px, 2px, 3px)`). A resolved operand with complex units is
     /// rejected like dart-sass.
-    pub(super) fn try_eval_clamp(
-        &mut self,
-        args: &[Arg<'a>],
-        pos: Pos,
-    ) -> Result<Value, Error> {
+    pub(super) fn try_eval_clamp(&mut self, args: &[Arg<'a>], pos: Pos) -> Result<Value, Error> {
         let mut nodes = Vec::with_capacity(args.len());
         for a in args {
             let node = self.eval_calc_values(a.values)?;
@@ -136,11 +134,7 @@ impl<'a> Evaluator<'a> {
     /// value are each evaluated through the calc machinery and the call is
     /// kept preserved (`calc-size()` never reduces to a number). Exactly one
     /// or two arguments are accepted.
-    pub(super) fn eval_calc_size(
-        &mut self,
-        args: &[Arg<'a>],
-        pos: Pos,
-    ) -> Result<Value, Error> {
+    pub(super) fn eval_calc_size(&mut self, args: &[Arg<'a>], pos: Pos) -> Result<Value, Error> {
         if args.is_empty() {
             return Err(Error::at("Missing argument.", pos));
         }
@@ -152,7 +146,10 @@ impl<'a> Evaluator<'a> {
         }
         let mut parts = Vec::with_capacity(args.len());
         for a in args {
-            parts.push(self.eval_calc_values(a.values)?.to_calc_css(self.compressed()));
+            parts.push(
+                self.eval_calc_values(a.values)?
+                    .to_calc_css(self.compressed()),
+            );
         }
         Ok(Value::Str(SassStr {
             text: format!("calc-size({})", parts.join(", ")).into(),
@@ -257,10 +254,7 @@ impl<'a> Evaluator<'a> {
     /// everything else (variables, interpolations, incompatible units) is
     /// preserved for canonical serialization, mirroring dart-sass's
     /// "only simplify number+number" rule.
-    fn eval_calc_value(
-        &mut self,
-        value: &'a ox::ComponentValue<'a>,
-    ) -> Result<CalcNode, Error> {
+    fn eval_calc_value(&mut self, value: &'a ox::ComponentValue<'a>) -> Result<CalcNode, Error> {
         use ox::ComponentValue as CV;
         match value {
             CV::Calc(c) => self.eval_calc_op(c),
@@ -293,9 +287,7 @@ impl<'a> Evaluator<'a> {
                 }
                 fold_calc(calc_op, l, r, pos)
             }
-            CV::SassUnaryExpression(u)
-                if matches!(u.op.kind, ox::SassUnaryOperatorKind::Minus) =>
-            {
+            CV::SassUnaryExpression(u) if matches!(u.op.kind, ox::SassUnaryOperatorKind::Minus) => {
                 let node = self.eval_calc_value(&u.expr)?;
                 match node {
                     CalcNode::Number(n) => Ok(CalcNode::Number(n.copy_units(-n.value))),
@@ -328,7 +320,9 @@ impl<'a> Evaluator<'a> {
             // complete sub-calculation flattens without extra parens.
             CV::Function(f) if is_bare_calc(f) && !f.args.is_empty() => {
                 if self.in_supports_declaration {
-                    let s = self.eval_calc_values(&f.args)?.to_calc_css(self.compressed());
+                    let s = self
+                        .eval_calc_values(&f.args)?
+                        .to_calc_css(self.compressed());
                     return Ok(CalcNode::Str(format!("calc({s})")));
                 }
                 let node = self.eval_calc_values(&f.args)?;
@@ -421,10 +415,7 @@ impl<'a> Evaluator<'a> {
     /// Whether a value run contains a SassScript-only operator — one that has
     /// no meaning inside a calculation, so the call is a plain function rather
     /// than a CSS calculation.
-    pub(super) fn values_have_non_calc_op(
-        &self,
-        values: &'a [ox::ComponentValue<'a>],
-    ) -> bool {
+    pub(super) fn values_have_non_calc_op(&self, values: &'a [ox::ComponentValue<'a>]) -> bool {
         values.iter().any(value_has_non_calc_op)
     }
 }
@@ -464,12 +455,10 @@ fn value_contains_calc_substitution(v: &ox::ComponentValue<'_>) -> bool {
     }
     match v {
         CV::Calc(c) => {
-            value_contains_calc_substitution(&c.left)
-                || value_contains_calc_substitution(&c.right)
+            value_contains_calc_substitution(&c.left) || value_contains_calc_substitution(&c.right)
         }
         CV::SassBinaryExpression(b) => {
-            value_contains_calc_substitution(&b.left)
-                || value_contains_calc_substitution(&b.right)
+            value_contains_calc_substitution(&b.left) || value_contains_calc_substitution(&b.right)
         }
         CV::SassUnaryExpression(u) => value_contains_calc_substitution(&u.expr),
         CV::SassParenthesizedExpression(p) => value_contains_calc_substitution(&p.expr),

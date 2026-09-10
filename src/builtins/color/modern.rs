@@ -88,7 +88,11 @@ fn fn_to_space(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Resul
     Ok(Value::Color(make_modern_in(out, space)))
 }
 
-fn fn_color_channel(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_color_channel(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["color", "channel", "space"];
     let n = pos_args.len() + named.len();
     if n > 3 {
@@ -115,7 +119,10 @@ fn fn_color_channel(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> 
             // dart interpolates the color with `Value.toString()`, i.e. the
             // INSPECT serializer, not CSS output (lib/src/value.dart:439;
             // message at lib/src/functions/color.dart:699).
-            format!("$channel: Color {} has no channel named {chan}.", c.inspect_css()),
+            format!(
+                "$channel: Color {} has no channel named {chan}.",
+                c.inspect_css()
+            ),
             pos,
         )
     })?;
@@ -129,8 +136,14 @@ fn fn_color_channel(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> 
 fn fn_is_missing(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
     let params = ["color", "channel"];
     max_positional(pos_args, params.len(), pos)?;
-    let c = as_color(require(&params, pos_args, named, 0, "is-missing", pos)?, pos)?;
-    let chan = channel_name_arg(require(&params, pos_args, named, 1, "is-missing", pos)?, pos)?;
+    let c = as_color(
+        require(&params, pos_args, named, 0, "is-missing", pos)?,
+        pos,
+    )?;
+    let chan = channel_name_arg(
+        require(&params, pos_args, named, 1, "is-missing", pos)?,
+        pos,
+    )?;
     let mc = legacy_to_modern(&c);
     let missing = if chan == "alpha" {
         mc.alpha.is_none()
@@ -163,7 +176,10 @@ fn fn_is_in_gamut(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Re
             pos,
         ));
     }
-    let c = as_color(require(&params, pos_args, named, 0, "is-in-gamut", pos)?, pos)?;
+    let c = as_color(
+        require(&params, pos_args, named, 0, "is-in-gamut", pos)?,
+        pos,
+    )?;
     let mc = legacy_to_modern(&c);
     let space = match arg(&params, pos_args, named, 1) {
         Some(v) => space_arg(v, pos)?,
@@ -172,7 +188,11 @@ fn fn_is_in_gamut(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Re
     Ok(Value::Bool(in_gamut(&mc, space)))
 }
 
-fn fn_is_powerless(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_is_powerless(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["color", "channel", "space"];
     let n = pos_args.len() + named.len();
     if n > 3 {
@@ -181,8 +201,14 @@ fn fn_is_powerless(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> R
             pos,
         ));
     }
-    let c = as_color(require(&params, pos_args, named, 0, "is-powerless", pos)?, pos)?;
-    let chan = channel_name_arg(require(&params, pos_args, named, 1, "is-powerless", pos)?, pos)?;
+    let c = as_color(
+        require(&params, pos_args, named, 0, "is-powerless", pos)?,
+        pos,
+    )?;
+    let chan = channel_name_arg(
+        require(&params, pos_args, named, 1, "is-powerless", pos)?,
+        pos,
+    )?;
     let mc = legacy_to_modern(&c);
     let space = match arg(&params, pos_args, named, 2) {
         Some(v) => space_arg(v, pos)?,
@@ -360,7 +386,8 @@ pub(crate) fn modify_in_space_full(
     // missing, so `adjust` still errors on it and `change` still sets it.
     if orig.space != space {
         let missing_in_src = |cat: ChannelCategory| {
-            (0..3).any(|i| orig.channels[i].is_none() && channel_category(orig.space, i) == Some(cat))
+            (0..3)
+                .any(|i| orig.channels[i].is_none() && channel_category(orig.space, i) == Some(cat))
         };
         for i in 0..3 {
             if work.channels[i].is_none() {
@@ -501,11 +528,18 @@ fn apply_alpha(cur: f64, v: &Value, op: ModifyOp, pos: Pos) -> Result<Option<f64
                             (format!("0{}", n.unit()), format!("1{}", n.unit()))
                         };
                         return Err(Error::at(
-                            format!("$alpha: Expected {} to be within {b0} and {b1}.", n.to_css(false)),
+                            format!(
+                                "$alpha: Expected {} to be within {b0} and {b1}.",
+                                n.to_css(false)
+                            ),
                             pos,
                         ));
                     }
-                    Some(if n.unit() == "%" { n.value / 100.0 } else { n.value })
+                    Some(if n.unit() == "%" {
+                        n.value / 100.0
+                    } else {
+                        n.value
+                    })
                 }
                 Value::Slash(n, _) => Some(n.value),
                 other => {

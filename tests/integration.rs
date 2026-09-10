@@ -28,7 +28,11 @@ fn css(input: &str) -> String {
 // Compressed goldens were captured from the library API directly (no trailing
 // newline), so this helper compares against `compile` verbatim.
 fn css_compressed(input: &str) -> String {
-    compile(input, &Options::default().with_style(OutputStyle::Compressed)).expect("compile should succeed")
+    compile(
+        input,
+        &Options::default().with_style(OutputStyle::Compressed),
+    )
+    .expect("compile should succeed")
 }
 
 /// The library API (`compile`) must not emit a trailing newline in either
@@ -52,8 +56,11 @@ fn library_api_omits_trailing_newline() {
             !expanded.ends_with('\n'),
             "expanded library output must not end with a newline: {expanded:?}"
         );
-        let compressed =
-            compile(input, &Options::default().with_style(OutputStyle::Compressed)).expect("compile");
+        let compressed = compile(
+            input,
+            &Options::default().with_style(OutputStyle::Compressed),
+        )
+        .expect("compile");
         assert!(
             !compressed.ends_with('\n'),
             "compressed library output must not end with a newline: {compressed:?}"
@@ -123,7 +130,9 @@ fn unknown_identifiers_pass_through() {
 
 #[test]
 fn nesting_combinators_and_parent_ref() {
-    let out = css(".a, .b {\n  margin: 0;\n  > .c { padding: 1px; }\n  &.active { color: red; }\n  .d & { color: blue; }\n}\n");
+    let out = css(
+        ".a, .b {\n  margin: 0;\n  > .c { padding: 1px; }\n  &.active { color: red; }\n  .d & { color: blue; }\n}\n",
+    );
     assert_eq!(
         out,
         ".a, .b {\n  margin: 0;\n}\n.a > .c, .b > .c {\n  padding: 1px;\n}\n.a.active, .b.active {\n  color: red;\n}\n.d .a, .d .b {\n  color: blue;\n}\n"
@@ -146,7 +155,9 @@ fn blank_line_between_top_level_groups() {
 
 #[test]
 fn interpolation_in_selectors_and_values() {
-    let out = css("$name: warning;\n$i: 3;\n.icon-#{$name} { content: \"#{$name}-#{$i}\"; }\n.col-#{$i} { width: 10px * $i; }\n");
+    let out = css(
+        "$name: warning;\n$i: 3;\n.icon-#{$name} { content: \"#{$name}-#{$i}\"; }\n.col-#{$i} { width: 10px * $i; }\n",
+    );
     assert_eq!(
         out,
         ".icon-warning {\n  content: \"warning-3\";\n}\n\n.col-3 {\n  width: 30px;\n}\n"
@@ -156,13 +167,17 @@ fn interpolation_in_selectors_and_values() {
 #[test]
 fn unit_arithmetic() {
     assert_eq!(css(".a { width: 8px * 2; }"), ".a {\n  width: 16px;\n}\n");
-    assert_eq!(css(".a { width: 10px + 5px; }"), ".a {\n  width: 15px;\n}\n");
+    assert_eq!(
+        css(".a { width: 10px + 5px; }"),
+        ".a {\n  width: 15px;\n}\n"
+    );
     assert_eq!(css(".a { margin: 2 * 3em; }"), ".a {\n  margin: 6em;\n}\n");
 }
 
 #[test]
 fn lists_round_trip() {
-    let out = css("$stack: \"Helvetica Neue\", Arial, sans-serif;\n.t { font-family: $stack; margin: 1px 2px 3px 4px; }\n");
+    let out =
+        css("$stack: \"Helvetica Neue\", Arial, sans-serif;\n.t { font-family: $stack; margin: 1px 2px 3px 4px; }\n");
     assert_eq!(
         out,
         ".t {\n  font-family: \"Helvetica Neue\", Arial, sans-serif;\n  margin: 1px 2px 3px 4px;\n}\n"
@@ -173,7 +188,10 @@ fn lists_round_trip() {
 fn default_and_important_flags() {
     // !default does not override an existing binding.
     let out = css("$c: red;\n$c: blue !default;\n.a { color: $c; background: red !important; }");
-    assert_eq!(out, ".a {\n  color: red;\n  background: red !important;\n}\n");
+    assert_eq!(
+        out,
+        ".a {\n  color: red;\n  background: red !important;\n}\n"
+    );
 }
 
 #[test]
@@ -181,12 +199,18 @@ fn comments_loud_preserved_silent_dropped() {
     // A loud comment starting on the line the previous declaration ends joins
     // that line (dart-sass's trailing-comment serializer rule).
     let out = css("// silent\n.a { color: red; /* inline */ }\n/* trailing */");
-    assert_eq!(out, ".a {\n  color: red; /* inline */\n}\n\n/* trailing */\n");
+    assert_eq!(
+        out,
+        ".a {\n  color: red; /* inline */\n}\n\n/* trailing */\n"
+    );
 }
 
 #[test]
 fn null_value_omits_declaration() {
-    assert_eq!(css(".a { color: null; width: 1px; }"), ".a {\n  width: 1px;\n}\n");
+    assert_eq!(
+        css(".a { color: null; width: 1px; }"),
+        ".a {\n  width: 1px;\n}\n"
+    );
 }
 
 #[test]
@@ -306,7 +330,9 @@ fn first_class_mixin_load_css_resolves_against_defining_module() {
     let importer = DirImporter(files);
     let out = compile(
         "@use \"sub/mod\";\n@use \"sass:meta\";\n.out { @include meta.apply(mod.$m); }\n",
-        &Options::default().with_url("/entry").with_importer(&importer),
+        &Options::default()
+            .with_url("/entry")
+            .with_importer(&importer),
     )
     .expect("compile");
     // Byte-for-byte dart-sass 1.101 (resolves "dep" against /sub). The library
@@ -344,11 +370,17 @@ fn compressed_color_picks_shortest_form() {
         "a{x:rgb(15%,30%,45%)}"
     );
     // Non-opaque: rgba() vs hsla(); the percentage rgba form wins.
-    assert_eq!(case("rgba(darken(#336699,10%),.5)"), "a{x:rgba(15%,30%,45%,.5)}");
+    assert_eq!(
+        case("rgba(darken(#336699,10%),.5)"),
+        "a{x:rgba(15%,30%,45%,.5)}"
+    );
 
     // --- results whose rgb form is shorter (or equal) -> stays rgb/hex ------
     // The percentage form wins under dart's two-character hsl handicap.
-    assert_eq!(case("saturate(#888,20%)"), "a{x:rgb(62.6666666667%,44%,44%)}");
+    assert_eq!(
+        case("saturate(#888,20%)"),
+        "a{x:rgb(62.6666666667%,44%,44%)}"
+    );
     // A hue rotation that lands on integers collapses to hex.
     assert_eq!(case("adjust-hue(#336699,90deg)"), "a{x:#939}");
 
@@ -413,19 +445,31 @@ fn compressed_at_rule_prelude_spacing() {
 
 #[test]
 fn comparison_and_logical_operators() {
-    assert_eq!(css(".a { x: if(3 > 2, big, small); }"), ".a {\n  x: big;\n}\n");
+    assert_eq!(
+        css(".a { x: if(3 > 2, big, small); }"),
+        ".a {\n  x: big;\n}\n"
+    );
     assert_eq!(css(".a { x: 1 + 2 == 3; }"), ".a {\n  x: true;\n}\n");
     assert_eq!(css(".a { x: not false; }"), ".a {\n  x: true;\n}\n");
     assert_eq!(css(".a { x: 1 == 1px; }"), ".a {\n  x: false;\n}\n");
-    assert_eq!(css(".a { x: if(true and false, y, n); }"), ".a {\n  x: n;\n}\n");
-    assert_eq!(css(".a { x: if(2 <= 2 or false, y, n); }"), ".a {\n  x: y;\n}\n");
+    assert_eq!(
+        css(".a { x: if(true and false, y, n); }"),
+        ".a {\n  x: n;\n}\n"
+    );
+    assert_eq!(
+        css(".a { x: if(2 <= 2 or false, y, n); }"),
+        ".a {\n  x: y;\n}\n"
+    );
 }
 
 #[test]
 fn if_function_is_lazy() {
     // The branch not taken is never evaluated — referencing an undefined
     // variable there must not error.
-    assert_eq!(css(".a { x: if(true, ok, $undefined); }"), ".a {\n  x: ok;\n}\n");
+    assert_eq!(
+        css(".a { x: if(true, ok, $undefined); }"),
+        ".a {\n  x: ok;\n}\n"
+    );
     // Named arguments.
     assert_eq!(
         css(".a { x: if($condition: false, $if-true: a, $if-false: b); }"),
@@ -543,8 +587,14 @@ fn hex_color_validation_matches_dart() {
     assert_eq!(css("a{color:#abc}"), "a {\n  color: #abc;\n}\n");
     assert_eq!(css("a{color:#000000}"), "a {\n  color: #000000;\n}\n");
     assert_eq!(css("a{color:#abcd12}"), "a {\n  color: #abcd12;\n}\n");
-    assert_eq!(css("a{color:#0000}"), "a {\n  color: rgba(0, 0, 0, 0);\n}\n");
-    assert_eq!(css("a{color:#00000000}"), "a {\n  color: rgba(0, 0, 0, 0);\n}\n");
+    assert_eq!(
+        css("a{color:#0000}"),
+        "a {\n  color: rgba(0, 0, 0, 0);\n}\n"
+    );
+    assert_eq!(
+        css("a{color:#00000000}"),
+        "a {\n  color: rgba(0, 0, 0, 0);\n}\n"
+    );
 
     // A digit-start run of an invalid length (or a non-hex char before a valid
     // length) is "Expected hex digit." — sasso used to accept these verbatim.
@@ -593,7 +643,11 @@ fn rejects_lenient_parser_forms_like_dart() {
         err("@mixin m($a-b,$a_b){x:$a-b}c{@include m(1,2)}"),
         "Duplicate parameter."
     );
-    assert!(compile("@mixin ok($a,$b){x:$a}a{@include ok(1,2)}", &Options::default()).is_ok());
+    assert!(compile(
+        "@mixin ok($a,$b){x:$a}a{@include ok(1,2)}",
+        &Options::default()
+    )
+    .is_ok());
 
     // A committed exponent (`e` then a sign or digit) requires a digit.
     // dart-sass 1.104 says `Expected digit.`; the parser words it its own way,
@@ -631,8 +685,14 @@ fn rgb_hsl_argument_validation_matches_dart() {
 
     // A 2-arg comma call is the legacy `rgb($color, $alpha)` — $color must be a
     // color, so a space-list (modern channels shape) is rejected.
-    assert_eq!(err("a{color:rgb(1 2 3, 0.5)}"), "$color: (1 2 3) is not a color.");
-    assert_eq!(err("a{color:hsl(1 2% 3%, 0.5)}"), "Missing argument $lightness.");
+    assert_eq!(
+        err("a{color:rgb(1 2 3, 0.5)}"),
+        "$color: (1 2 3) is not a color."
+    );
+    assert_eq!(
+        err("a{color:hsl(1 2% 3%, 0.5)}"),
+        "Missing argument $lightness."
+    );
 
     // Valid forms still compile (legacy, modern space-list, slash-alpha, var()).
     for ok in [
@@ -700,7 +760,11 @@ fn static_placement_and_serialization_match_dart() {
         err("@if true{@content}"),
         "@content is only allowed within mixin declarations."
     );
-    assert!(compile("@mixin m{@content}\na{@include m{x:y}}", &Options::default()).is_ok());
+    assert!(compile(
+        "@mixin m{@content}\na{@include m{x:y}}",
+        &Options::default()
+    )
+    .is_ok());
 
     // @function bodies forbid style rules / declarations / @extend statically.
     assert_eq!(
@@ -944,11 +1008,14 @@ impl Importer for CachingImporter {
     }
 
     fn load(&self, canonical: &CanonicalUrl) -> Result<Option<ImporterResult>, ImporterError> {
-        Ok(self.files.get(canonical.as_str()).map(|src| ImporterResult {
-            contents: src.clone(),
-            syntax: Syntax::Scss,
-            source_map_url: None,
-        }))
+        Ok(self
+            .files
+            .get(canonical.as_str())
+            .map(|src| ImporterResult {
+                contents: src.clone(),
+                syntax: Syntax::Scss,
+                source_map_url: None,
+            }))
     }
 }
 

@@ -232,7 +232,9 @@ impl Channels {
                 .iter()
                 .find(|(n, _)| n == "channels")
                 .map(|(_, v)| v.clone())
-                .ok_or_else(|| Error::at(format!("Missing argument $channels for {fname}()."), pos))?,
+                .ok_or_else(|| {
+                    Error::at(format!("Missing argument $channels for {fname}()."), pos)
+                })?,
         };
         // A channels list must be unbracketed and space/slash-separated. A
         // bracketed and/or comma list is rejected with dart-sass's message.
@@ -254,7 +256,10 @@ impl Channels {
                 } else {
                     list_paren_css(&channels)
                 };
-                return Err(Error::at(format!("$channels: Expected {kind}, was {shown}"), pos));
+                return Err(Error::at(
+                    format!("$channels: Expected {kind}, was {shown}"),
+                    pos,
+                ));
             }
         }
         let extra_alpha = arg(params, pos_args, named, 1).cloned();
@@ -292,7 +297,8 @@ impl Channels {
         for (i, comp) in self.comps.iter().enumerate() {
             // A degenerate `calc()` is a valid (NaN/infinity) channel value, so
             // it is left for the count/compute path rather than reported here.
-            let numeric = matches!(comp, Value::Number(_) | Value::Slash(..)) || is_degenerate_calc(comp);
+            let numeric =
+                matches!(comp, Value::Number(_) | Value::Slash(..)) || is_degenerate_calc(comp);
             if !numeric {
                 return Err(Error::at(
                     format!(
@@ -327,7 +333,8 @@ impl Channels {
         // dart's all-numeric pass before any unit is examined.
         if self.single.is_none() {
             for (i, comp) in self.comps.iter().enumerate() {
-                let numeric = matches!(comp, Value::Number(_) | Value::Slash(..)) || is_degenerate_calc(comp);
+                let numeric =
+                    matches!(comp, Value::Number(_) | Value::Slash(..)) || is_degenerate_calc(comp);
                 if !numeric {
                     return Err(Error::at(
                         format!(
@@ -383,10 +390,9 @@ impl Channels {
     /// If this is a relative-color call (`rgb(from … )`), preserve it verbatim.
     /// dart-sass keeps the whole `from`-based form rather than computing it.
     fn relative_passthrough(&self, name: &str) -> Option<Value> {
-        let is_relative = self
-            .comps
-            .first()
-            .is_some_and(|v| matches!(v, Value::Str(s) if !s.quoted && s.text.eq_ignore_ascii_case("from")));
+        let is_relative = self.comps.first().is_some_and(
+            |v| matches!(v, Value::Str(s) if !s.quoted && s.text.eq_ignore_ascii_case("from")),
+        );
         if !is_relative {
             return None;
         }
@@ -517,7 +523,9 @@ fn split_channels(channels: &Value) -> SplitChannels {
             // first element stays a single value so the caller rejects it
             // ("Expected an unbracketed list"), matching dart-sass.
             let comps = match &l.items[0] {
-                Value::List(inner) if inner.sep == ListSep::Space && !inner.bracketed => inner.items.to_vec(),
+                Value::List(inner) if inner.sep == ListSep::Space && !inner.bracketed => {
+                    inner.items.to_vec()
+                }
                 other => vec![other.clone()],
             };
             return SplitChannels {
@@ -893,7 +901,11 @@ fn hsl_degenerate_pct(v: &Value, is_saturation: bool, pos: Pos) -> Result<String
 /// dart-sass uses for legacy hwb colors. With a special value (`var()`,
 /// `calc()`) or a `none` missing-channel keyword it preserves the call
 /// verbatim, space-joined, with a bare numeric hue suffixed `deg`.
-pub(super) fn fn_hwb(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+pub(super) fn fn_hwb(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["channels"];
     let n = pos_args.len() + named.len();
     if n != 1 {
@@ -920,7 +932,10 @@ pub(super) fn fn_hwb(pos_args: &[Value], named: &[(String, Value)], pos: Pos) ->
             } else {
                 list_paren_css(&channels)
             };
-            return Err(Error::at(format!("$channels: Expected {kind}, was {shown}"), pos));
+            return Err(Error::at(
+                format!("$channels: Expected {kind}, was {shown}"),
+                pos,
+            ));
         }
     }
     let SplitChannels { comps, alpha, .. } = split_channels(&channels);
@@ -928,14 +943,16 @@ pub(super) fn fn_hwb(pos_args: &[Value], named: &[(String, Value)], pos: Pos) ->
     // (`var()`/`calc()`/…) anywhere preserves the *original* spelling verbatim
     // (a bare numeric hue keeps its bare form, the `/` alpha separator stays
     // glued), regardless of channel count.
-    let is_relative = comps
-        .first()
-        .is_some_and(|v| matches!(v, Value::Str(s) if !s.quoted && s.text.eq_ignore_ascii_case("from")));
+    let is_relative = comps.first().is_some_and(
+        |v| matches!(v, Value::Str(s) if !s.quoted && s.text.eq_ignore_ascii_case("from")),
+    );
     // A degenerate `calc()` channel or alpha (`calc(NaN)`, `calc(infinity *
     // 1%)`) folds to its number — dart constructs the color and lets the
     // hwb -> hsl legacy serialization propagate the non-finite values —
     // rather than preserving the call verbatim.
-    let comps_func = comps.iter().any(|v| is_special(v) && !is_degenerate_calc(v));
+    let comps_func = comps
+        .iter()
+        .any(|v| is_special(v) && !is_degenerate_calc(v));
     let alpha_func = alpha
         .as_ref()
         .is_some_and(|v| is_special(v) && !is_degenerate_calc(v));
@@ -1158,7 +1175,10 @@ pub(super) fn fn_lab_family(
             } else {
                 list_paren_css(&channels)
             };
-            return Err(Error::at(format!("$channels: Expected {kind}, was {shown}"), pos));
+            return Err(Error::at(
+                format!("$channels: Expected {kind}, was {shown}"),
+                pos,
+            ));
         }
         if l.items.is_empty() {
             return Err(Error::at(
@@ -1182,9 +1202,9 @@ pub(super) fn fn_lab_family(
     // A relative-color call (`lab(from … )`) or a special function
     // (`var()`/non-degenerate `calc()`) is preserved verbatim. A `none`
     // channel is computed (it produces a missing channel).
-    let is_relative = comps
-        .first()
-        .is_some_and(|v| matches!(v, Value::Str(s) if !s.quoted && s.text.eq_ignore_ascii_case("from")));
+    let is_relative = comps.first().is_some_and(
+        |v| matches!(v, Value::Str(s) if !s.quoted && s.text.eq_ignore_ascii_case("from")),
+    );
     let special = |v: &Value| is_special(v) && !is_degenerate_calc(v);
     let has_special = comps.iter().any(special) || alpha.as_ref().is_some_and(special);
     if is_relative || has_special {
@@ -1211,7 +1231,8 @@ pub(super) fn fn_lab_family(
         match comp {
             Value::Number(num) => {
                 if is_hue(i) {
-                    let ok = num.is_unitless() || matches!(num.unit(), "deg" | "grad" | "rad" | "turn");
+                    let ok =
+                        num.is_unitless() || matches!(num.unit(), "deg" | "grad" | "rad" | "turn");
                     if !ok {
                         return Err(Error::at(
                             format!(
@@ -1271,7 +1292,9 @@ pub(super) fn fn_lab_family(
     // A degenerate lightness clamps like dart-sass (NaN -> 0, +infinity -> max,
     // -infinity -> 0); a/b/chroma/hue instead keep their non-finite value, which
     // serializes as `calc(...)` (chroma is additionally floored at 0).
-    let l = modern_channel(&comps[0], l_base).map(|v| if v.is_nan() { 0.0 } else { v.clamp(0.0, l_max) });
+    let l =
+        modern_channel(&comps[0], l_base)
+            .map(|v| if v.is_nan() { 0.0 } else { v.clamp(0.0, l_max) });
     let (c1, c2) = if is_polar {
         // [lightness, chroma, hue]
         (
@@ -1315,7 +1338,11 @@ fn is_known_color_space(name: &str) -> bool {
 /// (`color(srgb 0.1 0.2 0.3)`). Full color-space math is out of scope: a
 /// well-formed call (and any special/`none`/`from`-relative call) is preserved
 /// verbatim, while malformed calls raise dart-sass's validation errors.
-pub(super) fn fn_color(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+pub(super) fn fn_color(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["description"];
     let n = pos_args.len() + named.len();
     if n == 0 {
@@ -1350,7 +1377,9 @@ pub(super) fn fn_color(pos_args: &[Value], named: &[(String, Value)], pos: Pos) 
         }
     }
     let SplitChannels {
-        comps: items, alpha, ..
+        comps: items,
+        alpha,
+        ..
     } = split_channels(&desc);
     // The first item names the color space; the rest are channels.
     let space = items.first().ok_or_else(|| {
@@ -1363,7 +1392,10 @@ pub(super) fn fn_color(pos_args: &[Value], named: &[(String, Value)], pos: Pos) 
         Value::Str(s) if !s.quoted => s.text.clone(),
         Value::Str(s) => {
             return Err(Error::at(
-                format!("$description: Expected \"{}\" to be an unquoted string.", s.text),
+                format!(
+                    "$description: Expected \"{}\" to be an unquoted string.",
+                    s.text
+                ),
                 pos,
             ));
         }
@@ -1509,7 +1541,11 @@ fn color_desc_css(desc: &Value) -> String {
     }
 }
 
-pub(super) fn fn_mix(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+pub(super) fn fn_mix(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["color1", "color2", "weight", "method"];
     let n = pos_args.len() + named.len();
     if n > 4 {
@@ -1524,7 +1560,10 @@ pub(super) fn fn_mix(pos_args: &[Value], named: &[(String, Value)], pos: Pos) ->
         Some(Value::Number(w)) => {
             if w.value < 0.0 || w.value > 100.0 {
                 return Err(Error::at(
-                    format!("$weight: Expected {} to be within 0% and 100%.", w.to_css(false)),
+                    format!(
+                        "$weight: Expected {} to be within 0% and 100%.",
+                        w.to_css(false)
+                    ),
                     pos,
                 ));
             }
@@ -1543,7 +1582,9 @@ pub(super) fn fn_mix(pos_args: &[Value], named: &[(String, Value)], pos: Pos) ->
     // requires both colors to be legacy).
     if let Some(method) = arg(&params, pos_args, named, 3) {
         let (space, hue_method) = validate_mix_method(method, pos)?;
-        return Ok(Value::Color(interpolate_mix(&c1, &c2, weight, space, hue_method)));
+        return Ok(Value::Color(interpolate_mix(
+            &c1, &c2, weight, space, hue_method,
+        )));
     }
     for (i, c) in [&c1, &c2].iter().enumerate() {
         if !color_space_of(c).is_legacy() {
@@ -1580,8 +1621,8 @@ pub(super) fn fn_mix(pos_args: &[Value], named: &[(String, Value)], pos: Pos) ->
 fn mix_method_space(name: &str) -> Option<bool> {
     match name {
         "hsl" | "hwb" | "lch" | "oklch" => Some(true),
-        "rgb" | "srgb" | "srgb-linear" | "display-p3" | "a98-rgb" | "prophoto-rgb" | "rec2020" | "xyz"
-        | "xyz-d50" | "xyz-d65" | "lab" | "oklab" => Some(false),
+        "rgb" | "srgb" | "srgb-linear" | "display-p3" | "a98-rgb" | "prophoto-rgb" | "rec2020"
+        | "xyz" | "xyz-d50" | "xyz-d65" | "lab" | "oklab" => Some(false),
         _ => None,
     }
 }
@@ -1634,7 +1675,12 @@ fn validate_mix_method(method: &Value, pos: Pos) -> Result<(ColorSpace, HueMetho
     let method_token = match items[1] {
         Value::Str(s) if !s.quoted => s.text.clone(),
         // A parenthesized list shows wrapped in parens (`(decreasing hue)`).
-        Value::List(_) => return err(format!("$method: {} is not a string.", list_paren_css(items[1]))),
+        Value::List(_) => {
+            return err(format!(
+                "$method: {} is not a string.",
+                list_paren_css(items[1])
+            ))
+        }
         other => return err(format!("$method: {} is not a string.", other.to_css(false))),
     };
     // The hue-method keyword is validated before the trailing `hue` keyword,
@@ -1644,12 +1690,19 @@ fn validate_mix_method(method: &Value, pos: Pos) -> Result<(ColorSpace, HueMetho
         "longer" => HueMethod::Longer,
         "increasing" => HueMethod::Increasing,
         "decreasing" => HueMethod::Decreasing,
-        "specified" => return err("$method: Unknown hue interpolation method specified.".to_string()),
-        other => return err(format!("$method: Unknown hue interpolation method {other}.")),
+        "specified" => {
+            return err("$method: Unknown hue interpolation method specified.".to_string())
+        }
+        other => {
+            return err(format!(
+                "$method: Unknown hue interpolation method {other}."
+            ))
+        }
     };
     // The list must end with an unquoted `hue` keyword.
     let last = items[items.len() - 1];
-    let last_is_hue = matches!(last, Value::Str(s) if !s.quoted && s.text.eq_ignore_ascii_case("hue"));
+    let last_is_hue =
+        matches!(last, Value::Str(s) if !s.quoted && s.text.eq_ignore_ascii_case("hue"));
     if items.len() == 2 {
         // `space <method>` with no trailing `hue`.
         return err(format!(
@@ -1695,7 +1748,10 @@ pub(super) fn fn_adjust_lightness(
         Value::Number(num) => {
             if num.value < 0.0 || num.value > 100.0 {
                 return Err(Error::at(
-                    format!("$amount: Expected {} to be within 0 and 100.", num.to_css(false)),
+                    format!(
+                        "$amount: Expected {} to be within 0 and 100.",
+                        num.to_css(false)
+                    ),
                     pos,
                 ));
             }
@@ -1715,7 +1771,11 @@ pub(super) fn fn_adjust_lightness(
     Ok(Value::Color(out))
 }
 
-pub(super) fn fn_percentage(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+pub(super) fn fn_percentage(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["number"];
     max_positional(pos_args, params.len(), pos)?;
     let arg = require(&params, pos_args, named, 0, "percentage", pos)?;
@@ -1787,7 +1847,11 @@ fn is_ms_filter_arg(text: &str) -> bool {
     matches!(chars.peek(), Some(&(_, '=')))
 }
 
-pub(super) fn fn_alpha(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+pub(super) fn fn_alpha(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["color"];
     // The proprietary Microsoft `alpha()` filter overload: one or more
     // unquoted-string positional arguments that each match `<identifier>=…`
@@ -1838,7 +1902,11 @@ pub(super) fn fn_alpha(pos_args: &[Value], named: &[(String, Value)], pos: Pos) 
 /// dart-sass's modern parsing. Returns `Ok(None)` when there is no `none`
 /// channel or a real special function is present (the caller falls through to
 /// its existing handling).
-fn legacy_none_color(channels: &Channels, space: ColorSpace, _pos: Pos) -> Result<Option<Value>, Error> {
+fn legacy_none_color(
+    channels: &Channels,
+    space: ColorSpace,
+    _pos: Pos,
+) -> Result<Option<Value>, Error> {
     let comps_special = channels.comps.iter().any(is_special_legacy);
     let alpha_special = channels.alpha.as_ref().is_some_and(is_special_legacy);
     if comps_special || alpha_special {

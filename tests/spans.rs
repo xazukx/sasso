@@ -112,7 +112,10 @@ fn declaration_in_a_top_level_media_is_positioned() {
     assert_eq!((err.line, err.col), (2, 13));
     assert_eq!(err.file.as_deref(), Some("in.scss"));
     assert_eq!(src.as_bytes()[err.start], b';');
-    assert!(err.to_string().contains("in.scss 2:13  root stylesheet"), "{err}");
+    assert!(
+        err.to_string().contains("in.scss 2:13  root stylesheet"),
+        "{err}"
+    );
 }
 
 /// An `!important` flag moves the blame to the `!`: dart's scan stops there
@@ -122,7 +125,10 @@ fn top_level_media_declaration_with_a_flag_blames_the_bang() {
     let arena = Allocator::default();
     let files = one("@media screen {\n  color: red !important;\n}\n");
     let options = Options::default().with_importer(&files);
-    let err = Compiler::new(&arena, "in.scss", &options).unwrap().compile().unwrap_err();
+    let err = Compiler::new(&arena, "in.scss", &options)
+        .unwrap()
+        .compile()
+        .unwrap_err();
     // dart-sass 1.100: `in.scss 2:14`.
     assert_eq!((err.line, err.col), (2, 14));
 }
@@ -185,11 +191,16 @@ fn plain_css_import_records_its_position() {
         .with_file("in.scss", src)
         .with_file("_a.scss", "");
     let options = Options::default().with_importer(&files);
-    let parsed = Compiler::new(&arena, "in.scss", &options).unwrap().parse().unwrap();
+    let parsed = Compiler::new(&arena, "in.scss", &options)
+        .unwrap()
+        .parse()
+        .unwrap();
 
     let mut spans = Vec::new();
-    for stmt in &parsed.sheet.statements {
-        let Statement::AtRule(at) = stmt else { continue };
+    for stmt in &parsed.stylesheet.statements {
+        let Statement::AtRule(at) = stmt else {
+            continue;
+        };
         match &at.prelude {
             // The Sass-only shape: a comma-separated list of quoted URLs, each
             // with a span of its own.
@@ -276,7 +287,10 @@ $top: 1px;
             ("top", None),
             ("inner", Some(vec![".a".to_string()])),
             // `&` and the comma list are already resolved.
-            ("deep", Some(vec![".a:hover .b".to_string(), ".a .c".to_string()])),
+            (
+                "deep",
+                Some(vec![".a:hover .b".to_string(), ".a .c".to_string()])
+            ),
             // The rule emits nothing, so there is no output node to recover
             // this from.
             ("invisible", Some(vec![".empty".to_string()])),

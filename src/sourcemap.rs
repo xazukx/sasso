@@ -244,7 +244,10 @@ impl SmCollector {
         if self.compressed {
             return 0;
         }
-        debug_assert!(body.len() >= self.scanned, "the body is only ever appended to");
+        debug_assert!(
+            body.len() >= self.scanned,
+            "the body is only ever appended to"
+        );
         self.gen_line += body[self.scanned..].bytes().filter(|&b| b == b'\n').count() as u32;
         self.scanned = body.len();
         self.gen_line
@@ -279,7 +282,10 @@ impl SmCollector {
             // units. We step by whole chars (offsets always land on a token
             // start, i.e. a char boundary).
             while cur_byte < target {
-                let ch = output[cur_byte..].chars().next().expect("offset within output");
+                let ch = output[cur_byte..]
+                    .chars()
+                    .next()
+                    .expect("offset within output");
                 if ch == '\n' {
                     gen_line += 1;
                     gen_col16 = 0;
@@ -415,7 +421,17 @@ mod tests {
             assert_eq!(i, s.len(), "consumed all bytes for {v}");
         }
         // boundary magnitudes
-        for v in [i32::MAX as i64, i32::MIN as i64, 0, 15, 16, 31, 32, 1023, 1024] {
+        for v in [
+            i32::MAX as i64,
+            i32::MIN as i64,
+            0,
+            15,
+            16,
+            31,
+            32,
+            1023,
+            1024,
+        ] {
             let mut s = String::new();
             vlq_encode(v, &mut s);
             let mut i = 0;
@@ -444,7 +460,9 @@ mod tests {
         // first group: [0,0,0,0]=AAAA then delta gen_col +5, src_col +10 -> "KAAU"
         assert_eq!(groups[0], "AAAA,KAAU");
         // decode the whole thing and confirm the absolute positions reconstruct
-        assert!(s.bytes().all(|b| B64.contains(&b) || b == b';' || b == b','));
+        assert!(s
+            .bytes()
+            .all(|b| B64.contains(&b) || b == b';' || b == b','));
     }
 
     #[test]

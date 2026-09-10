@@ -218,7 +218,8 @@ fn validate_selector_list_arg(arg: &str) -> Result<(), &'static str> {
     if parts.iter().all(|p| p.trim().is_empty()) {
         return Err("expected selector.");
     }
-    if parts.first().is_some_and(|p| p.trim().is_empty()) || parts.last().is_some_and(|p| p.trim().is_empty())
+    if parts.first().is_some_and(|p| p.trim().is_empty())
+        || parts.last().is_some_and(|p| p.trim().is_empty())
     {
         return Err("expected selector.");
     }
@@ -311,7 +312,10 @@ pub fn normalize_nth(text: &str) -> Option<String> {
         None => (arg, None),
     };
     // The An+B canonical form has no internal whitespace and a lowercase `n`.
-    let anb_norm: String = anb.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let anb_norm: String = anb
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>();
     if anb_norm.is_empty() {
         return None;
     }
@@ -456,9 +460,15 @@ fn nth_of_selector(inner: &[char]) -> Option<String> {
         let before_ws = i > 0 && inner[i - 1].is_whitespace();
         let of_complete = match inner.get(i + 2) {
             None => true,
-            Some(c) => !(c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || (*c as u32) >= 0x80),
+            Some(c) => {
+                !(c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || (*c as u32) >= 0x80)
+            }
         };
-        if before_ws && matches!(inner[i], 'o' | 'O') && matches!(inner[i + 1], 'f' | 'F') && of_complete {
+        if before_ws
+            && matches!(inner[i], 'o' | 'O')
+            && matches!(inner[i + 1], 'f' | 'F')
+            && of_complete
+        {
             let mut j = i + 2;
             while j < inner.len() && inner[j].is_whitespace() {
                 j += 1;
@@ -1026,8 +1036,14 @@ pub fn extend_selectors(
         current.into_iter().map(|(c, f, _, _)| (c, f)).collect()
     } else if order == CartesianOrder::OneShot {
         let all_orig: Vec<bool> = vec![true; original.len()];
-        let (result, changed) =
-            extend_to_fixpoint_breaks(original, original_breaks, &all_orig, Some(scope), registry, order);
+        let (result, changed) = extend_to_fixpoint_breaks(
+            original,
+            original_breaks,
+            &all_orig,
+            Some(scope),
+            registry,
+            order,
+        );
         if changed {
             trim_breaks(result, source_spec)
                 .into_iter()
@@ -1099,7 +1115,9 @@ pub fn extend_selectors(
                     } else {
                         plan.batch_registry_marks[i - 1]
                     };
-                    registry[start..plan.batch_registry_marks[i]].iter().cloned()
+                    registry[start..plan.batch_registry_marks[i]]
+                        .iter()
+                        .cloned()
                 })
                 .collect();
             let all_orig: Vec<bool> = vec![true; original.len()];
@@ -1117,14 +1135,26 @@ pub fn extend_selectors(
                 original
                     .iter()
                     .enumerate()
-                    .map(|(i, c)| (c.clone(), original_breaks.get(i).copied().unwrap_or(false), true))
+                    .map(|(i, c)| {
+                        (
+                            c.clone(),
+                            original_breaks.get(i).copied().unwrap_or(false),
+                            true,
+                        )
+                    })
                     .collect()
             }
         } else {
             original
                 .iter()
                 .enumerate()
-                .map(|(i, c)| (c.clone(), original_breaks.get(i).copied().unwrap_or(false), true))
+                .map(|(i, c)| {
+                    (
+                        c.clone(),
+                        original_breaks.get(i).copied().unwrap_or(false),
+                        true,
+                    )
+                })
                 .collect()
         };
         let mut current: Vec<(Complex, bool, bool, String)> = seed
@@ -1189,7 +1219,12 @@ pub fn extend_selectors(
             let mut foreign_entries: Vec<&Extension> =
                 registry.iter().filter(|e| e.origin != scope).collect();
             foreign_entries.sort_by(|a, b| {
-                let rank = |e: &Extension| plan.origin_rank.get(&e.origin).copied().unwrap_or(usize::MAX);
+                let rank = |e: &Extension| {
+                    plan.origin_rank
+                        .get(&e.origin)
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                };
                 // Within a home store, derived entries follow the absorption
                 // order of their TRIGGERING store (the via origin's rank),
                 // not registration order.
@@ -1343,8 +1378,8 @@ fn simplify_one_pseudo(text: &str) -> PseudoResult {
     // (placeholder) complexes from EVERY pseudo's argument list, and a
     // fully-invisible argument makes the pseudo — and its compound — never
     // match (issue_1797 `div:has(%not)` extends to `div:has(.not)`).
-    let is_matchish =
-        matches!(unvendor(&name), "is" | "where" | "matches" | "any" | "has") || name.ends_with("-any");
+    let is_matchish = matches!(unvendor(&name), "is" | "where" | "matches" | "any" | "has")
+        || name.ends_with("-any");
     let is_not = unvendor(&name) == "not";
     if !is_matchish && !is_not {
         return PseudoResult::Keep(text.to_string());
@@ -1361,7 +1396,11 @@ fn simplify_one_pseudo(text: &str) -> PseudoResult {
             PseudoResult::NeverMatches
         };
     }
-    let inner = kept.iter().map(|c| c.render()).collect::<Vec<_>>().join(", ");
+    let inner = kept
+        .iter()
+        .map(|c| c.render())
+        .collect::<Vec<_>>()
+        .join(", ");
     PseudoResult::Keep(format!("{head}({inner})"))
 }
 
@@ -1435,8 +1474,11 @@ fn trim_breaks(
         // specificity of c1's extenders (dart `_trim`): `.test-case` (1000)
         // may not trim `.test-case:active` whose source weighs 2000.
         let max_spec = source_spec_for(c1);
-        let covers = |c2: &Complex| complex_specificity(c2) >= max_spec && complex_is_superselector(c2, c1);
-        if result.iter().any(|(c2, _, _)| covers(c2)) || selectors[..i].iter().any(|(c2, _, _)| covers(c2)) {
+        let covers =
+            |c2: &Complex| complex_specificity(c2) >= max_spec && complex_is_superselector(c2, c1);
+        if result.iter().any(|(c2, _, _)| covers(c2))
+            || selectors[..i].iter().any(|(c2, _, _)| covers(c2))
+        {
             continue;
         }
         result.insert(0, (c1.clone(), *f1, false));
@@ -1453,16 +1495,26 @@ fn trim_breaks(
 fn complex_is_superselector(c1: &Complex, c2: &Complex) -> bool {
     let d1 = to_dart(c1);
     let d2 = to_dart(c2);
-    d1.leading.is_empty() && d2.leading.is_empty() && complex_is_superselector_trailing(&d1.comps, &d2.comps)
+    d1.leading.is_empty()
+        && d2.leading.is_empty()
+        && complex_is_superselector_trailing(&d1.comps, &d2.comps)
 }
 
 /// dart-sass `complexIsSuperselector` over trailing-combinator component lists.
 fn complex_is_superselector_trailing(complex1: &[TComp], complex2: &[TComp]) -> bool {
     // Selectors with trailing operators are neither super- nor subselectors.
-    if complex1.last().map(|c| !c.combinators.is_empty()).unwrap_or(true) {
+    if complex1
+        .last()
+        .map(|c| !c.combinators.is_empty())
+        .unwrap_or(true)
+    {
         return false;
     }
-    if complex2.last().map(|c| !c.combinators.is_empty()).unwrap_or(true) {
+    if complex2
+        .last()
+        .map(|c| !c.combinators.is_empty())
+        .unwrap_or(true)
+    {
         return false;
     }
 
@@ -1670,7 +1722,12 @@ fn parse_selector_pseudo(text: &str) -> Option<(String, Vec<Complex>)> {
 /// `:-*-any` family) one of our argument complexes is a superselector of
 /// `parents` followed by `compound2`. The relational `:has`/`:host`/
 /// `:host-context` use only the same-name rule.
-fn selector_pseudo_is_super(name: &str, branches: &[Complex], b: &Compound, parents: &[TComp]) -> bool {
+fn selector_pseudo_is_super(
+    name: &str,
+    branches: &[Complex],
+    b: &Compound,
+    parents: &[TComp],
+) -> bool {
     for s in &b.simples {
         if let Simple::Pseudo(t) = s {
             if let Some((n2, b_branches)) = parse_selector_pseudo(t) {
@@ -1688,7 +1745,8 @@ fn selector_pseudo_is_super(name: &str, branches: &[Complex], b: &Compound, pare
             }
         }
     }
-    let matchish = matches!(unvendor(name), "is" | "where" | "matches" | "any") || name.ends_with("-any");
+    let matchish =
+        matches!(unvendor(name), "is" | "where" | "matches" | "any") || name.ends_with("-any");
     if !matchish {
         return false;
     }
@@ -1750,7 +1808,8 @@ fn not_excludes(complex1: &Complex, simple2: &Simple, not_name: &str) -> bool {
             .any(|s| matches!(s, Simple::Id(id1) if id1 != id2)),
         Simple::Pseudo(t2) => match parse_not_pseudo(t2) {
             Some((n2, s2_branches)) => {
-                n2 == not_name && list_is_superselector(&s2_branches, std::slice::from_ref(complex1))
+                n2 == not_name
+                    && list_is_superselector(&s2_branches, std::slice::from_ref(complex1))
             }
             None => false,
         },
@@ -1890,8 +1949,12 @@ fn compound_components_is_superselector(a: &[Simple], b: &[Simple]) -> bool {
     let universal = [Simple::Universal { ns: None }];
     let b = if b.is_empty() { &universal[..] } else { b };
     compound_is_superselector(
-        &Compound { simples: a.to_vec() },
-        &Compound { simples: b.to_vec() },
+        &Compound {
+            simples: a.to_vec(),
+        },
+        &Compound {
+            simples: b.to_vec(),
+        },
         &[],
     )
 }
@@ -2031,7 +2094,11 @@ fn extend_complex_breaks(
             // the first component's sole option is equivalent.
             None => per_component.push(vec![(
                 DComplex {
-                    leading: if i == 0 { d.leading.clone() } else { Vec::new() },
+                    leading: if i == 0 {
+                        d.leading.clone()
+                    } else {
+                        Vec::new()
+                    },
                     comps: vec![comp.clone()],
                 },
                 false,
@@ -2129,7 +2196,8 @@ fn extend_complex_breaks(
                 // dart marks the FIRST product of an original complex as an
                 // original itself (`_originals.add(outputComplex)`) — it is
                 // the reconstructed original, value-equal by construction.
-                let orig = (in_orig && out.is_empty()) || (input_is_bare && bare_extenders.contains(&c));
+                let orig =
+                    (in_orig && out.is_empty()) || (input_is_bare && bare_extenders.contains(&c));
                 out.push((c, in_break || pflag, orig));
             }
         }
@@ -2449,7 +2517,11 @@ fn is_rootish_pseudo_class(text: &str) -> bool {
         return false;
     }
     let name = text.trim_start_matches(':');
-    let base = name.split(['(', ' ']).next().unwrap_or(name).to_ascii_lowercase();
+    let base = name
+        .split(['(', ' '])
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase();
     matches!(base.as_str(), "root" | "scope" | "host" | "host-context")
 }
 
@@ -2489,7 +2561,8 @@ fn merge_trailing_combinators(
                 let component2 = components2.pop_back()?;
                 if compound_is_superselector(&component1.compound, &component2.compound, &[]) {
                     result.push_front(vec![vec![component2]]);
-                } else if compound_is_superselector(&component2.compound, &component1.compound, &[]) {
+                } else if compound_is_superselector(&component2.compound, &component1.compound, &[])
+                {
                     result.push_front(vec![vec![component1]]);
                 } else {
                     let mut choices = vec![
@@ -2599,7 +2672,9 @@ fn merge_trailing_combinators(
 /// dart-sass `_groupSelectors`: group components into the longest possible
 /// sub-lists such that components without trailing combinators only appear at
 /// the end of a sub-list. E.g. `A B > C D + E ~ G` → `[(A) (B > C) (D + E ~ G)]`.
-fn group_selectors<I: IntoIterator<Item = TComp>>(components: I) -> std::collections::VecDeque<Vec<TComp>> {
+fn group_selectors<I: IntoIterator<Item = TComp>>(
+    components: I,
+) -> std::collections::VecDeque<Vec<TComp>> {
     let mut groups: std::collections::VecDeque<Vec<TComp>> = std::collections::VecDeque::new();
     let mut group: Vec<TComp> = Vec::new();
     for component in components {
@@ -2704,7 +2779,13 @@ fn lcs_groups(list1: &[Vec<TComp>], list2: &[Vec<TComp>]) -> Vec<Vec<TComp>> {
         }
     }
     let mut out = Vec::new();
-    backtrack_groups(n as isize - 1, m as isize - 1, &lengths, &selections, &mut out);
+    backtrack_groups(
+        n as isize - 1,
+        m as isize - 1,
+        &lengths,
+        &selections,
+        &mut out,
+    );
     out
 }
 
@@ -2820,7 +2901,9 @@ fn parse_pseudo_parts(text: &str) -> Option<PseudoParts> {
 fn complex_has_selector_pseudo(complex: &Complex) -> bool {
     complex.components.iter().any(|comp| {
         comp.compound.simples.iter().any(|s| {
-            let Simple::Pseudo(text) = s else { return false };
+            let Simple::Pseudo(text) = s else {
+                return false;
+            };
             parse_pseudo_parts(text).is_some_and(|p| is_selector_pseudo(&p.name))
         })
     })
@@ -2836,7 +2919,9 @@ fn complex_has_selector_pseudo(complex: &Complex) -> bool {
 fn pseudo_arg_has_target(complex: &Complex, targets: &FxHashSet<Simple>, only_not: bool) -> bool {
     complex.components.iter().any(|comp| {
         comp.compound.simples.iter().any(|s| {
-            let Simple::Pseudo(text) = s else { return false };
+            let Simple::Pseudo(text) = s else {
+                return false;
+            };
             let Some(parts) = parse_pseudo_parts(text) else {
                 return false;
             };
@@ -2845,9 +2930,12 @@ fn pseudo_arg_has_target(complex: &Complex, targets: &FxHashSet<Simple>, only_no
             }
             parse_list(&parts.arg).is_some_and(|list| {
                 list.iter().any(|c| {
-                    c.components
-                        .iter()
-                        .any(|cc| cc.compound.simples.iter().any(|inner| targets.contains(inner)))
+                    c.components.iter().any(|cc| {
+                        cc.compound
+                            .simples
+                            .iter()
+                            .any(|inner| targets.contains(inner))
+                    })
                 })
             })
         })
@@ -2864,7 +2952,9 @@ fn pseudo_arg_has_target(complex: &Complex, targets: &FxHashSet<Simple>, only_no
 fn pseudo_arg_has_target_deep(complex: &Complex, targets: &FxHashSet<Simple>) -> bool {
     complex.components.iter().any(|comp| {
         comp.compound.simples.iter().any(|s| {
-            let Simple::Pseudo(text) = s else { return false };
+            let Simple::Pseudo(text) = s else {
+                return false;
+            };
             let Some(parts) = parse_pseudo_parts(text) else {
                 return false;
             };
@@ -2873,10 +2963,12 @@ fn pseudo_arg_has_target_deep(complex: &Complex, targets: &FxHashSet<Simple>) ->
             }
             parse_list(&parts.arg).is_some_and(|list| {
                 list.iter().any(|c| {
-                    c.components
-                        .iter()
-                        .any(|cc| cc.compound.simples.iter().any(|inner| targets.contains(inner)))
-                        || pseudo_arg_has_target_deep(c, targets)
+                    c.components.iter().any(|cc| {
+                        cc.compound
+                            .simples
+                            .iter()
+                            .any(|inner| targets.contains(inner))
+                    }) || pseudo_arg_has_target_deep(c, targets)
                 })
             })
         })
@@ -2944,7 +3036,16 @@ fn collect_match_simples(complex: &Complex, out: &mut FxHashSet<Simple>) {
 fn is_selector_pseudo(name: &str) -> bool {
     matches!(
         unvendor(name),
-        "not" | "is" | "matches" | "where" | "any" | "current" | "has" | "host" | "host-context" | "slotted"
+        "not"
+            | "is"
+            | "matches"
+            | "where"
+            | "any"
+            | "current"
+            | "has"
+            | "host"
+            | "host-context"
+            | "slotted"
     ) || name.ends_with("-any")
 }
 
@@ -2983,13 +3084,21 @@ fn extend_list(list: &[Complex], extensions: &[Extension]) -> Vec<Complex> {
         return list.to_vec();
     }
     let source_spec = source_specificity_map(extensions);
-    trim(result.into_iter().map(|(c, _, o)| (c, o)).collect(), &source_spec)
+    trim(
+        result.into_iter().map(|(c, _, o)| (c, o)).collect(),
+        &source_spec,
+    )
 }
 
 /// Build a single-extender [`Extension`] cloning `src`'s metadata. The `matched`
 /// cell is SHARED (`Rc::clone`) so the `!optional` "not found" check still flips
 /// when this split extension is applied to a selector.
-fn single_extension(src: &Extension, target: Simple, extender: Complex, break_flag: bool) -> Extension {
+fn single_extension(
+    src: &Extension,
+    target: Simple,
+    extender: Complex,
+    break_flag: bool,
+) -> Extension {
     Extension {
         target: Some(target),
         extenders: vec![extender],
@@ -3452,7 +3561,9 @@ fn extend_list_batch(
         .into_iter()
         .map(|(c, f, o_flag)| {
             let key = Hashed::new(c);
-            let o = origin_of.remove(&key).unwrap_or_else(|| batch_origin.clone());
+            let o = origin_of
+                .remove(&key)
+                .unwrap_or_else(|| batch_origin.clone());
             (key.value, f, o_flag, o)
         })
         .collect()
@@ -3475,7 +3586,15 @@ fn extend_to_fixpoint_breaks(
     extensions: &[Extension],
     order: CartesianOrder,
 ) -> (Vec<(Complex, bool, bool)>, bool) {
-    extend_to_fixpoint_inner(list, list_breaks, list_origs, orig_scope, extensions, order, true)
+    extend_to_fixpoint_inner(
+        list,
+        list_breaks,
+        list_origs,
+        orig_scope,
+        extensions,
+        order,
+        true,
+    )
 }
 
 /// As [`extend_to_fixpoint_breaks`], with explicit control over re-feeding a
@@ -3679,7 +3798,12 @@ fn extend_pseudo_compound_target(
 /// `of` selector was unchanged. A nested same-`(name, An+B)` nth pseudo produced
 /// by the extension is unwrapped to its own `of` selectors (dart-sass merges
 /// them); a different-`(name, An+B)` one is dropped (it can't be combined).
-fn finish_nth_of(name: &str, anb: &str, original: &[Complex], extended: Vec<Complex>) -> Option<Vec<Simple>> {
+fn finish_nth_of(
+    name: &str,
+    anb: &str,
+    original: &[Complex],
+    extended: Vec<Complex>,
+) -> Option<Vec<Simple>> {
     let mut flattened: Vec<Complex> = Vec::new();
     let mut seen: FxHashSet<String> = FxHashSet::default();
     let mut push = |c: Complex, flattened: &mut Vec<Complex>| {
@@ -3795,12 +3919,17 @@ fn finish_extend_pseudo(
     // produce a `:not()` no browser can parse). We can keep them if every
     // extension result is complex, since then nothing already-working breaks.
     let original_has_complex = original.iter().any(|c| c.components.len() > 1);
-    let mut complexes: Vec<Complex> =
-        if parts.name == "not" && !original_has_complex && extended.iter().any(|c| c.components.len() == 1) {
-            extended.into_iter().filter(|c| c.components.len() <= 1).collect()
-        } else {
-            extended
-        };
+    let mut complexes: Vec<Complex> = if parts.name == "not"
+        && !original_has_complex
+        && extended.iter().any(|c| c.components.len() == 1)
+    {
+        extended
+            .into_iter()
+            .filter(|c| c.components.len() <= 1)
+            .collect()
+    } else {
+        extended
+    };
 
     // Unwrap nested matching pseudos in single-compound results, mirroring
     // dart-sass: e.g. for `:not`, a result `:is(...)`/`:matches`/`:where` is
@@ -4044,7 +4173,10 @@ fn extend_component(
         }
         // The option's flag is the OR of the contributing extenders' flags.
         let flag = path.iter().any(|o| matches!(o, Some((_, true))));
-        let plain: Vec<Option<Complex>> = path.iter().map(|o| o.as_ref().map(|(c, _)| c.clone())).collect();
+        let plain: Vec<Option<Complex>> = path
+            .iter()
+            .map(|o| o.as_ref().map(|(c, _)| c.clone()))
+            .collect();
         let refs: Vec<&Option<Complex>> = plain.iter().collect();
         for d in build_extended_compound(comp, simples, &refs) {
             let key = render_dcomplex(&d);
@@ -4065,7 +4197,11 @@ fn extend_component(
 /// is precomputed by [`expand_extensions`] into the batch the caller passes, so
 /// chasing chains here would double-expand. `stack` is unused (kept for the call
 /// signature) now that recursion is gone.
-fn collect_extenders(target: &Simple, extensions: &[Extension], _stack: &mut Vec<Simple>) -> Vec<Complex> {
+fn collect_extenders(
+    target: &Simple,
+    extensions: &[Extension],
+    _stack: &mut Vec<Simple>,
+) -> Vec<Complex> {
     let mut out: Vec<Complex> = Vec::new();
     for ext in extensions {
         let Some(t) = &ext.target else { continue };
@@ -4087,7 +4223,11 @@ fn collect_extenders(target: &Simple, extensions: &[Extension], _stack: &mut Vec
 /// which weaves any multi-component extenders (including several at once). The
 /// original component's incoming combinator is attached to each result's first
 /// component. May return several sequences (one per woven unification).
-fn build_extended_compound(comp: &TComp, simples: &[Simple], path: &[&Option<Complex>]) -> Vec<DComplex> {
+fn build_extended_compound(
+    comp: &TComp,
+    simples: &[Simple],
+    path: &[&Option<Complex>],
+) -> Vec<DComplex> {
     // Self-kept simples (originals not being extended) and the chosen extenders.
     let mut base: Vec<Simple> = Vec::new();
     let mut extenders: Vec<&Complex> = Vec::new();
@@ -4218,7 +4358,10 @@ fn simple_unify(this: &Simple, compound: &[Simple]) -> Option<Vec<Simple>> {
             // A selector-list pseudo (`:is`/`:where`) folding into an all-host
             // compound goes BEFORE the host (`:is(.d):host(.c)`); dart-sass
             // orders `:host`/`:host-context` after the first such wrapper.
-            if is_selector_list_pseudo(this) && !compound.is_empty() && compound.iter().all(is_host_pseudo) {
+            if is_selector_list_pseudo(this)
+                && !compound.is_empty()
+                && compound.iter().all(is_host_pseudo)
+            {
                 let mut out = vec![this.clone()];
                 out.extend_from_slice(compound);
                 return Some(out);
@@ -4343,7 +4486,12 @@ fn pseudo_base(s: &Simple) -> Option<String> {
         return None;
     };
     let name = text.trim_start_matches(':');
-    Some(name.split(['(', ' ']).next().unwrap_or(name).to_ascii_lowercase())
+    Some(
+        name.split(['(', ' '])
+            .next()
+            .unwrap_or(name)
+            .to_ascii_lowercase(),
+    )
 }
 
 /// Whether two pseudo-elements are the same selector, treating a legacy
@@ -4397,8 +4545,15 @@ fn is_pseudo_element(s: &Simple) -> bool {
     }
     // Legacy single-colon pseudo-elements.
     let name = text.trim_start_matches(':');
-    let base = name.split(['(', ' ']).next().unwrap_or(name).to_ascii_lowercase();
-    matches!(base.as_str(), "before" | "after" | "first-line" | "first-letter")
+    let base = name
+        .split(['(', ' '])
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    matches!(
+        base.as_str(),
+        "before" | "after" | "first-line" | "first-letter"
+    )
 }
 
 // ---- public helpers for the `sass:selector` builtin family -------------
@@ -4714,7 +4869,11 @@ fn extend_complex_compound(
     for (i, comp) in d.comps.iter().enumerate() {
         match extend_component_compound(comp, targets, extenders, replace) {
             None => per_component.push(vec![DComplex {
-                leading: if i == 0 { d.leading.clone() } else { Vec::new() },
+                leading: if i == 0 {
+                    d.leading.clone()
+                } else {
+                    Vec::new()
+                },
                 comps: vec![comp.clone()],
             }]),
             Some(extended) => {
@@ -4933,8 +5092,8 @@ fn pseudo_specificity(text: &str) -> u64 {
         return 0;
     }
     if let Some(arg) = arg {
-        let selectorish =
-            matches!(base.as_str(), "is" | "matches" | "any" | "not" | "has") || base.ends_with("-any");
+        let selectorish = matches!(base.as_str(), "is" | "matches" | "any" | "not" | "has")
+            || base.ends_with("-any");
         if selectorish {
             if let Some(list) = parse_list(arg) {
                 return list.iter().map(complex_specificity).max().unwrap_or(0);

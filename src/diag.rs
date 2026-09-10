@@ -395,7 +395,10 @@ pub fn render_interp_error_snippet(
     out.push(' ');
     out.push_str(url);
     out.push('\n');
-    out.push_str(&format!("{line:>width$} {} {src_line}\n", glyphs.vertical()));
+    out.push_str(&format!(
+        "{line:>width$} {} {src_line}\n",
+        glyphs.vertical()
+    ));
     out.push_str(&pad);
     out.push_str(glyphs.vertical());
     out.push(' ');
@@ -431,7 +434,10 @@ pub fn render_snippet(source: &str, span: Span, frames: &[Frame<'_>], glyphs: Gl
     let lines = split_lines(source);
 
     // Resolve the 0-based start line, clamped into range.
-    let start_idx = span.line.saturating_sub(1).min(lines.len().saturating_sub(1));
+    let start_idx = span
+        .line
+        .saturating_sub(1)
+        .min(lines.len().saturating_sub(1));
     let start_col0 = span.col.saturating_sub(1);
 
     // Walk the byte length across lines to find the end line/col. dart-sass
@@ -446,7 +452,9 @@ pub fn render_snippet(source: &str, span: Span, frames: &[Frame<'_>], glyphs: Gl
     let mut out = String::new();
 
     if start_idx == end_idx {
-        render_single_line(&mut out, &lines, start_idx, start_col0, end_col0, width, glyphs);
+        render_single_line(
+            &mut out, &lines, start_idx, start_col0, end_col0, width, glyphs,
+        );
     } else {
         render_multi_line(
             &mut out, &lines, start_idx, start_col0, end_idx, end_col0, width, glyphs,
@@ -471,7 +479,12 @@ pub fn render_snippet(source: &str, span: Span, frames: &[Frame<'_>], glyphs: Gl
 /// starting from `(start_idx, start_col0)`. Tabs and multibyte characters are
 /// handled by walking characters and decrementing the remaining byte budget by
 /// each character's UTF-8 length; the inter-line terminator costs one byte.
-fn resolve_end(lines: &[&str], start_idx: usize, start_col0: usize, length: usize) -> (usize, usize) {
+fn resolve_end(
+    lines: &[&str],
+    start_idx: usize,
+    start_col0: usize,
+    length: usize,
+) -> (usize, usize) {
     let mut idx = start_idx;
     let mut col = start_col0;
     let mut remaining = length;
@@ -640,7 +653,13 @@ fn render_multi_line(
 /// runtime/`@error` diagnostics (multi-frame stacks); this single-frame
 /// convenience renders parse errors (always a lone `root stylesheet` frame).
 #[must_use]
-pub fn render_error(message: &str, source: &str, url: &str, span: Span, glyphs: GlyphSet) -> String {
+pub fn render_error(
+    message: &str,
+    source: &str,
+    url: &str,
+    span: Span,
+    glyphs: GlyphSet,
+) -> String {
     let frame = Frame {
         url,
         line: span.line,
@@ -742,7 +761,13 @@ Error: Undefined variable.
             col: 1,
             length: "@error \"boom #{1 + 1}\"".len(),
         };
-        let got = render_error("\"boom 2\"", src, "/tmp/input.scss", span, GlyphSet::Unicode);
+        let got = render_error(
+            "\"boom 2\"",
+            src,
+            "/tmp/input.scss",
+            span,
+            GlyphSet::Unicode,
+        );
         let expected = "\
 Error: \"boom 2\"
   \u{2577}

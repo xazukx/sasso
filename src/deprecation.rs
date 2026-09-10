@@ -29,8 +29,11 @@ impl Deprecation {
     pub(crate) fn import() -> Self {
         Deprecation {
             id: "import",
-            message: "Sass @import rules are deprecated and will be removed in Dart Sass 3.0.0.".to_string(),
-            more_info: Some("More info and automated migrator: https://sass-lang.com/d/import".to_string()),
+            message: "Sass @import rules are deprecated and will be removed in Dart Sass 3.0.0."
+                .to_string(),
+            more_info: Some(
+                "More info and automated migrator: https://sass-lang.com/d/import".to_string(),
+            ),
         }
     }
 

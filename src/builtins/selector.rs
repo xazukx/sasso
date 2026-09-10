@@ -158,7 +158,8 @@ fn parse_selector_text(text: &str, pname: &str, pos: Pos) -> Result<Vec<Complex>
     // Normalize like the main pipeline first: dart splits adjacent compounds
     // (`[c]d` parses as the descendant `[c] d`).
     let normalized = crate::eval::normalize_selector(text);
-    selector::parse_list(&normalized).ok_or_else(|| Error::at(format!("${pname}: expected selector."), pos))
+    selector::parse_list(&normalized)
+        .ok_or_else(|| Error::at(format!("${pname}: expected selector."), pos))
 }
 
 // ---- serialization back to a selector value ---------------------------
@@ -206,7 +207,12 @@ fn complex_to_value(c: &Complex) -> Value {
 /// `SelectorList.resolveParentSelectors` over each parent). A child complex that
 /// contains a top-level `&` substitutes the parent in place (parent-major
 /// order); one without `&` is nested as a descendant of each parent.
-fn resolve_parents_str(child: &str, parents: &[String], fname: &str, pos: Pos) -> Result<Vec<String>, Error> {
+fn resolve_parents_str(
+    child: &str,
+    parents: &[String],
+    fname: &str,
+    pos: Pos,
+) -> Result<Vec<String>, Error> {
     let parent_str = parents.join(", ");
     let parent_strs: Vec<String> = parents.to_vec();
     let child_complexes = split_top_commas(child);
@@ -226,7 +232,12 @@ fn resolve_parents_str(child: &str, parents: &[String], fname: &str, pos: Pos) -
         if has_parent_ref(cc) {
             groups.push(expand_parent_refs(cc, &parent_strs, &parent_str));
         } else {
-            groups.push(parent_strs.iter().map(|p| format!("{p} {}", cc.trim())).collect());
+            groups.push(
+                parent_strs
+                    .iter()
+                    .map(|p| format!("{p} {}", cc.trim()))
+                    .collect(),
+            );
         }
     }
     let mut out: Vec<String> = Vec::new();
@@ -237,8 +248,12 @@ fn resolve_parents_str(child: &str, parents: &[String], fname: &str, pos: Pos) -
             out.push(resolved);
             continue;
         }
-        let parsed = selector::parse_list(&resolved)
-            .ok_or_else(|| Error::at(format!("Invalid selector produced by {fname}(): {resolved}"), pos))?;
+        let parsed = selector::parse_list(&resolved).ok_or_else(|| {
+            Error::at(
+                format!("Invalid selector produced by {fname}(): {resolved}"),
+                pos,
+            )
+        })?;
         out.extend(parsed.iter().map(Complex::render));
     }
     if out.is_empty() {
@@ -338,7 +353,8 @@ fn flatten_vertically(groups: Vec<Vec<String>>) -> Vec<String> {
     if groups.len() == 1 {
         return groups.into_iter().next().unwrap_or_default();
     }
-    let mut queues: Vec<std::collections::VecDeque<String>> = groups.into_iter().map(|g| g.into()).collect();
+    let mut queues: Vec<std::collections::VecDeque<String>> =
+        groups.into_iter().map(|g| g.into()).collect();
     let mut out = Vec::new();
     while !queues.is_empty() {
         queues.retain_mut(|q| {
@@ -584,8 +600,7 @@ fn fn_nest(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Va
                     if let Some(n) = chars.get(i + 1) {
                         if n.is_alphanumeric() || *n == '-' || *n == '_' || *n == '\\' {
                             return Err(Error::at(
-                                "A top-level selector may not contain a parent selector with a suffix."
-                                    .to_string(),
+                                "A top-level selector may not contain a parent selector with a suffix.".to_string(),
                                 pos,
                             ));
                         }
@@ -727,7 +742,10 @@ fn extend_or_replace(
 
     let complexes = selector::extend_compound_target(&selector, &targets, &extender, replace);
     if complexes.is_empty() {
-        return Err(Error::at(format!("{fname}() produced an empty selector."), pos));
+        return Err(Error::at(
+            format!("{fname}() produced an empty selector."),
+            pos,
+        ));
     }
     Ok(selectors_to_value(&complexes))
 }
@@ -770,7 +788,11 @@ fn fn_unify(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<V
 
 /// `is-superselector($super, $sub)`: whether `$super` matches every element
 /// `$sub` matches (dart-sass `is-superselector`).
-fn fn_is_superselector(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_is_superselector(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = &["super", "sub"];
     check_arity(pos_args, 2, pos)?;
     let sup = selector_list_arg(params, pos_args, named, 0, "is-superselector", pos)?;
@@ -782,7 +804,11 @@ fn fn_is_superselector(pos_args: &[Value], named: &[(String, Value)], pos: Pos) 
 
 /// `simple-selectors($selector)`: the simple selectors of a single compound
 /// selector, as a comma list of unquoted strings (dart-sass `simple-selectors`).
-fn fn_simple_selectors(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_simple_selectors(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = &["selector"];
     check_arity(pos_args, 1, pos)?;
     let v = super::require(params, pos_args, named, 0, "simple-selectors", pos)?;

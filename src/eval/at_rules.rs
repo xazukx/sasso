@@ -326,10 +326,7 @@ impl<'a> Evaluator<'a> {
         Ok(out)
     }
 
-    fn resolve_media_query(
-        &mut self,
-        q: &'a ox::MediaQuery<'a>,
-    ) -> Result<ResolvedQuery, Error> {
+    fn resolve_media_query(&mut self, q: &'a ox::MediaQuery<'a>) -> Result<ResolvedQuery, Error> {
         match q {
             ox::MediaQuery::WithType(t) => {
                 let mtype = self.eval_interp_ident(&t.media_type)?;
@@ -369,9 +366,7 @@ impl<'a> Evaluator<'a> {
         let mut out = Vec::with_capacity(c.conditions.len());
         for k in &c.conditions {
             out.push(match k {
-                ox::MediaConditionKind::MediaInParens(p) => {
-                    self.serialize_media_in_parens(p)?
-                }
+                ox::MediaConditionKind::MediaInParens(p) => self.serialize_media_in_parens(p)?,
                 ox::MediaConditionKind::And(a) => {
                     self.serialize_media_in_parens(&a.media_in_parens)?
                 }
@@ -379,17 +374,17 @@ impl<'a> Evaluator<'a> {
                     self.serialize_media_in_parens(&o.media_in_parens)?
                 }
                 ox::MediaConditionKind::Not(n) => {
-                    format!("not {}", self.serialize_media_in_parens(&n.media_in_parens)?)
+                    format!(
+                        "not {}",
+                        self.serialize_media_in_parens(&n.media_in_parens)?
+                    )
                 }
             });
         }
         Ok(out)
     }
 
-    fn serialize_media_in_parens(
-        &mut self,
-        p: &'a ox::MediaInParens<'a>,
-    ) -> Result<String, Error> {
+    fn serialize_media_in_parens(&mut self, p: &'a ox::MediaInParens<'a>) -> Result<String, Error> {
         match &p.kind {
             ox::MediaInParensKind::MediaFeature(f) => {
                 let inner = self.serialize_media_feature(f)?;
@@ -409,10 +404,7 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    fn serialize_media_feature(
-        &mut self,
-        f: &'a ox::MediaFeature<'a>,
-    ) -> Result<String, Error> {
+    fn serialize_media_feature(&mut self, f: &'a ox::MediaFeature<'a>) -> Result<String, Error> {
         match f {
             // Media-feature names and values serialize in interpolation
             // context: a quoted string unquotes (`("min-width:#{$w}")` emits
@@ -443,10 +435,7 @@ impl<'a> Evaluator<'a> {
 
     /// A media feature's name, which may be an interpolated identifier or a
     /// `$variable` holding one.
-    fn media_feature_name(
-        &mut self,
-        name: &'a ox::MediaFeatureName<'a>,
-    ) -> Result<String, Error> {
+    fn media_feature_name(&mut self, name: &'a ox::MediaFeatureName<'a>) -> Result<String, Error> {
         match name {
             ox::MediaFeatureName::Ident(i) => self.eval_interp_ident(i),
             ox::MediaFeatureName::SassVariable(v) => {
@@ -565,10 +554,7 @@ impl<'a> Evaluator<'a> {
     }
 
     /// One operand of a `@supports` condition.
-    fn supports_in_parens(
-        &mut self,
-        p: &'a ox::SupportsInParens<'a>,
-    ) -> Result<String, Error> {
+    fn supports_in_parens(&mut self, p: &'a ox::SupportsInParens<'a>) -> Result<String, Error> {
         match &p.kind {
             ox::SupportsInParensKind::Feature(f) => self.supports_declaration(&f.decl),
             ox::SupportsInParensKind::SupportsCondition(c) => {
@@ -592,10 +578,7 @@ impl<'a> Evaluator<'a> {
     }
 
     /// A `(<name>: <value>)` feature query.
-    fn supports_declaration(
-        &mut self,
-        decl: &'a ox::Declaration<'a>,
-    ) -> Result<String, Error> {
+    fn supports_declaration(&mut self, decl: &'a ox::Declaration<'a>) -> Result<String, Error> {
         // dart-sass evaluates BOTH the name and the value with
         // `_inSupportsDeclaration` set, so a calc in the name (`(calc(0): a)`)
         // is also kept unsimplified.
@@ -646,8 +629,7 @@ impl<'a> Evaluator<'a> {
                     out.push_str(&format!("supports{inner}"));
                 }
                 ox::ImportPreludeSupportsKind::SupportsCondition(c) => {
-                    let inner =
-                        unquoted_string_css(&self.serialize_supports_condition(c)?);
+                    let inner = unquoted_string_css(&self.serialize_supports_condition(c)?);
                     out.push_str(&format!("supports({inner})"));
                 }
             }
@@ -687,14 +669,12 @@ impl<'a> Evaluator<'a> {
             };
             for inner in &frame.statements {
                 if matches!(inner, ox::Statement::QualifiedRule(_)) {
-                    let e = Error::unpositioned(
-                        "Style rules may not be used within keyframe blocks.",
-                    );
+                    let e =
+                        Error::unpositioned("Style rules may not be used within keyframe blocks.");
                     let span = *inner.span();
-                    return Err(self.finalize_error(e.or_at(
-                        self.file.pos(span),
-                        span.end.saturating_sub(span.start),
-                    )));
+                    return Err(self.finalize_error(
+                        e.or_at(self.file.pos(span), span.end.saturating_sub(span.start)),
+                    ));
                 }
             }
         }
@@ -923,10 +903,12 @@ impl<'a> Evaluator<'a> {
         while matches!(spaced.last(), Some(OutNode::GroupEnd)) {
             spaced.pop();
         }
-        if spaced
-            .iter()
-            .all(|n| matches!(n, OutNode::Blank | OutNode::GroupEnd | OutNode::AtRootPackTight))
-        {
+        if spaced.iter().all(|n| {
+            matches!(
+                n,
+                OutNode::Blank | OutNode::GroupEnd | OutNode::AtRootPackTight
+            )
+        }) {
             return Ok(());
         }
         if let Some(te) = first_excluded {

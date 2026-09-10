@@ -20,9 +20,7 @@
 use std::collections::BTreeMap;
 
 use sasso::ast::{AtRulePrelude, InterpolableStr, Statement};
-use sasso::{
-    Allocator, Compiler, MemoryImporter, Options, OutNode, OutputStyle, RuleSelectors,
-};
+use sasso::{Allocator, Compiler, MemoryImporter, Options, OutNode, OutputStyle, RuleSelectors};
 
 fn main() {
     let files = project();
@@ -286,7 +284,9 @@ fn capture_variables(files: &MemoryImporter) {
     // The two same-named partials are separate entries above, and neither one
     // shadowed the other.
     let themes = by_file.get("themes/_tokens.scss").expect("themes tokens");
-    let components = by_file.get("components/_tokens.scss").expect("components tokens");
+    let components = by_file
+        .get("components/_tokens.scss")
+        .expect("components tokens");
     assert!(themes.iter().any(|v| v.contains("$bg")));
     assert!(components.iter().any(|v| v.contains("$gap")));
     println!(
@@ -299,7 +299,9 @@ fn capture_variables(files: &MemoryImporter) {
     // rule-scoped one is not — yet both were captured above.
     println!(
         "\n$app-gutter still in env : {:?}",
-        run.evaluator.variable("app-gutter").map(|v| v.to_css(false))
+        run.evaluator
+            .variable("app-gutter")
+            .map(|v| v.to_css(false))
     );
     println!(
         "$inner-pad still in env  : {:?}",
@@ -325,11 +327,11 @@ fn rewrite_ast(files: &MemoryImporter) {
     let compiler = Compiler::new(&arena, "main.scss", &options).expect("entry resolves");
     let parsed = compiler.parse().expect("parses");
 
-    let before = parsed.sheet.statements.len();
-    parsed.sheet.statements.retain(|s| !is_css_use(s));
+    let before = parsed.stylesheet.statements.len();
+    parsed.stylesheet.statements.retain(|s| !is_css_use(s));
     println!(
         "top-level statements: {before} -> {} (dropped the vendored @use)",
-        parsed.sheet.statements.len()
+        parsed.stylesheet.statements.len()
     );
 
     let run = compiler.evaluate(parsed).expect("evaluates");
@@ -376,7 +378,8 @@ fn rewrite_output(files: &MemoryImporter) {
 
     // The same tree, serialized twice.
     let pretty = compiler.emit(&run.nodes);
-    let compressed = Compiler::new(&arena, 
+    let compressed = Compiler::new(
+        &arena,
         "main.scss",
         &Options::default()
             .with_importer(files)
@@ -435,7 +438,11 @@ fn source_map(files: &MemoryImporter) {
     let mut run = compiler.evaluate(sheet).expect("evaluates");
     let result = compiler.emit_with_source_map(&run.nodes, &mut run.evaluator);
 
-    let contents = result.source_map.sources_content.as_deref().unwrap_or_default();
+    let contents = result
+        .source_map
+        .sources_content
+        .as_deref()
+        .unwrap_or_default();
     for (i, src) in result.source_map.sources.iter().enumerate() {
         let bytes = contents.get(i).map(String::len).unwrap_or(0);
         println!("  sources[{i}] = {src} ({bytes} bytes of embedded text)");

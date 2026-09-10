@@ -107,10 +107,7 @@ impl<'a> Evaluator<'a> {
         // erroring. When every argument reduces to a plain number the normal
         // builtin path computes the result (and applies its unit checks), so
         // this only changes the two calc-specific behaviours above.
-        if is_pure_calc_math_function(name)
-            && !has_user_fn
-            && args.iter().all(|a| a.is_plain())
-        {
+        if is_pure_calc_math_function(name) && !has_user_fn && args.iter().all(|a| a.is_plain()) {
             if let Some(v) = self.try_eval_calc_math_call(name, args, pos)? {
                 return Ok(v);
             }
@@ -332,7 +329,9 @@ impl<'a> Evaluator<'a> {
                     .and_then(|b| callback(&b))
                     .and_then(|b| crate::host_fn::deserialize_value(&b));
                 crate::host_fn::swap_handles(saved);
-                return result.map_err(|e| Error::at(e, pos)).map(Value::without_slash);
+                return result
+                    .map_err(|e| Error::at(e, pos))
+                    .map(Value::without_slash);
             }
         }
         // A bare slash-division argument collapses to its number when passed

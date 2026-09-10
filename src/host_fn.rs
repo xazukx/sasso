@@ -46,8 +46,8 @@ pub struct HostParam {
 }
 use crate::builtins::{legacy_to_modern, make_modern_in};
 use crate::value::{
-    unit_lists_factor, CalcNode, CalcOp, Color, ColorSpace, List, ListSep, Map, ModernColor, Number, SassStr,
-    Value,
+    unit_lists_factor, CalcNode, CalcOp, Color, ColorSpace, List, ListSep, Map, ModernColor,
+    Number, SassStr, Value,
 };
 
 /// An embedder's custom-function callback: it receives the bound arguments
@@ -113,7 +113,9 @@ pub(crate) fn parse_signature(sig: &str) -> (String, Result<HostParams, String>)
             None => {
                 return (
                     name,
-                    Err(format!("sasso: signature parameter \"{part}\" must start with $")),
+                    Err(format!(
+                        "sasso: signature parameter \"{part}\" must start with $"
+                    )),
                 )
             }
         };
@@ -125,7 +127,10 @@ pub(crate) fn parse_signature(sig: &str) -> (String, Result<HostParams, String>)
         if var.contains(':') {
             return (
                 name,
-                Err("sasso: default values in custom-function signatures are not yet supported".into()),
+                Err(
+                    "sasso: default values in custom-function signatures are not yet supported"
+                        .into(),
+                ),
             );
         }
         params.push(HostParam {
@@ -266,7 +271,11 @@ pub fn host_value_op(op: u32, input: &[u8]) -> Result<Vec<u8>, String> {
                 quoted: true,
             });
             let space = unquoted(as_string(args.get(2))?);
-            call_color("is-powerless", &[arg(&args, 0)?, channel], &[("space", space)])?
+            call_color(
+                "is-powerless",
+                &[arg(&args, 0)?, channel],
+                &[("space", space)],
+            )?
         }
         OP_COLOR_INTERPOLATE => {
             // `color.mix($c1, $c2, $weight, $method)` — weight already a %, method a string.
@@ -295,7 +304,10 @@ fn unquoted(text: String) -> Value {
 }
 /// Route a color value-op to the corresponding `color.*` builtin.
 fn call_color(member: &str, pos_args: &[Value], named: &[(&str, Value)]) -> Result<Value, String> {
-    let named: Vec<(String, Value)> = named.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+    let named: Vec<(String, Value)> = named
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect();
     crate::builtins::call_module(
         "color",
         member,
@@ -339,7 +351,11 @@ fn as_string_list(v: Option<&Value>) -> Vec<String> {
 
 /// The multiplier from `from` units to `to` units under convert/coerce rules,
 /// or `None` if the conversion is illegal.
-fn number_factor(from: (&[String], &[String]), to: (&[String], &[String]), coerce: bool) -> Option<f64> {
+fn number_factor(
+    from: (&[String], &[String]),
+    to: (&[String], &[String]),
+    coerce: bool,
+) -> Option<f64> {
     let from_unitless = from.0.is_empty() && from.1.is_empty();
     let to_unitless = to.0.is_empty() && to.1.is_empty();
     if from_unitless || to_unitless {
@@ -527,7 +543,9 @@ fn serialize_value(out: &mut Vec<u8>, v: &Value) -> Result<(), String> {
         Value::Slash(..) => {
             // A slash-division never reaches here (call args are slash-collapsed
             // before binding, and JS can't construct one).
-            return Err("sasso: slash-division values are not supported as custom-function values".into());
+            return Err(
+                "sasso: slash-division values are not supported as custom-function values".into(),
+            );
         }
         Value::Function(_) => {
             out.push(TAG_FUNCTION);
@@ -886,7 +904,10 @@ mod tests {
         });
         let o = Options::default().with_function("type-of($v)", cb);
         let css = compile(".a { x: type-of(1); }", &o).unwrap();
-        assert!(css.contains("x: custom"), "custom should override builtin: {css}");
+        assert!(
+            css.contains("x: custom"),
+            "custom should override builtin: {css}"
+        );
         // ...but a user @function still wins.
         let cb2: super::HostFunction = Rc::new(|_| {
             serialize_one(&Value::Str(SassStr {
@@ -895,8 +916,15 @@ mod tests {
             }))
         });
         let o2 = Options::default().with_function("foo($v)", cb2);
-        let css2 = compile("@function foo($v) { @return user; }\n.a { x: foo(1); }", &o2).unwrap();
-        assert!(css2.contains("x: user"), "user @function should win: {css2}");
+        let css2 = compile(
+            "@function foo($v) { @return user; }\n.a { x: foo(1); }",
+            &o2,
+        )
+        .unwrap();
+        assert!(
+            css2.contains("x: user"),
+            "user @function should win: {css2}"
+        );
     }
 
     #[test]
@@ -917,7 +945,11 @@ mod tests {
                 }))
                 .cloned()
                 .unwrap_or(Value::Null);
-            let bn = if let Value::Number(n) = b { n.value } else { -1.0 };
+            let bn = if let Value::Number(n) = b {
+                n.value
+            } else {
+                -1.0
+            };
             let list = match &args[1] {
                 Value::List(l) => l,
                 _ => return Err("arg 2 must be a list".into()),
@@ -949,7 +981,13 @@ mod tests {
             let total: f64 = list
                 .items
                 .iter()
-                .map(|v| if let Value::Number(n) = v { n.value } else { 0.0 })
+                .map(|v| {
+                    if let Value::Number(n) = v {
+                        n.value
+                    } else {
+                        0.0
+                    }
+                })
                 .sum();
             serialize_one(&Value::Number(Number::unitless(total)))
         });

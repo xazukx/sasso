@@ -166,7 +166,10 @@ static ARENA_CONFIG: AtomicUsize = AtomicUsize::new(0);
 /// (every allocation forwards to the system allocator: lower memory, slower).
 /// No effect on native targets (they always use the 2 GiB virtual reservation).
 pub fn set_arena_bytes(bytes: usize) {
-    ARENA_CONFIG.store(if bytes == 0 { usize::MAX } else { bytes }, Ordering::Relaxed);
+    ARENA_CONFIG.store(
+        if bytes == 0 { usize::MAX } else { bytes },
+        Ordering::Relaxed,
+    );
 }
 
 /// The arena size to reserve, resolving the runtime override against the
@@ -447,7 +450,8 @@ impl Arena {
     }
 
     fn alloc(&self, layout: Layout) -> Option<*mut u8> {
-        let (aligned, next) = bump_compute(self.cursor.get(), layout.align(), layout.size(), self.end)?;
+        let (aligned, next) =
+            bump_compute(self.cursor.get(), layout.align(), layout.size(), self.end)?;
         self.cursor.set(next);
         // SAFETY: in-bounds offset (see bump_compute).
         Some(unsafe { self.base.add(aligned - self.base as usize) })
@@ -678,7 +682,10 @@ mod tests {
         unsafe { ScopedAlloc.dealloc(p_sys, l) };
         resume(saved); // depth restored
         let p_arena = unsafe { ScopedAlloc.alloc(l) };
-        assert!(in_arena(p_arena), "resumed scope bumps from the arena again");
+        assert!(
+            in_arena(p_arena),
+            "resumed scope bumps from the arena again"
+        );
         let _ = leave_no_reset();
         reset();
         std::mem::forget(scope);

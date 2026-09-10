@@ -18,7 +18,11 @@ const BIN: &str = env!("CARGO_BIN_EXE_sasso");
 
 /// Create a fresh unique temp subdir for one test and return its path.
 fn scratch(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("sasso_cli_sm_{tag}_{}_{}", std::process::id(), unique()));
+    let dir = std::env::temp_dir().join(format!(
+        "sasso_cli_sm_{tag}_{}_{}",
+        std::process::id(),
+        unique()
+    ));
     std::fs::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
@@ -58,7 +62,9 @@ fn write(dir: &Path, name: &str, contents: &str) -> PathBuf {
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn b64_val(c: u8) -> i64 {
-    B64.iter().position(|&b| b == c).expect("valid base64 digit") as i64
+    B64.iter()
+        .position(|&b| b == c)
+        .expect("valid base64 digit") as i64
 }
 
 fn vlq_decode_all(seg: &str) -> Vec<i64> {
@@ -135,7 +141,11 @@ fn leading_ident(s: &str) -> String {
 /// For every mapping whose generated position starts with an identifier (a
 /// declaration name / at-rule keyword), assert the SOURCE position it points to
 /// begins with the same identifier. Returns the count of strictly-verified maps.
-fn check_declaration_invariants(sources: &[(&str, &str)], output_css: &str, mappings: &str) -> usize {
+fn check_declaration_invariants(
+    sources: &[(&str, &str)],
+    output_css: &str,
+    mappings: &str,
+) -> usize {
     let maps = decode_mappings(mappings);
     let mut strict = 0;
     for m in &maps {
@@ -145,8 +155,8 @@ fn check_declaration_invariants(sources: &[(&str, &str)], output_css: &str, mapp
             .1;
         let gen = at(output_css, m.gen_line, m.gen_col)
             .unwrap_or_else(|| panic!("generated pos {m:?} out of bounds"));
-        let src =
-            at(src_text, m.src_line, m.src_col).unwrap_or_else(|| panic!("source pos {m:?} out of bounds"));
+        let src = at(src_text, m.src_line, m.src_col)
+            .unwrap_or_else(|| panic!("source pos {m:?} out of bounds"));
         let gen_id = leading_ident(gen);
         if gen_id.is_empty() {
             continue;
@@ -198,7 +208,10 @@ fn output_without_source_map_writes_plain_css() {
     let css = std::fs::read_to_string(dir.join("out.css")).expect("out.css");
     assert_eq!(css, ".a {\n  color: red;\n}\n", "plain CSS, no footer");
     assert!(!css.contains("sourceMappingURL"), "no footer expected");
-    assert!(!dir.join("out.css.map").exists(), "no .map should be written");
+    assert!(
+        !dir.join("out.css.map").exists(),
+        "no .map should be written"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -217,8 +230,12 @@ fn source_map_writes_footer_and_sidecar() {
 
     let css = std::fs::read_to_string(dir.join("out.css")).expect("out.css");
     // dart EXPANDED footer: CSS ends in `\n`, footer = `\n/*# … */\n`.
-    let expected = ".a {\n  color: red;\n  width: 10px;\n}\n\n/*# sourceMappingURL=out.css.map */\n";
-    assert_eq!(css, expected, "expanded footer must match dart byte-for-byte");
+    let expected =
+        ".a {\n  color: red;\n  width: 10px;\n}\n\n/*# sourceMappingURL=out.css.map */\n";
+    assert_eq!(
+        css, expected,
+        "expanded footer must match dart byte-for-byte"
+    );
 
     let map = std::fs::read_to_string(dir.join("out.css.map")).expect("out.css.map");
     assert!(map.contains("\"version\":3"));
@@ -249,7 +266,13 @@ fn compressed_footer_has_no_leading_newline() {
     write(&dir, "in.scss", ".a {\n  color: red;\n}\n");
     let (ok, _o, err) = run(
         &dir,
-        &["--style=compressed", "--source-map", "in.scss", "-o", "out.css"],
+        &[
+            "--style=compressed",
+            "--source-map",
+            "in.scss",
+            "-o",
+            "out.css",
+        ],
     );
     assert!(ok, "compile failed: {err}");
     let css = std::fs::read_to_string(dir.join("out.css")).expect("out.css");
@@ -272,11 +295,20 @@ fn embed_sources_populates_sources_content() {
     write(&dir, "in.scss", src);
     let (ok, _o, err) = run(
         &dir,
-        &["--source-map", "--embed-sources", "in.scss", "-o", "out.css"],
+        &[
+            "--source-map",
+            "--embed-sources",
+            "in.scss",
+            "-o",
+            "out.css",
+        ],
     );
     assert!(ok, "compile failed: {err}");
     let map = std::fs::read_to_string(dir.join("out.css.map")).expect("out.css.map");
-    assert!(map.contains("\"sourcesContent\":["), "expected sourcesContent");
+    assert!(
+        map.contains("\"sourcesContent\":["),
+        "expected sourcesContent"
+    );
     // The embedded content is the entry source verbatim (newlines escaped).
     let escaped = src.replace('\n', "\\n");
     assert!(
@@ -310,7 +342,10 @@ fn output_requires_single_input() {
     write(&dir, "b.scss", ".b { y: 2px; }\n");
     let (ok, _o, err) = run(&dir, &["a.scss", "b.scss", "-o", "out.css"]);
     assert!(!ok, "expected a non-zero exit");
-    assert!(err.contains("--output requires a single input"), "got: {err}");
+    assert!(
+        err.contains("--output requires a single input"),
+        "got: {err}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -351,7 +386,10 @@ fn cli_appends_single_trailing_newline_both_styles() {
 
     let (ok, comp, err) = run(&dir, &["--style=compressed", "in.scss"]);
     assert!(ok, "compressed compile failed: {err}");
-    assert_eq!(comp, ".a{color:red}\n", "compressed stdout ends with one \\n");
+    assert_eq!(
+        comp, ".a{color:red}\n",
+        "compressed stdout ends with one \\n"
+    );
 
     // Compressed to a `-o` file (no source map): same single trailing newline.
     let (ok, _o, err) = run(&dir, &["--style=compressed", "in.scss", "-o", "out.css"]);
@@ -425,11 +463,15 @@ fn absolute_source_url_is_file_scheme() {
 // =====================================================================
 
 fn dart_enabled() -> bool {
-    std::env::var("SASSO_PARITY").map(|v| v != "0").unwrap_or(false)
+    std::env::var("SASSO_PARITY")
+        .map(|v| v != "0")
+        .unwrap_or(false)
 }
 
 fn source_positions(maps: &[Mapping]) -> std::collections::BTreeSet<(u32, u32, u32)> {
-    maps.iter().map(|m| (m.src_id, m.src_line, m.src_col)).collect()
+    maps.iter()
+        .map(|m| (m.src_id, m.src_line, m.src_col))
+        .collect()
 }
 
 #[test]
@@ -489,7 +531,10 @@ fn dart_differential_output_and_map_match() {
         // d.css.map); normalize that one token before comparing the bytes.
         let s_css_n = String::from_utf8_lossy(&s_css).replace("s.css.map", "OUT.map");
         let d_css_n = String::from_utf8_lossy(&d_css).replace("d.css.map", "OUT.map");
-        assert_eq!(s_css_n, d_css_n, "out.css bytes differ for {src:?} {extra:?}");
+        assert_eq!(
+            s_css_n, d_css_n,
+            "out.css bytes differ for {src:?} {extra:?}"
+        );
 
         let s_map = std::fs::read_to_string(dir.join("s.css.map")).unwrap();
         let d_map = std::fs::read_to_string(dir.join("d.css.map")).unwrap();

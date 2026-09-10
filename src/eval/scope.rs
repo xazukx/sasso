@@ -70,10 +70,7 @@ impl<'a> Evaluator<'a> {
 
     /// [`Self::expression_node_value`] for a whole value run: a run that is a
     /// single value resolves through it, and anything else takes its own span.
-    pub(super) fn expression_node_values(
-        &mut self,
-        values: &[ox::ComponentValue<'a>],
-    ) -> VarSpan {
+    pub(super) fn expression_node_values(&mut self, values: &[ox::ComponentValue<'a>]) -> VarSpan {
         if !self.options.source_map {
             return VarSpan::default();
         }
@@ -140,8 +137,14 @@ impl<'a> Evaluator<'a> {
         EnvModules {
             used_modules: std::mem::replace(&mut self.used_modules, m.used_modules.clone()),
             star_modules: std::mem::replace(&mut self.star_modules, m.star_modules.clone()),
-            used_user_modules: std::mem::replace(&mut self.used_user_modules, m.used_user_modules.clone()),
-            star_user_modules: std::mem::replace(&mut self.star_user_modules, m.star_user_modules.clone()),
+            used_user_modules: std::mem::replace(
+                &mut self.used_user_modules,
+                m.used_user_modules.clone(),
+            ),
+            star_user_modules: std::mem::replace(
+                &mut self.star_user_modules,
+                m.star_user_modules.clone(),
+            ),
         }
     }
 
@@ -175,7 +178,8 @@ impl<'a> Evaluator<'a> {
         frame: HashMap<String, Value>,
         spans: HashMap<String, VarSpan>,
     ) {
-        self.scopes.push(std::rc::Rc::new(std::cell::RefCell::new(frame)));
+        self.scopes
+            .push(std::rc::Rc::new(std::cell::RefCell::new(frame)));
         if self.options.source_map {
             self.var_spans
                 .push(std::rc::Rc::new(std::cell::RefCell::new(spans)));
@@ -334,9 +338,11 @@ impl<'a> Evaluator<'a> {
         // Configuration is keyed by the canonical (dashed) variable name.
         if has_flag(&v.flags, "default") && self.scopes.len() == 1 {
             let key = normalize_var_name(v.name.name.name);
-            if let Some((cfg_val, cfg_is_default)) = self.pending_config.get(key.as_ref()).cloned() {
+            if let Some((cfg_val, cfg_is_default)) = self.pending_config.get(key.as_ref()).cloned()
+            {
                 self.consumed_config.push(key.into_owned());
-                let already_set = matches!(self.lookup(v.name.name.name), Some(x) if !matches!(x, Value::Null));
+                let already_set =
+                    matches!(self.lookup(v.name.name.name), Some(x) if !matches!(x, Value::Null));
                 // A `null` configuration value leaves the `!default` in place;
                 // a `@forward ... with ($x !default)` only applies if the module
                 // hasn't already defined the variable.
@@ -355,7 +361,8 @@ impl<'a> Evaluator<'a> {
                     // text we are overriding: an unknown span emits no mapping
                     // segment, whereas a wrong one would emit a wrong segment.
                     if let Some(g) = self.var_spans.first_mut() {
-                        g.borrow_mut().insert(v.name.name.name.to_string(), VarSpan::default());
+                        g.borrow_mut()
+                            .insert(v.name.name.name.to_string(), VarSpan::default());
                     }
                     return Ok(());
                 }
@@ -377,11 +384,16 @@ impl<'a> Evaluator<'a> {
                 }
             }
             // Same guard for a name owned by exactly one `@use … as *` module.
-            if (self.scopes.len() == 1 || has_flag(&v.flags, "global")) && !is_private_member(v.name.name.name) {
+            if (self.scopes.len() == 1 || has_flag(&v.flags, "global"))
+                && !is_private_member(v.name.name.name)
+            {
                 let mut resolved = None;
                 if let Some(g) = self.scopes.first() {
                     if !g.borrow().contains_key(v.name.name.name) {
-                        let mut targets = self.star_user_modules.iter().filter_map(|m| m.var(v.name.name.name));
+                        let mut targets = self
+                            .star_user_modules
+                            .iter()
+                            .filter_map(|m| m.var(v.name.name.name));
                         if let Some(existing) = targets.next() {
                             if targets.next().is_none() && !matches!(existing, Value::Null) {
                                 resolved = Some(existing);
@@ -408,7 +420,9 @@ impl<'a> Evaluator<'a> {
         // global scope but exposed by exactly one `@use … as *` module updates
         // that module's variable (so the module's own functions/mixins observe
         // the change).
-        if (self.scopes.len() == 1 || has_flag(&v.flags, "global")) && !is_private_member(v.name.name.name) {
+        if (self.scopes.len() == 1 || has_flag(&v.flags, "global"))
+            && !is_private_member(v.name.name.name)
+        {
             if let Some(g) = self.scopes.first() {
                 if !g.borrow().contains_key(v.name.name.name) {
                     let targets: Vec<Rc<Module<'a>>> = self
@@ -418,9 +432,15 @@ impl<'a> Evaluator<'a> {
                         .cloned()
                         .collect();
                     if targets.len() == 1 {
-                        targets[0].vars.borrow_mut().insert(v.name.name.name.to_string(), val);
+                        targets[0]
+                            .vars
+                            .borrow_mut()
+                            .insert(v.name.name.name.to_string(), val);
                         if self.options.source_map {
-                            targets[0].var_spans.borrow_mut().insert(v.name.name.name.to_string(), span);
+                            targets[0]
+                                .var_spans
+                                .borrow_mut()
+                                .insert(v.name.name.name.to_string(), span);
                         }
                         return Ok(());
                     }
@@ -443,7 +463,11 @@ impl<'a> Evaluator<'a> {
     /// Assign to a `@use`d module's variable (`ns.$name: value`). The variable
     /// must already exist in the module and be public; `!default` only assigns
     /// when the existing value is null; built-in modules are immutable.
-    pub(super) fn assign_module_var(&mut self, ns: &str, v: &'a ox::SassVariableDeclaration<'a>) -> Result<(), Error> {
+    pub(super) fn assign_module_var(
+        &mut self,
+        ns: &str,
+        v: &'a ox::SassVariableDeclaration<'a>,
+    ) -> Result<(), Error> {
         if is_private_member(v.name.name.name) {
             return Err(Error::unpositioned(
                 "Private members can't be accessed from outside their modules.",

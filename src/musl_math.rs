@@ -17,7 +17,10 @@
     clippy::unreadable_literal
 )]
 
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/musl_math_tables.rs"));
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/musl_math_tables.rs"
+));
 
 const OFF: u64 = 0x3fe6955500000000;
 const SIGN_BIAS: u32 = 0x800 << 7;
@@ -200,7 +203,11 @@ pub(crate) fn pow(x: f64, y: f64) -> f64 {
                 return 1.0;
             }
             if (topy & 0x7ff) < 0x3be {
-                return if ix > 1.0f64.to_bits() { 1.0 + y } else { 1.0 - y };
+                return if ix > 1.0f64.to_bits() {
+                    1.0 + y
+                } else {
+                    1.0 - y
+                };
             }
             return if (ix > 1.0f64.to_bits()) == ((topy & 0x800) == 0) {
                 f64::INFINITY

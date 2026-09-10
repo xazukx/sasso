@@ -1,7 +1,7 @@
 //! Serialize the flattened output tree to CSS.
 
-use crate::lines::SrcLines;
 use crate::eval::{OutItem, OutNode, VarSpan};
+use crate::lines::SrcLines;
 use crate::sourcemap::SmCollector;
 use crate::OutputStyle;
 
@@ -14,7 +14,11 @@ pub fn emit(nodes: &[OutNode], style: OutputStyle, charset: bool) -> String {
 /// Like [`emit`], but also records a source map. Returns the final CSS, the
 /// byte length of the `@charset`/BOM prefix that shifts every body offset, and
 /// the populated collector (raw body offsets, not yet resolved to lines).
-pub fn emit_with_map(nodes: &[OutNode], style: OutputStyle, charset: bool) -> (String, usize, SmCollector) {
+pub fn emit_with_map(
+    nodes: &[OutNode],
+    style: OutputStyle,
+    charset: bool,
+) -> (String, usize, SmCollector) {
     let mut collector = Some(SmCollector::new(matches!(style, OutputStyle::Compressed)));
     let (css, body_off) = emit_inner(nodes, style, &mut collector, charset);
     (css, body_off, collector.expect("collector present"))
@@ -143,7 +147,12 @@ fn block_start(lines: SrcLines) -> SrcLines {
 /// newline(s) — at the root a group blank line may sit between — then write
 /// ` /*…*/` with continuation lines at indentation 0 (dart saves and zeroes
 /// `_indentation` for trailing comments).
-fn push_trailing_comment(out: &mut String, text: &str, lines: SrcLines, collector: &mut Option<SmCollector>) {
+fn push_trailing_comment(
+    out: &mut String,
+    text: &str,
+    lines: SrcLines,
+    collector: &mut Option<SmCollector>,
+) {
     while out.ends_with('\n') {
         out.pop();
     }
@@ -279,7 +288,10 @@ fn emit_node_expanded(
         }
         // Control-only hoist markers (consumed by the bubbling passes) never
         // reach the output and don't disturb the previous-sibling line state.
-        OutNode::GroupEnd | OutNode::MediaHoist | OutNode::AtRootHoist { .. } | OutNode::AtRootPackTight => {
+        OutNode::GroupEnd
+        | OutNode::MediaHoist
+        | OutNode::AtRootHoist { .. }
+        | OutNode::AtRootPackTight => {
             return false;
         }
         OutNode::Blank => {
@@ -408,7 +420,11 @@ fn emit_item_expanded(
             out.push_str("*/\n");
             *prev = *lines;
         }
-        OutItem::ChildlessAtRule { name, prelude, lines } => {
+        OutItem::ChildlessAtRule {
+            name,
+            prelude,
+            lines,
+        } => {
             out.push_str(indent);
             // Source-map: the at-rule's `@` keyword.
             record(out, *lines, collector);
@@ -433,7 +449,11 @@ fn emit_item_expanded(
             close_block(out, indent, items.len(), joined);
             *prev = SrcLines::default();
         }
-        OutItem::NestedAtRule { name, prelude, items } => {
+        OutItem::NestedAtRule {
+            name,
+            prelude,
+            items,
+        } => {
             out.push_str(indent);
             out.push('@');
             out.push_str(name);
@@ -486,7 +506,9 @@ fn emit_decl_value_expanded(
             }
             // The strip width is a COUNT of leading characters, so the 1-based
             // column becomes the 0-based count it caps.
-            MinIndent::Min(m) => write_with_indent(out, value, m.min(name_col.saturating_sub(1)), indent),
+            MinIndent::Min(m) => {
+                write_with_indent(out, value, m.min(name_col.saturating_sub(1)), indent)
+            }
         }
         return;
     }
@@ -649,17 +671,27 @@ fn compressed_nested_rule(selectors: &[String], items: &[OutItem]) -> String {
                 custom,
                 ..
             } => {
-                let imp = if *important && !*custom { "!important" } else { "" };
+                let imp = if *important && !*custom {
+                    "!important"
+                } else {
+                    ""
+                };
                 let value = fold_value_compressed(value, *custom);
                 Some(format!("{prop}:{value}{imp}"))
             }
             OutItem::Comment(..) => None,
-            OutItem::ChildlessAtRule { name, prelude, .. } if prelude.is_empty() => Some(format!("@{name}")),
-            OutItem::ChildlessAtRule { name, prelude, .. } => Some(format!("@{name} {prelude}")),
-            OutItem::NestedRule { selectors, items } => Some(compressed_nested_rule(selectors, items)),
-            OutItem::NestedAtRule { name, prelude, items } => {
-                Some(compressed_nested_at_rule(name, prelude, items))
+            OutItem::ChildlessAtRule { name, prelude, .. } if prelude.is_empty() => {
+                Some(format!("@{name}"))
             }
+            OutItem::ChildlessAtRule { name, prelude, .. } => Some(format!("@{name} {prelude}")),
+            OutItem::NestedRule { selectors, items } => {
+                Some(compressed_nested_rule(selectors, items))
+            }
+            OutItem::NestedAtRule {
+                name,
+                prelude,
+                items,
+            } => Some(compressed_nested_at_rule(name, prelude, items)),
         })
         .collect();
     format!("{}{{{}}}", selectors.join(","), inner.join(";"))
@@ -749,7 +781,11 @@ fn emit_node_compressed(out: &mut String, node: &OutNode, collector: &mut Option
                         // A custom property emits its value verbatim (its
                         // leading whitespace is part of `value`) and never gains
                         // an `!important` flag.
-                        let imp = if *important && !*custom { "!important" } else { "" };
+                        let imp = if *important && !*custom {
+                            "!important"
+                        } else {
+                            ""
+                        };
                         let value = fold_value_compressed(value, *custom);
                         Some(Rendered {
                             head: format!("{prop}:"),
@@ -759,7 +795,11 @@ fn emit_node_compressed(out: &mut String, node: &OutNode, collector: &mut Option
                         })
                     }
                     OutItem::Comment(..) => None,
-                    OutItem::ChildlessAtRule { name, prelude, lines } => {
+                    OutItem::ChildlessAtRule {
+                        name,
+                        prelude,
+                        lines,
+                    } => {
                         let s = if prelude.is_empty() {
                             format!("@{name}")
                         } else {
@@ -778,7 +818,11 @@ fn emit_node_compressed(out: &mut String, node: &OutNode, collector: &mut Option
                         lines: None,
                         value_span: VarSpan::default(),
                     }),
-                    OutItem::NestedAtRule { name, prelude, items } => Some(Rendered {
+                    OutItem::NestedAtRule {
+                        name,
+                        prelude,
+                        items,
+                    } => Some(Rendered {
                         head: compressed_nested_at_rule(name, prelude, items),
                         tail: String::new(),
                         lines: None,
@@ -815,7 +859,10 @@ fn emit_node_compressed(out: &mut String, node: &OutNode, collector: &mut Option
         OutNode::Raw(s) => out.push_str(s),
         OutNode::Blank => {}
         // Control-only hoist markers never reach the output.
-        OutNode::GroupEnd | OutNode::MediaHoist | OutNode::AtRootHoist { .. } | OutNode::AtRootPackTight => {}
+        OutNode::GroupEnd
+        | OutNode::MediaHoist
+        | OutNode::AtRootHoist { .. }
+        | OutNode::AtRootPackTight => {}
         OutNode::AtDecl {
             prop,
             value,
@@ -824,7 +871,11 @@ fn emit_node_compressed(out: &mut String, node: &OutNode, collector: &mut Option
             lines,
             value_span,
         } => {
-            let imp = if *important && !*custom { "!important" } else { "" };
+            let imp = if *important && !*custom {
+                "!important"
+            } else {
+                ""
+            };
             // Source-map: the declaration property name.
             record(out, *lines, collector);
             out.push_str(prop);

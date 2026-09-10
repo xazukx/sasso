@@ -377,7 +377,11 @@ const PI: f64 = 3.141592653589793;
 /// `LchColorSpace.convert` / `OklchColorSpace.convert`).
 pub(super) fn lch_to_lab(lch: [f64; 3]) -> [f64; 3] {
     let hue_radians = lch[2] * PI / 180.0;
-    [lch[0], lch[1] * hue_radians.cos(), lch[1] * hue_radians.sin()]
+    [
+        lch[0],
+        lch[1] * hue_radians.cos(),
+        lch[1] * hue_radians.sin(),
+    ]
 }
 
 /// lab-style [L, a, b] -> lch-style [L, chroma, hue-deg] (dart `labToLch`:

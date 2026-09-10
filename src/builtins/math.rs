@@ -26,8 +26,8 @@ use crate::value::{convert_factor, CalcNode, Number, SassStr, Value};
 pub(super) const NAMES: &[&str] = &[
     // `unary_op`
     "abs", "ceil", "floor", // `try_call` match arms
-    "round", "min", "max", "clamp", "sign", "pow", "sqrt", "exp", "log", "hypot", "sin", "cos", "tan",
-    "asin", "acos", "atan", "atan2", "rem", "mod", "random",
+    "round", "min", "max", "clamp", "sign", "pow", "sqrt", "exp", "log", "hypot", "sin", "cos",
+    "tan", "asin", "acos", "atan", "atan2", "rem", "mod", "random",
 ];
 
 pub(super) fn try_call(
@@ -53,8 +53,22 @@ pub(super) fn try_call(
         "clamp" => Some(clamp(pos_args, named, pos)),
         "sign" => Some(sign(pos_args, named, pos)),
         "pow" => Some(pow(pos_args, named, pos)),
-        "sqrt" => Some(unitless_unary("sqrt", "number", pos_args, named, pos, f64::sqrt)),
-        "exp" => Some(unitless_unary("exp", "number", pos_args, named, pos, f64::exp)),
+        "sqrt" => Some(unitless_unary(
+            "sqrt",
+            "number",
+            pos_args,
+            named,
+            pos,
+            f64::sqrt,
+        )),
+        "exp" => Some(unitless_unary(
+            "exp",
+            "number",
+            pos_args,
+            named,
+            pos,
+            f64::exp,
+        )),
         "log" => Some(log(pos_args, named, pos)),
         "hypot" => Some(hypot(pos_args, named, pos)),
         "sin" => Some(trig("sin", pos_args, named, pos, f64::sin)),
@@ -83,7 +97,11 @@ fn unary_op(name: &str) -> Option<fn(f64) -> f64> {
 /// `math.div($number1, $number2)`: true division. Unlike the `/` operator it
 /// always divides (never produces a slash-separated value for two numbers),
 /// reusing the evaluator's division so unit handling matches exactly.
-pub(super) fn module_div(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+pub(super) fn module_div(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["number1", "number2"];
     check_max_args(pos_args, named, 2, pos)?;
     let a = super::require(&params, pos_args, named, 0, "div", pos)?.clone();
@@ -105,7 +123,11 @@ fn check_max_args(
     if total <= max_args {
         return Ok(());
     }
-    let noun = if max_args == 1 { "argument" } else { "arguments" };
+    let noun = if max_args == 1 {
+        "argument"
+    } else {
+        "arguments"
+    };
     Err(Error::at(
         format!("Only {max_args} {noun} allowed, but {total} were passed."),
         pos,
@@ -171,13 +193,18 @@ fn round(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Valu
             if let Value::Str(s) = &args[0] {
                 if !s.quoted && RoundStrategy::from_str(&s.text.to_ascii_lowercase()).is_some() {
                     return match round_operand(&args[1], pos)? {
-                        Some(_) => Err(Error::at("If strategy is not null, step is required.", pos)),
+                        Some(_) => {
+                            Err(Error::at("If strategy is not null, step is required.", pos))
+                        }
                         None => Ok(preserved_round(&args)),
                     };
                 }
             }
             if args.iter().any(is_quoted_str) {
-                return Err(Error::at("Only 1 argument allowed, but 2 were passed.", pos));
+                return Err(Error::at(
+                    "Only 1 argument allowed, but 2 were passed.",
+                    pos,
+                ));
             }
             // `round(number, step)`: nearest with a step.
             let number = round_operand(&args[0], pos)?;
@@ -254,7 +281,10 @@ fn round_operand(v: &Value, pos: Pos) -> Result<Option<Number>, Error> {
             pos,
         )),
         other => Err(Error::at(
-            format!("Value {} can't be used in a calculation.", other.to_css(false)),
+            format!(
+                "Value {} can't be used in a calculation.",
+                other.to_css(false)
+            ),
             pos,
         )),
     }
@@ -286,7 +316,8 @@ fn round_with_step(
     let nv = number.value;
     // NaN when number and step are both infinite, or step is 0, or either is
     // NaN.
-    if (nv.is_infinite() && step_v.is_infinite()) || step_v == 0.0 || nv.is_nan() || step_v.is_nan() {
+    if (nv.is_infinite() && step_v.is_infinite()) || step_v == 0.0 || nv.is_nan() || step_v.is_nan()
+    {
         return Ok(with_unit(f64::NAN));
     }
     // An infinite number rounds to itself.
@@ -448,7 +479,12 @@ fn preserved_round(args: &[Value]) -> Value {
 /// keyword is emitted whenever it was authored explicitly (the three-argument
 /// form), or for any non-`nearest` strategy; the implicit-`nearest`
 /// two-argument form preserves as `round(number, step)`, matching dart-sass.
-fn preserved_round_nums(strategy: RoundStrategy, number: &Number, step: &Number, explicit: bool) -> Value {
+fn preserved_round_nums(
+    strategy: RoundStrategy,
+    number: &Number,
+    step: &Number,
+    explicit: bool,
+) -> Value {
     let kw = match strategy {
         RoundStrategy::Nearest => "nearest",
         RoundStrategy::Up => "up",
@@ -458,7 +494,11 @@ fn preserved_round_nums(strategy: RoundStrategy, number: &Number, step: &Number,
     let text = if strategy == RoundStrategy::Nearest && !explicit {
         format!("round({}, {})", number.to_css(false), step.to_css(false))
     } else {
-        format!("round({kw}, {}, {})", number.to_css(false), step.to_css(false))
+        format!(
+            "round({kw}, {}, {})",
+            number.to_css(false),
+            step.to_css(false)
+        )
     };
     Value::Str(SassStr {
         text: text.into(),
@@ -621,11 +661,19 @@ fn atan2(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Valu
     // A `%` operand would produce a context-dependent result, so dart-sass
     // preserves the call rather than folding (`atan2(1%, 2%)`).
     if is_percent(&y) || is_percent(&x) {
-        return Ok(preserved_call("atan2", &[Value::Number(y), Value::Number(x)]));
+        return Ok(preserved_call(
+            "atan2",
+            &[Value::Number(y), Value::Number(x)],
+        ));
     }
     let xv = match combine_into(&x, &y, pos) {
         StepCoercion::Value(v) => v,
-        StepCoercion::Preserve => return Ok(preserved_call("atan2", &[Value::Number(y), Value::Number(x)])),
+        StepCoercion::Preserve => {
+            return Ok(preserved_call(
+                "atan2",
+                &[Value::Number(y), Value::Number(x)],
+            ))
+        }
         StepCoercion::Error(e) => return Err(e),
     };
     Ok(degrees(y.value.atan2(xv).to_degrees()))
@@ -656,7 +704,9 @@ fn remainder(
     let b = require_num(params, pos_args, named, 1, fname, pos)?;
     let bv = match combine_into(&b, &a, pos) {
         StepCoercion::Value(v) => v,
-        StepCoercion::Preserve => return Ok(preserved_call(fname, &[Value::Number(a), Value::Number(b)])),
+        StepCoercion::Preserve => {
+            return Ok(preserved_call(fname, &[Value::Number(a), Value::Number(b)]))
+        }
         StepCoercion::Error(e) => return Err(e),
     };
     let value = if bv == 0.0 {
@@ -700,7 +750,10 @@ fn min_max(
                 .iter()
                 .find(|v| !matches!(v, Value::Number(_)) && !value_is_calc_substitution(v))
             {
-                return Err(Error::at(format!("{} is not a number.", bad.to_css(false)), pos));
+                return Err(Error::at(
+                    format!("{} is not a number.", bad.to_css(false)),
+                    pos,
+                ));
             }
             Ok(preserved_call(fname, &args))
         }
@@ -819,10 +872,17 @@ fn clamp(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Valu
 /// unit preserved). dart-sass requires exactly one number; a non-number or
 /// extra arguments are an error (unlike the global CSS `round()` calculation,
 /// which accepts a rounding strategy and step and preserves unknown args).
-pub(super) fn module_round(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+pub(super) fn module_round(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     if pos_args.len() > 1 {
         return Err(Error::at(
-            format!("Only 1 argument allowed, but {} were passed.", pos_args.len()),
+            format!(
+                "Only 1 argument allowed, but {} were passed.",
+                pos_args.len()
+            ),
             pos,
         ));
     }
@@ -848,7 +908,10 @@ pub(super) fn module_min_max(
     // Every argument must be a number (dart-sass: "<v> is not a number.").
     for v in &args {
         if !matches!(v, Value::Number(_)) {
-            return Err(Error::at(format!("{} is not a number.", v.to_css(false)), pos));
+            return Err(Error::at(
+                format!("{} is not a number.", v.to_css(false)),
+                pos,
+            ));
         }
     }
     match reduce_min_max(&args, is_min, pos)? {
@@ -882,7 +945,11 @@ pub(super) fn module_min_max(
 /// value with a real unit is an error). dart-sass: `min >= max` → `min`;
 /// `number <= min` → `min`; `number >= max` → `max`; otherwise `number`,
 /// keeping the winning argument's own unit.
-pub(super) fn module_clamp(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+pub(super) fn module_clamp(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     let params = ["min", "number", "max"];
     if pos_args.len() > params.len() {
         return Err(Error::at(
@@ -1259,7 +1326,11 @@ fn degrees(value: f64) -> Value {
 
 fn incompatible(a: &Number, b: &Number, pos: Pos) -> Error {
     Error::at(
-        format!("{} and {} are incompatible.", a.to_css(false), b.to_css(false)),
+        format!(
+            "{} and {} are incompatible.",
+            a.to_css(false),
+            b.to_css(false)
+        ),
         pos,
     )
 }
@@ -1306,7 +1377,9 @@ mod tests {
     }
 
     fn err(name: &str, args: &[Value]) -> bool {
-        try_call(name, args, &[], pos()).expect("name owned").is_err()
+        try_call(name, args, &[], pos())
+            .expect("name owned")
+            .is_err()
     }
 
     #[test]
@@ -1354,7 +1427,10 @@ mod tests {
             "-125px"
         );
         // Two-argument nearest-with-step and unit coercion.
-        assert_eq!(call("round", &[n(117.0, ""), n(25.0, "")]).to_css(false), "125");
+        assert_eq!(
+            call("round", &[n(117.0, ""), n(25.0, "")]).to_css(false),
+            "125"
+        );
         assert_eq!(
             call("round", &[n(117.0, "cm"), n(25.0, "mm")]).to_css(false),
             "117.5cm"
@@ -1378,13 +1454,19 @@ mod tests {
 
     #[test]
     fn min_max_pick_winning_argument_unit() {
-        assert_eq!(call("min", &[n(1.0, "px"), n(2.0, "px")]).to_css(false), "1px");
+        assert_eq!(
+            call("min", &[n(1.0, "px"), n(2.0, "px")]).to_css(false),
+            "1px"
+        );
         assert_eq!(
             call("max", &[n(1.0, ""), n(2.0, ""), n(3.0, "")]).to_css(false),
             "3"
         );
         // min(1in, 2cm): 1in == 2.54cm > 2cm, so 2cm wins (keeps cm).
-        assert_eq!(call("min", &[n(1.0, "in"), n(2.0, "cm")]).to_css(false), "2cm");
+        assert_eq!(
+            call("min", &[n(1.0, "in"), n(2.0, "cm")]).to_css(false),
+            "2cm"
+        );
         // single arg returns itself even with an unknown unit.
         assert_eq!(call("min", &[n(1.0, "vw")]).to_css(false), "1vw");
     }
@@ -1452,7 +1534,10 @@ mod tests {
         assert_eq!(call("asin", &[n(0.5, "")]).to_css(false), "30deg");
         assert_eq!(call("acos", &[n(1.0, "")]).to_css(false), "0deg");
         assert_eq!(call("atan", &[n(1.0, "")]).to_css(false), "45deg");
-        assert_eq!(call("atan2", &[n(1.0, ""), n(1.0, "")]).to_css(false), "45deg");
+        assert_eq!(
+            call("atan2", &[n(1.0, ""), n(1.0, "")]).to_css(false),
+            "45deg"
+        );
     }
 
     #[test]
@@ -1468,7 +1553,10 @@ mod tests {
     #[test]
     fn hypot_converts_onto_first_unit() {
         assert_eq!(call("hypot", &[n(3.0, ""), n(4.0, "")]).to_css(false), "5");
-        assert_eq!(call("hypot", &[n(3.0, "px"), n(4.0, "px")]).to_css(false), "5px");
+        assert_eq!(
+            call("hypot", &[n(3.0, "px"), n(4.0, "px")]).to_css(false),
+            "5px"
+        );
         assert!(err("hypot", &[n(3.0, "px"), n(4.0, "")]));
     }
 
@@ -1478,7 +1566,10 @@ mod tests {
         assert_eq!(call("rem", &[n(-10.0, ""), n(3.0, "")]).to_css(false), "-1");
         assert_eq!(call("mod", &[n(-10.0, ""), n(3.0, "")]).to_css(false), "2");
         // 10px rem 3pt -> 3pt == 4px, 10 % 4 == 2 -> 2px.
-        assert_eq!(call("rem", &[n(10.0, "px"), n(3.0, "pt")]).to_css(false), "2px");
+        assert_eq!(
+            call("rem", &[n(10.0, "px"), n(3.0, "pt")]).to_css(false),
+            "2px"
+        );
         assert!(err("rem", &[n(10.0, "px"), n(3.0, "")]));
     }
 

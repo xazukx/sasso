@@ -42,8 +42,8 @@ fn main() {
         handles.push(thread::spawn(move || {
             for i in 0..iters {
                 let idx = (t + i) % SOURCES.len();
-                let got =
-                    compile(SOURCES[idx], &Options::default()).expect("threaded compile should succeed");
+                let got = compile(SOURCES[idx], &Options::default())
+                    .expect("threaded compile should succeed");
                 assert_eq!(
                     got, reference[idx],
                     "thread {t} iter {i}: output diverged from the reference (arena interference?)"

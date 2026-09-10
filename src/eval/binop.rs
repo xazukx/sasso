@@ -21,7 +21,6 @@ pub enum BinOp {
     SingleEq,
 }
 
-
 /// Evaluate the `/` operator. When `slash` is set and both operands are
 /// numbers, produce a slash-separated value that serializes as `a/b` but
 /// behaves numerically as the quotient; otherwise perform real division.
@@ -47,7 +46,9 @@ pub(crate) fn eval_div(l: Value, r: Value, slash: bool, pos: Pos) -> Result<Valu
     // cases; guarding on `slash` keeps the common path from building the
     // tuple's clones eagerly.
     if slash {
-        if let (Value::Number(a), Value::Number(b)) = (l.clone().without_slash(), r.clone().without_slash()) {
+        if let (Value::Number(a), Value::Number(b)) =
+            (l.clone().without_slash(), r.clone().without_slash())
+        {
             let repr = format!("{}/{}", slash_repr(&l), slash_repr(&r));
             return Ok(Value::Slash(a.div(&b), repr));
         }

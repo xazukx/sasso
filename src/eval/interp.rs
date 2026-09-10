@@ -12,10 +12,10 @@
 //! exactly one place — and the result is cached in the arena, so a selector
 //! inside a `@for` body is parsed once however many times it is evaluated.
 
-use oxc_css_parser::{ParserBuilder, Span, ast as ox};
+use oxc_css_parser::{ast as ox, ParserBuilder, Span};
 
+use super::{interp_checked, Evaluator};
 use crate::error::Error;
-use super::{Evaluator, interp_checked};
 
 /// One chunk of interpolated text: a literal run, or an expression to
 /// evaluate and splice in.
@@ -84,7 +84,10 @@ impl<'a> Evaluator<'a> {
     /// interpolation body once and caching it in the arena.
     fn chunks(&mut self, span: Span) -> Result<&'a [Chunk<'a>], Error> {
         let file = self.file;
-        if let Some(cached) = self.interp_cache.get(&(file.text.as_ptr() as usize, span.start, span.end)) {
+        if let Some(cached) =
+            self.interp_cache
+                .get(&(file.text.as_ptr() as usize, span.start, span.end))
+        {
             return Ok(cached);
         }
         let text = file.text_of(span);

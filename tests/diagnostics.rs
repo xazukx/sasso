@@ -106,5 +106,8 @@ fn invalid_utf8_input_exits_65() {
     let _ = std::fs::remove_dir_all(&dir);
 
     assert_eq!(out.status.code(), Some(65));
-    assert_eq!(String::from_utf8_lossy(&out.stderr), "Error: Invalid UTF-8.\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "Error: Invalid UTF-8.\n"
+    );
 }

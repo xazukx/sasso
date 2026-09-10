@@ -163,10 +163,7 @@ impl<'a> Evaluator<'a> {
     /// Build the body of a top-level plain-CSS at-rule: style rules (with their
     /// own first-level bubbling), bare declarations, comments, and nested
     /// at-rules.
-    fn css_at_body(
-        &mut self,
-        block: &'a ox::SimpleBlock<'a>,
-    ) -> Result<Vec<OutNode>, Error> {
+    fn css_at_body(&mut self, block: &'a ox::SimpleBlock<'a>) -> Result<Vec<OutNode>, Error> {
         let mut out: Vec<OutNode> = Vec::new();
         for item in interleave(self.file, &block.statements, block.span) {
             match item {
@@ -314,11 +311,7 @@ impl<'a> Evaluator<'a> {
     /// Process one plain-CSS block entry into rule-body items (the shared body
     /// of [`Evaluator::css_body`] and the non-bubbling arm of
     /// [`Evaluator::css_rule_children`]).
-    fn css_body_item(
-        &mut self,
-        item: Item<'a, 'a>,
-        items: &mut Vec<OutItem>,
-    ) -> Result<(), Error> {
+    fn css_body_item(&mut self, item: Item<'a, 'a>, items: &mut Vec<OutItem>) -> Result<(), Error> {
         match item {
             Item::Comment(c) => {
                 let (text, lines) = self.css_comment(c)?;
@@ -412,10 +405,7 @@ impl<'a> Evaluator<'a> {
     /// A plain-CSS at-rule's name and canonical prelude text. `@media` and
     /// `@supports` re-serialize through their typed forms; everything else is
     /// its prelude text with interpolation resolved.
-    fn css_at_prelude(
-        &mut self,
-        at: &'a ox::AtRule<'a>,
-    ) -> Result<(String, String), Error> {
+    fn css_at_prelude(&mut self, at: &'a ox::AtRule<'a>) -> Result<(String, String), Error> {
         let name = at.name.name.to_string();
         let prelude = match &at.prelude {
             Some(ox::AtRulePrelude::Media(q)) => {

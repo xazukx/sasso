@@ -27,7 +27,11 @@ fn err_span(source: &str) -> (String, (usize, usize), String) {
         .unwrap()
         .compile()
         .expect_err("expected a compile error");
-    assert!(err.has_position(), "error must carry a position: {}", err.message);
+    assert!(
+        err.has_position(),
+        "error must carry a position: {}",
+        err.message
+    );
     assert!(
         err.rendered.is_some(),
         "a positioned error must render a snippet + frame trace: {}",
@@ -122,7 +126,10 @@ fn misplaced_at_rules_blame_themselves() {
 fn unmatched_extend_is_positioned_and_rendered() {
     // dart-sass 1.100: `in.scss 1:5`, caret over `@extend .b`.
     let (msg, pos, span) = err_span("a { @extend .b; }\nb { c: d; }\n");
-    assert!(msg.starts_with("The target selector was not found."), "{msg}");
+    assert!(
+        msg.starts_with("The target selector was not found."),
+        "{msg}"
+    );
     assert_eq!((pos, span), ((1, 5), "@extend .b".to_string()));
 }
 
@@ -228,10 +235,16 @@ fn errors_inside_a_mixin_blame_the_innermost_node() {
 
     let files = one(src);
     let options = Options::default().with_importer(&files);
-    let err = Compiler::new(&arena, "in.scss", &options).unwrap().compile().unwrap_err();
+    let err = Compiler::new(&arena, "in.scss", &options)
+        .unwrap()
+        .compile()
+        .unwrap_err();
     let rendered = err.to_string();
     assert!(rendered.contains("in.scss 2:6"), "{rendered}");
-    assert!(rendered.contains("in.scss 4:6"), "call site frame:\n{rendered}");
+    assert!(
+        rendered.contains("in.scss 4:6"),
+        "call site frame:\n{rendered}"
+    );
 }
 
 /// A statement must be terminated by `;`, by the `}` that closes its block, or
@@ -245,19 +258,34 @@ fn missing_statement_terminator_is_positioned() {
     // The scan stops on the `.a` that opens the next line (dart-sass 1.104
     // reports `in.scss 1:18`, the end of line 1).
     let (msg, pos, _) = err_span("@use \"other\" as t\n.a { color: red; }\n");
-    assert_eq!((msg.as_str(), pos), ("expect token `;`, but found `.`", (2, 1)));
+    assert_eq!(
+        (msg.as_str(), pos),
+        ("expect token `;`, but found `.`", (2, 1))
+    );
     // A value runs on into the next declaration's name, so the scan gives up
     // at that declaration's `:` — the same place dart-sass 1.104 does.
     let (msg, pos, _) = err_span("$a: 1\n$b: 2;\n");
-    assert_eq!((msg.as_str(), pos), ("expect token `;`, but found `:`", (2, 3)));
+    assert_eq!(
+        (msg.as_str(), pos),
+        ("expect token `;`, but found `:`", (2, 3))
+    );
     // Likewise `in.scss 2:11` in dart-sass 1.104, though the wording differs.
     let (msg, pos, _) = err_span(".a { color: red\nbackground: blue; }\n");
-    assert_eq!((msg.as_str(), pos), ("component value is expected", (2, 11)));
+    assert_eq!(
+        (msg.as_str(), pos),
+        ("component value is expected", (2, 11))
+    );
     // A comment on a later line is trivia the scan passes over, and the caret
     // follows it past the comment (dart-sass 1.104: `in.scss 2:5`).
     let (msg, pos, _) = err_span("@use \"other\" as t\n// c\n.a { color: red; }\n");
-    assert_eq!((msg.as_str(), pos), ("expect token `;`, but found `.`", (3, 1)));
+    assert_eq!(
+        (msg.as_str(), pos),
+        ("expect token `;`, but found `.`", (3, 1))
+    );
     // Blank lines are trivia too (dart-sass 1.104: `in.scss 1:21`).
     let (msg, pos, _) = err_span("@use \"other\" as t   \n\n.a { color: red; }\n");
-    assert_eq!((msg.as_str(), pos), ("expect token `;`, but found `.`", (3, 1)));
+    assert_eq!(
+        (msg.as_str(), pos),
+        ("expect token `;`, but found `.`", (3, 1))
+    );
 }

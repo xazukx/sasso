@@ -9,8 +9,7 @@
 //! the parser's own nodes, so evaluation always reads the parse directly.
 
 use oxc_css_parser::token::Token;
-use oxc_css_parser::{Span, ast as ox};
-
+use oxc_css_parser::{ast as ox, Span};
 
 /// One argument of a call, as a borrowed view over the parser's nodes.
 #[derive(Clone, Copy)]

@@ -191,7 +191,9 @@ fn d2d(ieee_mantissa: u64, ieee_exponent: u32) -> FloatingDecimal64 {
         // (half away from zero) — verified by the differential fuzz — so the
         // even-adjustment is deliberately omitted.
         // We need to take vr + 1 if vr is outside bounds or we need to round up.
-        vr + u64::from((vr == vm && (!accept_bounds || !vm_is_trailing_zeros)) || last_removed_digit >= 5)
+        vr + u64::from(
+            (vr == vm && (!accept_bounds || !vm_is_trailing_zeros)) || last_removed_digit >= 5,
+        )
     } else {
         // Specialized common case: no trailing zeros in vr/vm.
         let mut round_up = false;
@@ -237,7 +239,9 @@ pub(crate) fn format64(f: f64, out: &mut String) {
     let sign = (bits >> (MANTISSA_BITS + EXPONENT_BITS)) != 0;
     let ieee_mantissa = bits & ((1u64 << MANTISSA_BITS) - 1);
     let ieee_exponent = ((bits >> MANTISSA_BITS) & ((1u64 << EXPONENT_BITS) - 1)) as u32;
-    debug_assert!(ieee_exponent != ((1 << EXPONENT_BITS) - 1) && (ieee_exponent != 0 || ieee_mantissa != 0));
+    debug_assert!(
+        ieee_exponent != ((1 << EXPONENT_BITS) - 1) && (ieee_exponent != 0 || ieee_mantissa != 0)
+    );
 
     if sign {
         out.push('-');
@@ -341,7 +345,8 @@ mod tests {
         let handles: Vec<_> = (0..threads)
             .map(|t| {
                 std::thread::spawn(move || {
-                    let mut state: u64 = 0x9e3779b97f4a7c15 ^ (t.wrapping_mul(0xbf58476d1ce4e5b9) + 1);
+                    let mut state: u64 =
+                        0x9e3779b97f4a7c15 ^ (t.wrapping_mul(0xbf58476d1ce4e5b9) + 1);
                     let mut rng = move || {
                         state ^= state << 13;
                         state ^= state >> 7;

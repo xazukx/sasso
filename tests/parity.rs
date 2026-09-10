@@ -11,7 +11,9 @@ use std::process::{Command, Stdio};
 use sasso::{compile, FsImporter, Options, OutputStyle};
 
 fn enabled() -> bool {
-    std::env::var("SASSO_PARITY").map(|v| v != "0").unwrap_or(false)
+    std::env::var("SASSO_PARITY")
+        .map(|v| v != "0")
+        .unwrap_or(false)
 }
 
 /// Compile `scss` with dart-sass (expanded, via stdin), returning its CSS.
@@ -101,8 +103,11 @@ fn assert_parity_compressed(scss: &str) {
     if !enabled() {
         return;
     }
-    let ours =
-        compile(scss, &Options::default().with_style(OutputStyle::Compressed)).expect("our compile failed");
+    let ours = compile(
+        scss,
+        &Options::default().with_style(OutputStyle::Compressed),
+    )
+    .expect("our compile failed");
     match dart_sass_compressed(scss) {
         // `dart_sass_styled` already strips the CLI's trailing newline, and our
         // compressed output never has one, so compare the bytes directly.
@@ -154,7 +159,9 @@ fn parity_nesting_combinators() {
 
 #[test]
 fn parity_interpolation() {
-    assert_parity("$name: warning;\n$i: 3;\n.icon-#{$name} { content: \"#{$name}-#{$i}\"; }\n.col-#{$i} { width: 10px * $i; }\n");
+    assert_parity(
+        "$name: warning;\n$i: 3;\n.icon-#{$name} { content: \"#{$name}-#{$i}\"; }\n.col-#{$i} { width: 10px * $i; }\n",
+    );
 }
 
 #[test]
@@ -192,9 +199,7 @@ fn parity_at_rule_font_face() {
 
 #[test]
 fn parity_at_rule_page_and_unknown() {
-    assert_parity(
-        "@page {\n  margin: 1cm;\n}\n@foo bar baz {\n  a: b;\n}\n@blockless;\n@with-prelude value;\n",
-    );
+    assert_parity("@page {\n  margin: 1cm;\n}\n@foo bar baz {\n  a: b;\n}\n@blockless;\n@with-prelude value;\n");
 }
 
 #[test]
@@ -294,9 +299,7 @@ fn parity_slash_division() {
 
 #[test]
 fn parity_at_rule_bubbling() {
-    assert_parity(
-        ".a {\n  color: black;\n  @media-like screen {\n    color: red;\n  }\n  .b { color: green; }\n}\n",
-    );
+    assert_parity(".a {\n  color: black;\n  @media-like screen {\n    color: red;\n  }\n  .b { color: green; }\n}\n");
 }
 
 #[test]
@@ -314,7 +317,10 @@ fn parity_warn_debug_emit_no_css() {
 #[test]
 fn at_error_aborts_compilation() {
     // @error must abort with an Error (not emit CSS). This runs offline.
-    let res = compile("@error \"boom\";\n.a { color: red; }\n", &Options::default());
+    let res = compile(
+        "@error \"boom\";\n.a { color: red; }\n",
+        &Options::default(),
+    );
     assert!(res.is_err(), "@error should abort compilation");
 }
 
@@ -325,9 +331,7 @@ fn parity_supports() {
 
 #[test]
 fn parity_supports_nested_and_blockless() {
-    assert_parity(
-        "@supports (a: b) and ((c: d) or (e: f)) {\n  .g { h: i; }\n}\n@supports (x: y) {@inner foo}\n",
-    );
+    assert_parity("@supports (a: b) and ((c: d) or (e: f)) {\n  .g { h: i; }\n}\n@supports (x: y) {@inner foo}\n");
 }
 
 #[test]
@@ -363,7 +367,9 @@ fn keyframes_selector_list_joins_on_one_line() {
     );
     // Control: the style-rule break stays.
     assert_eq!(ours("a,\nb {\n  c: d;\n}\n"), "a,\nb {\n  c: d;\n}\n");
-    assert_parity("@keyframes a {\n  0%,\n  60%,\n  100% {\n    opacity: 1;\n  }\n}\na,\nb {\n  c: d;\n}\n");
+    assert_parity(
+        "@keyframes a {\n  0%,\n  60%,\n  100% {\n    opacity: 1;\n  }\n}\na,\nb {\n  c: d;\n}\n",
+    );
 }
 
 #[test]
@@ -462,7 +468,11 @@ fn media_rejects_bare_declarations_at_root() {
     // A bare declaration directly in a media block without an enclosing style
     // rule is an error in dart-sass; with a style rule it is allowed.
     assert!(compile("@media screen { color: red; }\n", &Options::default()).is_err());
-    assert!(compile("@media a { @media b { color: red; } }\n", &Options::default()).is_err());
+    assert!(compile(
+        "@media a { @media b { color: red; } }\n",
+        &Options::default()
+    )
+    .is_err());
     assert_parity(".x {\n  @media screen {\n    color: red;\n  }\n}\n");
 }
 
@@ -595,7 +605,10 @@ fn rgb_hsl_special_value_passthrough() {
 fn rgb_hsl_plain_number_channels_keep_function_spelling() {
     // The one-argument channels list computes a color but keeps the rgb()/hsl()
     // spelling (it never collapses to hex).
-    assert_eq!(ours("a {b: rgb(18 52 86)}\n"), "a {\n  b: rgb(18, 52, 86);\n}\n");
+    assert_eq!(
+        ours("a {b: rgb(18 52 86)}\n"),
+        "a {\n  b: rgb(18, 52, 86);\n}\n"
+    );
     assert_eq!(
         ours("a {b: rgb(1 2 3 / 0.5)}\n"),
         "a {\n  b: rgba(1, 2, 3, 0.5);\n}\n"
@@ -684,7 +697,10 @@ fn lab_family_validation_and_passthrough() {
         ours("a {b: lab(from var(--c) l a b)}\n"),
         "a {\n  b: lab(from var(--c) l a b);\n}\n"
     );
-    assert_eq!(ours("a {b: lch(1% 2 3deg)}\n"), "a {\n  b: lch(1% 2 3deg);\n}\n");
+    assert_eq!(
+        ours("a {b: lch(1% 2 3deg)}\n"),
+        "a {\n  b: lch(1% 2 3deg);\n}\n"
+    );
     // Malformed calls raise validation errors.
     for src in [
         "a {b: lab(1% 2)}\n",
@@ -910,18 +926,24 @@ impl sasso::Importer for MapImporter {
         url: &str,
         _ctx: &sasso::CanonicalizeContext<'_>,
     ) -> Result<Option<sasso::CanonicalUrl>, sasso::ImporterError> {
-        Ok(self.0.contains_key(url).then(|| sasso::CanonicalUrl::new(url)))
+        Ok(self
+            .0
+            .contains_key(url)
+            .then(|| sasso::CanonicalUrl::new(url)))
     }
 
     fn load(
         &self,
         canonical: &sasso::CanonicalUrl,
     ) -> Result<Option<sasso::ImporterResult>, sasso::ImporterError> {
-        Ok(self.0.get(canonical.as_str()).map(|c| sasso::ImporterResult {
-            contents: c.clone(),
-            syntax: sasso::Syntax::Scss,
-            source_map_url: None,
-        }))
+        Ok(self
+            .0
+            .get(canonical.as_str())
+            .map(|c| sasso::ImporterResult {
+                contents: c.clone(),
+                syntax: sasso::Syntax::Scss,
+                source_map_url: None,
+            }))
     }
 }
 
@@ -1136,7 +1158,9 @@ fn special_url_function_passthrough() {
     assert_parity("a { b: url(c, d); }\n");
     assert_parity("$a: b;\nc { d: url($a); }\n");
     assert_parity("$a: b;\nc { d: -e-url($a); }\n");
-    assert_parity("$f: bar;\na {\n  foo: url($f);\n  foo: url(#{$f});\n  foo: url(\"x?v=#{$f}\");\n}\n");
+    assert_parity(
+        "$f: bar;\na {\n  foo: url($f);\n  foo: url(#{$f});\n  foo: url(\"x?v=#{$f}\");\n}\n",
+    );
 }
 
 #[test]
@@ -1456,14 +1480,20 @@ fn parent_selector_as_value() {
     // document root `&` is `null` (interpolates to empty). A content block
     // passed to a mixin without `@content` is an error.
     assert_eq!(ours("a {\n  b: &;\n}\n"), "a {\n  b: a;\n}\n");
-    assert_eq!(ours(".x, .y {\n  c: &;\n}\n"), ".x, .y {\n  c: .x, .y;\n}\n");
+    assert_eq!(
+        ours(".x, .y {\n  c: &;\n}\n"),
+        ".x, .y {\n  c: .x, .y;\n}\n"
+    );
     assert_eq!(
         ours(".foo {\n  .bar {\n    d: &;\n  }\n}\n"),
         ".foo .bar {\n  d: .foo .bar;\n}\n"
     );
     // `&` is always a comma list, so `nth(&, 1)` is the first complex
     // selector and a descendant selector reports two space-separated items.
-    assert_eq!(ours(".x, .y {\n  c: nth(&, 1);\n}\n"), ".x, .y {\n  c: .x;\n}\n");
+    assert_eq!(
+        ours(".x, .y {\n  c: nth(&, 1);\n}\n"),
+        ".x, .y {\n  c: .x;\n}\n"
+    );
     assert_eq!(
         ours(".a .b {\n  c: length(nth(&, 1));\n}\n"),
         ".a .b {\n  c: 2;\n}\n"
@@ -1471,7 +1501,11 @@ fn parent_selector_as_value() {
     // Interpolation of the root `&` (null) yields the empty string.
     assert_eq!(ours("a {\n  c: \"#{&}!\";\n}\n"), "a {\n  c: \"a!\";\n}\n");
     // A selector that resolves to nothing (`#{&}` at the root) is rejected.
-    assert!(compile("#{&} {\n  foo {\n    bar: baz;\n  }\n}\n", &Options::default()).is_err());
+    assert!(compile(
+        "#{&} {\n  foo {\n    bar: baz;\n  }\n}\n",
+        &Options::default()
+    )
+    .is_err());
     // A content block for a mixin that never uses `@content` is an error.
     assert!(compile(
         "@mixin m() { x: 1; }\na { @include m { y: 2; } }\n",
@@ -1564,7 +1598,10 @@ fn math_unit_rules_and_arity() {
     // atan2/hypot preserve their call verbatim when an operand is a `%`
     // (context-dependent) or an unknown/relative unit can't be combined; an
     // all-compatible call still folds. Byte-matched to dart-sass. Offline.
-    assert_eq!(ours("a {b: atan2(1%, 2%)}\n"), "a {\n  b: atan2(1%, 2%);\n}\n");
+    assert_eq!(
+        ours("a {b: atan2(1%, 2%)}\n"),
+        "a {\n  b: atan2(1%, 2%);\n}\n"
+    );
     assert_eq!(
         ours("a {b: atan2(1px, 10%)}\n"),
         "a {\n  b: atan2(1px, 10%);\n}\n"
@@ -1577,14 +1614,20 @@ fn math_unit_rules_and_arity() {
         ours("a {b: atan2(1foo, 2foo)}\n"),
         "a {\n  b: 26.5650511771deg;\n}\n"
     );
-    assert_eq!(ours("a {b: hypot(1%, 2%)}\n"), "a {\n  b: hypot(1%, 2%);\n}\n");
+    assert_eq!(
+        ours("a {b: hypot(1%, 2%)}\n"),
+        "a {\n  b: hypot(1%, 2%);\n}\n"
+    );
     assert_eq!(
         ours("a {b: hypot(1foo, 2foo)}\n"),
         "a {\n  b: 2.2360679775foo;\n}\n"
     );
     // mod/rem fold equal unknown units but preserve a real+unknown mix.
     assert_eq!(ours("a {b: mod(1%, 2%)}\n"), "a {\n  b: 1%;\n}\n");
-    assert_eq!(ours("a {b: mod(5px, 3%)}\n"), "a {\n  b: mod(5px, 3%);\n}\n");
+    assert_eq!(
+        ours("a {b: mod(5px, 3%)}\n"),
+        "a {\n  b: mod(5px, 3%);\n}\n"
+    );
     // Calc-style math names fold case-insensitively.
     assert_eq!(ours("a {b: SiN(1deg)}\n"), "a {\n  b: 0.0174524064;\n}\n");
     assert_eq!(ours("a {b: AbS(-2)}\n"), "a {\n  b: 2;\n}\n");
@@ -1649,7 +1692,10 @@ fn math_min_max_clamp_unit_rules() {
     assert_eq!(ours("a {b: min(1px, 1in, 1cm)}\n"), "a {\n  b: 1px;\n}\n");
     assert_eq!(ours("a {b: max(1px, 1in, 1cm)}\n"), "a {\n  b: 1in;\n}\n");
     assert_eq!(ours("a {b: min(3d, 2, 1e)}\n"), "a {\n  b: 1e;\n}\n");
-    assert_eq!(ours("a {b: min(1px, 2vw)}\n"), "a {\n  b: min(1px, 2vw);\n}\n");
+    assert_eq!(
+        ours("a {b: min(1px, 2vw)}\n"),
+        "a {\n  b: min(1px, 2vw);\n}\n"
+    );
     assert_eq!(ours("a {b: min(1c, 2d)}\n"), "a {\n  b: min(1c, 2d);\n}\n");
     assert_eq!(ours("a {b: min(1%, 2%)}\n"), "a {\n  b: 1%;\n}\n");
     assert!(compile("a {b: min(1s, 2px)}\n", &Options::default()).is_err());
@@ -1879,17 +1925,16 @@ fn legacy_channels_non_number_channel_error() {
     };
     assert!(err("a{b: rgb(\"from\" #aaa r g b)}\n")
         .contains("$channels: Expected red channel to be a number, was \"from\"."));
-    assert!(
-        err("a{b: rgb(c #aaa r g b)}\n").contains("$channels: Expected red channel to be a number, was c.")
-    );
-    assert!(
-        err("a{b: hsl(c #aaa h s l)}\n").contains("$channels: Expected hue channel to be a number, was c.")
-    );
-    assert!(
-        err("a{b: hwb(c #aaa h w b)}\n").contains("$channels: Expected hue channel to be a number, was c.")
-    );
-    assert!(err("a{b: rgb(1 c d)}\n").contains("$channels: Expected green channel to be a number, was c."));
-    assert!(err("a{b: rgb(1 2 3 c d)}\n").contains("$channels: Expected channel 4 to be a number, was c."));
+    assert!(err("a{b: rgb(c #aaa r g b)}\n")
+        .contains("$channels: Expected red channel to be a number, was c."));
+    assert!(err("a{b: hsl(c #aaa h s l)}\n")
+        .contains("$channels: Expected hue channel to be a number, was c."));
+    assert!(err("a{b: hwb(c #aaa h w b)}\n")
+        .contains("$channels: Expected hue channel to be a number, was c."));
+    assert!(err("a{b: rgb(1 c d)}\n")
+        .contains("$channels: Expected green channel to be a number, was c."));
+    assert!(err("a{b: rgb(1 2 3 c d)}\n")
+        .contains("$channels: Expected channel 4 to be a number, was c."));
     // A `from`-relative call (even with a var() base and a slash alpha) is kept
     // verbatim, not reported as an error.
     assert_eq!(
@@ -1911,7 +1956,10 @@ fn non_finite_number_serializes_as_calc() {
         ours("a {b: (1px / 0) * 1}\n"),
         "a {\n  b: calc(infinity * 1px);\n}\n"
     );
-    assert_eq!(ours("a {b: (0px / 0) * 1}\n"), "a {\n  b: calc(NaN * 1px);\n}\n");
+    assert_eq!(
+        ours("a {b: (0px / 0) * 1}\n"),
+        "a {\n  b: calc(NaN * 1px);\n}\n"
+    );
     // Interpolation produces the same calc form (no longer a bare `Infinity`).
     assert_eq!(ours("a {b: #{1e400}}\n"), "a {\n  b: calc(infinity);\n}\n");
 }
@@ -1920,8 +1968,14 @@ fn non_finite_number_serializes_as_calc() {
 fn list_is_bracketed_and_zip() {
     // `is-bracketed` reports the bracket flag; a bare value, an empty list,
     // and a plain space/comma list are all `false`.
-    assert_eq!(ours("a {b: is-bracketed([a b c])}\n"), "a {\n  b: true;\n}\n");
-    assert_eq!(ours("a {b: is-bracketed(a b c)}\n"), "a {\n  b: false;\n}\n");
+    assert_eq!(
+        ours("a {b: is-bracketed([a b c])}\n"),
+        "a {\n  b: true;\n}\n"
+    );
+    assert_eq!(
+        ours("a {b: is-bracketed(a b c)}\n"),
+        "a {\n  b: false;\n}\n"
+    );
     assert_eq!(ours("a {b: is-bracketed(())}\n"), "a {\n  b: false;\n}\n");
     // `zip` interleaves corresponding elements into a comma list of space
     // lists, truncating to the shortest input.
@@ -1938,7 +1992,10 @@ fn list_is_bracketed_and_zip() {
 fn meta_feature_exists_known_set() {
     // `feature-exists` is `true` for dart-sass's fixed feature set (quoted or
     // unquoted), and `false` for any other name.
-    assert_eq!(ours("a {b: feature-exists(at-error)}\n"), "a {\n  b: true;\n}\n");
+    assert_eq!(
+        ours("a {b: feature-exists(at-error)}\n"),
+        "a {\n  b: true;\n}\n"
+    );
     assert_eq!(
         ours("a {b: feature-exists(global-variable-shadowing)}\n"),
         "a {\n  b: true;\n}\n"
@@ -1955,7 +2012,10 @@ fn meta_feature_exists_known_set() {
         ours("a {b: feature-exists(extend-selector-pseudoclass)}\n"),
         "a {\n  b: true;\n}\n"
     );
-    assert_eq!(ours("a {b: feature-exists(nope)}\n"), "a {\n  b: false;\n}\n");
+    assert_eq!(
+        ours("a {b: feature-exists(nope)}\n"),
+        "a {\n  b: false;\n}\n"
+    );
 }
 
 #[test]
@@ -1977,7 +2037,10 @@ fn equality_is_unit_and_format_aware() {
         "a {\n  b: true;\n}\n"
     );
     // Genuinely different colors stay unequal.
-    assert_eq!(ours("a {b: red == hsl(0, 0%, 50%)}\n"), "a {\n  b: false;\n}\n");
+    assert_eq!(
+        ours("a {b: red == hsl(0, 0%, 50%)}\n"),
+        "a {\n  b: false;\n}\n"
+    );
 }
 
 /// Phase-1a parity proof (offline). The `@extend` engine keys its ~28 maps/sets
@@ -2194,7 +2257,10 @@ fn quoted_string_escapes_are_normalized() {
     // A string containing `\"` but no `'` is rewrapped in single quotes; one
     // containing both keeps double quotes and escapes the inner `"`.
     assert_eq!(ours("a {b: \"a\\\"b\"}\n"), "a {\n  b: 'a\"b';\n}\n");
-    assert_eq!(ours("a {b: \"a'b\\\"c\"}\n"), "a {\n  b: \"a'b\\\"c\";\n}\n");
+    assert_eq!(
+        ours("a {b: \"a'b\\\"c\"}\n"),
+        "a {\n  b: \"a'b\\\"c\";\n}\n"
+    );
     // A literal backslash round-trips as `\\`.
     assert_eq!(ours("a {b: \"\\\\\"}\n"), "a {\n  b: \"\\\\\";\n}\n");
 }
@@ -2294,8 +2360,14 @@ fn single_equals_ms_filter_operator_in_args() {
     assert_eq!(ours("a {b: foo(a = b)}\n"), "a {\n  b: foo(a=b);\n}\n");
     assert_eq!(ours("a {b: foo(a=b=c)}\n"), "a {\n  b: foo(a=b=c);\n}\n");
     assert_eq!(ours("a {b: foo((1 + 2)=3)}\n"), "a {\n  b: foo(3=3);\n}\n");
-    assert_eq!(ours("a {b: foo(a b = c d)}\n"), "a {\n  b: foo(a b=c d);\n}\n");
-    assert_eq!(ours("a {b: foo(1 + 2 = 3 + 4)}\n"), "a {\n  b: foo(3=7);\n}\n");
+    assert_eq!(
+        ours("a {b: foo(a b = c d)}\n"),
+        "a {\n  b: foo(a b=c d);\n}\n"
+    );
+    assert_eq!(
+        ours("a {b: foo(1 + 2 = 3 + 4)}\n"),
+        "a {\n  b: foo(3=7);\n}\n"
+    );
     // `==` stays the equality operator inside arguments.
     assert_eq!(ours("a {b: foo(1 == 1)}\n"), "a {\n  b: foo(true);\n}\n");
 }
@@ -2344,13 +2416,25 @@ fn number_rounds_half_away_from_zero_at_tenth_place() {
     // even. `1.5e-10` -> `0.0000000002`, `0.99999999995` -> `1`, and
     // `0.30000000005` -> `0.3000000001`. Verified byte-for-byte against
     // `npx sass --no-source-map --stdin`.
-    assert_eq!(ours("a {b: 0.00000000015}\n"), "a {\n  b: 0.0000000002;\n}\n");
-    assert_eq!(ours("a {b: 0.00000000035}\n"), "a {\n  b: 0.0000000004;\n}\n");
+    assert_eq!(
+        ours("a {b: 0.00000000015}\n"),
+        "a {\n  b: 0.0000000002;\n}\n"
+    );
+    assert_eq!(
+        ours("a {b: 0.00000000035}\n"),
+        "a {\n  b: 0.0000000004;\n}\n"
+    );
     assert_eq!(ours("a {b: 0.99999999995}\n"), "a {\n  b: 1;\n}\n");
     assert_eq!(ours("a {b: 1.99999999995}\n"), "a {\n  b: 2;\n}\n");
-    assert_eq!(ours("a {b: 0.30000000005}\n"), "a {\n  b: 0.3000000001;\n}\n");
+    assert_eq!(
+        ours("a {b: 0.30000000005}\n"),
+        "a {\n  b: 0.3000000001;\n}\n"
+    );
     // Values that already round-tripped correctly must stay unchanged.
-    assert_eq!(ours("a {b: 0.0000000001}\n"), "a {\n  b: 0.0000000001;\n}\n");
+    assert_eq!(
+        ours("a {b: 0.0000000001}\n"),
+        "a {\n  b: 0.0000000001;\n}\n"
+    );
     assert_eq!(ours("a {b: 0.1}\n"), "a {\n  b: 0.1;\n}\n");
     assert_eq!(
         ours("a {b: 123456789.12345678905}\n"),
@@ -2420,7 +2504,10 @@ fn selector_extend_and_replace() {
     // matches, keeping the original; `selector-replace` drops the matched
     // original. Compound extendees (`.a.b`) match a compound only when all
     // their simples are present. All outputs byte-verified against dart-sass.
-    assert_eq!(ours("a {b: selector-extend(c, c, d)}\n"), "a {\n  b: c, d;\n}\n");
+    assert_eq!(
+        ours("a {b: selector-extend(c, c, d)}\n"),
+        "a {\n  b: c, d;\n}\n"
+    );
     assert_eq!(
         ours("a {b: selector-extend(\".a .b\", \".b\", \".c\")}\n"),
         "a {\n  b: .a .b, .a .c;\n}\n"
@@ -2434,7 +2521,10 @@ fn selector_extend_and_replace() {
         ours("a {b: selector-extend(\".a .c\", \".a.b\", \".x\")}\n"),
         "a {\n  b: .a .c;\n}\n"
     );
-    assert_eq!(ours("a {b: selector-replace(c, c, d)}\n"), "a {\n  b: d;\n}\n");
+    assert_eq!(
+        ours("a {b: selector-replace(c, c, d)}\n"),
+        "a {\n  b: d;\n}\n"
+    );
     assert_eq!(
         ours("a {b: selector-replace(\".a.b.c\", \".a.b\", \".x\")}\n"),
         "a {\n  b: .c.x;\n}\n"
@@ -2463,7 +2553,10 @@ fn selector_unify_superselector_simple_and_parse() {
     // Incompatible type selectors don't unify; `null` drops the declaration,
     // leaving the rule empty and therefore omitted entirely (as dart-sass does).
     assert_eq!(ours("a {b: selector-unify(a, b)}\n"), "");
-    assert_eq!(ours("a {b: is-superselector(c, d)}\n"), "a {\n  b: false;\n}\n");
+    assert_eq!(
+        ours("a {b: is-superselector(c, d)}\n"),
+        "a {\n  b: false;\n}\n"
+    );
     assert_eq!(
         ours("a {b: is-superselector(\".a\", \".a.b\")}\n"),
         "a {\n  b: true;\n}\n"
@@ -2490,8 +2583,14 @@ fn selector_unify_superselector_simple_and_parse() {
 fn function_exists_recognizes_builtins() {
     // `function-exists` reports `true` for a built-in function and `false`
     // for an unknown name (dart-sass `function-exists`).
-    assert_eq!(ours("a {b: function-exists(rgb)}\n"), "a {\n  b: true;\n}\n");
-    assert_eq!(ours("a {b: function-exists(\"rgb\")}\n"), "a {\n  b: true;\n}\n");
+    assert_eq!(
+        ours("a {b: function-exists(rgb)}\n"),
+        "a {\n  b: true;\n}\n"
+    );
+    assert_eq!(
+        ours("a {b: function-exists(\"rgb\")}\n"),
+        "a {\n  b: true;\n}\n"
+    );
     assert_eq!(ours("a {b: function-exists(c)}\n"), "a {\n  b: false;\n}\n");
     // Arity and type validation matches dart-sass.
     assert!(compile("a {b: function-exists()}\n", &Options::default()).is_err());
@@ -2526,7 +2625,10 @@ fn nested_property_sets() {
     // The value-plus-block form (`prop: value { … }`) emits the value first,
     // then the namespaced children — but only when whitespace follows the
     // colon; `b:c { … }` is a style rule, not a property set.
-    assert_eq!(ours("a { b: c { d: e } }\n"), "a {\n  b: c;\n  b-d: e;\n}\n");
+    assert_eq!(
+        ours("a { b: c { d: e } }\n"),
+        "a {\n  b: c;\n  b-d: e;\n}\n"
+    );
     assert_eq!(ours("a { b:c { d: e } }\n"), "a b:c {\n  d: e;\n}\n");
     // Property sets nest, joining each level with `-`, and interleave with a
     // following sibling separated by `;`.
@@ -2545,14 +2647,20 @@ fn custom_property_declarations() {
     assert_eq!(ours("a { --x: 1 + 2; }\n"), "a {\n  --x: 1 + 2;\n}\n");
     assert_eq!(ours("a { --x: #{1 + 2}; }\n"), "a {\n  --x: 3;\n}\n");
     // Interpolation resolves even inside a quoted string in the value.
-    assert_eq!(ours("a { --x: \"c#{1 + 2}d\"; }\n"), "a {\n  --x: \"c3d\";\n}\n");
+    assert_eq!(
+        ours("a { --x: \"c#{1 + 2}d\"; }\n"),
+        "a {\n  --x: \"c3d\";\n}\n"
+    );
     // A partially interpolated name beginning literally with `--` keeps the
     // raw value, while a fully/initially interpolated name is real SassScript.
     assert_eq!(
         ours("a { --#{only}-name: 1 + 2; }\n"),
         "a {\n  --only-name: 1 + 2;\n}\n"
     );
-    assert_eq!(ours("a { #{--entire}: 1 + 2; }\n"), "a {\n  --entire: 3;\n}\n");
+    assert_eq!(
+        ours("a { #{--entire}: 1 + 2; }\n"),
+        "a {\n  --entire: 3;\n}\n"
+    );
     // `!important` in a custom-property value is a literal value character.
     assert_eq!(
         ours("a { --x: value !important; }\n"),
@@ -2568,7 +2676,10 @@ fn var_env_argument_evaluation() {
     assert_eq!(ours("a {b: var()}\n"), "a {\n  b: var();\n}\n");
     assert_eq!(ours("a {b: var(--c)}\n"), "a {\n  b: var(--c);\n}\n");
     // The fallback argument is evaluated.
-    assert_eq!(ours("a {b: var(--c, 1 + 2)}\n"), "a {\n  b: var(--c, 3);\n}\n");
+    assert_eq!(
+        ours("a {b: var(--c, 1 + 2)}\n"),
+        "a {\n  b: var(--c, 3);\n}\n"
+    );
     assert_eq!(
         ours("a {b: var(--c, \"d\" + \"e\")}\n"),
         "a {\n  b: var(--c, \"de\");\n}\n"
@@ -2600,7 +2711,10 @@ fn var_env_argument_evaluation() {
         "a {\n  b: var(--c, d);\n}\n"
     );
     // A trailing comma after a rest argument is normal (no empty arg).
-    assert_eq!(ours("$n: --c; a {b: var($n...,)}\n"), "a {\n  b: var(--c);\n}\n");
+    assert_eq!(
+        ours("$n: --c; a {b: var($n...,)}\n"),
+        "a {\n  b: var(--c);\n}\n"
+    );
 }
 
 #[test]
@@ -2628,8 +2742,14 @@ fn calc_nested_parenthesization() {
     // A clean identifier, a hyphenated token, a number, an operation, and a
     // complete sub-calculation all flatten without extra parentheses.
     assert_eq!(ours("a {b: calc(calc(#{c}))}\n"), "a {\n  b: calc(c);\n}\n");
-    assert_eq!(ours("a {b: calc(calc(c-d))}\n"), "a {\n  b: calc(c-d);\n}\n");
-    assert_eq!(ours("a {b: calc(calc(c + d))}\n"), "a {\n  b: calc(c + d);\n}\n");
+    assert_eq!(
+        ours("a {b: calc(calc(c-d))}\n"),
+        "a {\n  b: calc(c-d);\n}\n"
+    );
+    assert_eq!(
+        ours("a {b: calc(calc(c + d))}\n"),
+        "a {\n  b: calc(c + d);\n}\n"
+    );
     assert_eq!(
         ours("a {b: calc(1 + calc(min(1%, 2px)))}\n"),
         "a {\n  b: calc(1 + min(1%, 2px));\n}\n"
@@ -2662,7 +2782,10 @@ fn adjacent_quoted_string_schema() {
         ours("a {b: \"[#{\"[\"'foo'\"]\"}]\"}\n"),
         "a {\n  b: \"[[ foo ]]\";\n}\n"
     );
-    assert_eq!(ours("a {b: #{\"[\"'foo'\"]\"}}\n"), "a {\n  b: [ foo ];\n}\n");
+    assert_eq!(
+        ours("a {b: #{\"[\"'foo'\"]\"}}\n"),
+        "a {\n  b: [ foo ];\n}\n"
+    );
     // Adjacency must not swallow a map key-value colon: a quoted-string map
     // key still parses (`("a": 1)`).
     assert_eq!(
@@ -2675,7 +2798,10 @@ fn adjacent_quoted_string_schema() {
 fn supports_condition_serialization() {
     // A declaration condition normalizes spacing (`(a:b)` -> `(a: b)`) and
     // evaluates SassScript on both sides.
-    assert_eq!(ours("@supports (a:b) {@c}\n"), "@supports (a: b) {\n  @c;\n}\n");
+    assert_eq!(
+        ours("@supports (a:b) {@c}\n"),
+        "@supports (a: b) {\n  @c;\n}\n"
+    );
     assert_eq!(
         ours("@supports (1 + 1: b) {@c}\n"),
         "@supports (2: b) {\n  @c;\n}\n"
@@ -2725,8 +2851,14 @@ fn supports_condition_serialization() {
     );
     // A `supports()`-style function call and an arbitrary "anything" value pass
     // through verbatim.
-    assert_eq!(ours("@supports a(b) {@c}\n"), "@supports a(b) {\n  @c;\n}\n");
-    assert_eq!(ours("@supports (a b) {@c}\n"), "@supports (a b) {\n  @c;\n}\n");
+    assert_eq!(
+        ours("@supports a(b) {@c}\n"),
+        "@supports a(b) {\n  @c;\n}\n"
+    );
+    assert_eq!(
+        ours("@supports (a b) {@c}\n"),
+        "@supports (a b) {\n  @c;\n}\n"
+    );
     // A lone interpolation is spliced in unquoted.
     assert_eq!(
         ours("@supports #{\"(a: b)\"} and (c: 1 + 1) {@d}\n"),
@@ -2845,7 +2977,10 @@ fn bogus_combinator_selectors_are_omitted() {
     assert_eq!(ours(":has(+ ~ a) {b: c}\n"), "");
     assert_eq!(ours(":has(a >) {b: c}\n"), "");
     // `:global`/`:local` keep their argument verbatim (not selector-parsed).
-    assert_eq!(ours(":global(> a) {b: c}\n"), ":global(> a) {\n  b: c;\n}\n");
+    assert_eq!(
+        ours(":global(> a) {b: c}\n"),
+        ":global(> a) {\n  b: c;\n}\n"
+    );
     assert_eq!(ours(":local(> a) {b: c}\n"), ":local(> a) {\n  b: c;\n}\n");
 
     assert_parity("> > a {b: c}\n");
@@ -2867,7 +3002,10 @@ fn top_level_parent_selector_is_literal() {
     assert_eq!(ours("a & {b: c}\n"), "a & {\n  b: c;\n}\n");
     assert_eq!(ours("& & {a: b}\n"), "& & {\n  a: b;\n}\n");
     // The same holds inside a bare unknown at-rule (no selector context).
-    assert_eq!(ours("@a {\n  & {b: c}\n}\n"), "@a {\n  & {\n    b: c;\n  }\n}\n");
+    assert_eq!(
+        ours("@a {\n  & {b: c}\n}\n"),
+        "@a {\n  & {\n    b: c;\n  }\n}\n"
+    );
     // A `&` with a suffix is still rejected at the top level.
     assert!(compile("&foo {a: b}\n", &Options::default()).is_err());
     assert!(compile("&-foo {a: b}\n", &Options::default()).is_err());
@@ -2884,7 +3022,10 @@ fn reference_combinator_is_rejected() {
     assert!(compile(".foo /bar/ .baz {\n  a: b;\n}\n", &Options::default()).is_err());
     assert!(compile(".a/.b {x: y}\n", &Options::default()).is_err());
     // A `/` inside an attribute value is fine.
-    assert_eq!(ours("a[href^=\"/\"] {x: y}\n"), "a[href^=\"/\"] {\n  x: y;\n}\n");
+    assert_eq!(
+        ours("a[href^=\"/\"] {x: y}\n"),
+        "a[href^=\"/\"] {\n  x: y;\n}\n"
+    );
 }
 
 #[test]
@@ -3092,7 +3233,11 @@ fn cross_module_extend_store_order() {
     let imp = FsImporter::new(vec![dir.clone()]);
     let opts = Options::default().with_importer(&imp);
     // Same-file foreign extends stay forward.
-    fs::write(dir.join("_shared2.scss"), "%blk:not(:last-child) { m: 1; }\n").unwrap();
+    fs::write(
+        dir.join("_shared2.scss"),
+        "%blk:not(:last-child) { m: 1; }\n",
+    )
+    .unwrap();
     fs::write(
         dir.join("_two.scss"),
         "@use \"shared2\";\n.fixed-grid { @extend %blk; f: 1; }\n.grid { @extend %blk; g: 1; }\n",
@@ -3116,7 +3261,8 @@ fn cross_module_extend_store_order() {
         "@use \"sh\";\n.c1 { @extend %b; }\n.c2 { @extend %b; }\n",
     )
     .unwrap();
-    let out = compile("@use \"ma\";\n@use \"mc\";\n@use \"mb\";\n", &opts).expect("siblings compile");
+    let out =
+        compile("@use \"ma\";\n@use \"mc\";\n@use \"mb\";\n", &opts).expect("siblings compile");
     assert!(
         out.starts_with(".b1, .c1, .c2, .a1, .a2"),
         "sibling order:\n{out}"
@@ -3177,9 +3323,7 @@ fn chained_extend_products_keep_registration_order() {
     assert_parity(".cf { a: b; }\n.c-sm { @extend .cf; }\n.c-md { @extend .cf; }\n.nav {\n  %p { x: y; }\n  > .c,\n  > .cf { @extend %p; }\n}\n");
     // Transitive chains and cycles still resolve.
     assert_parity(".a { x: y; @extend .b; }\n.b { @extend .c; }\n.c { z: w; }\n");
-    assert_parity(
-        ".foo { a: b; @extend .bar; }\n.bar { c: d; @extend .baz; }\n.baz { e: f; @extend .foo; }\n",
-    );
+    assert_parity(".foo { a: b; @extend .bar; }\n.bar { c: d; @extend .baz; }\n.baz { e: f; @extend .foo; }\n");
 }
 
 #[test]
@@ -3274,9 +3418,7 @@ fn nested_at_rule_wrap_keeps_selector_linebreaks() {
         ours("@mixin fs { font-size: 1px; @media (a: b) { font-size: 2px; } }\nh1,\n.alpha { @include fs; }\n"),
         "h1,\n.alpha {\n  font-size: 1px;\n}\n@media (a: b) {\n  h1,\n  .alpha {\n    font-size: 2px;\n  }\n}\n"
     );
-    assert_parity(
-        "@mixin fs { font-size: 1px; @media (a: b) { font-size: 2px; } }\nh1,\n.alpha { @include fs; }\n",
-    );
+    assert_parity("@mixin fs { font-size: 1px; @media (a: b) { font-size: 2px; } }\nh1,\n.alpha { @include fs; }\n");
 }
 
 #[test]
@@ -3303,7 +3445,11 @@ fn pre_module_comments_reemit_on_inherited_edges() {
     let opts = Options::default().with_importer(&imp);
     fs::write(dir.join("_a.scss"), "@use \"sass:list\";\n.a { x: y; }\n").unwrap();
     fs::write(dir.join("_b.scss"), "@use \"a\";\n.b { x: y; }\n").unwrap();
-    fs::write(dir.join("_i.scss"), "/* C */\n@forward \"a\";\n@forward \"b\";\n").unwrap();
+    fs::write(
+        dir.join("_i.scss"),
+        "/* C */\n@forward \"a\";\n@forward \"b\";\n",
+    )
+    .unwrap();
     // Inherited-map re-emission: C appears before a's AND b's CSS.
     assert_eq!(
         compile("@use \"i\";\n", &opts).expect("module chain compiles"),
@@ -3335,7 +3481,7 @@ fn invisible_last_child_packs_next_group_tight() {
     assert_parity(".nav {\n  %p { x: y; }\n  > .c { @extend %p; }\n}\n.brand { y: z; }\n");
     // Through control flow (@each) — the flag rides the last inner statement.
     assert_parity(
-        ".nav {\n  %p { x: y; }\n  @each $s in (sm, md) {\n    > .c-#{$s} { @extend %p; }\n  }\n}\n.brand { y: z; }\n"
+        ".nav {\n  %p { x: y; }\n  @each $s in (sm, md) {\n    > .c-#{$s} { @extend %p; }\n  }\n}\n.brand { y: z; }\n",
     );
     // A VISIBLE last child still blank-separates; a variable decl after it
     // creates no node and leaves the separator alone.
@@ -3453,13 +3599,20 @@ fn errors_in_loaded_files_name_that_file_with_loader_frames() {
     assert!(err.contains("_broke.scss 1:13  @import"), "got:\n{err}");
     // Parse error inside a nested @use chain: innermost frame names the
     // broken file, with one @use frame per intermediate loader.
-    fs::write(dir.join("_badparse.scss"), ".x {\n  broken westward{{{\n}\n").unwrap();
+    fs::write(
+        dir.join("_badparse.scss"),
+        ".x {\n  broken westward{{{\n}\n",
+    )
+    .unwrap();
     fs::write(dir.join("_mid.scss"), "@use \"badparse\";\n").unwrap();
     let err = compile("@use \"mid\";\n", &opts)
         .expect_err("must fail")
         .to_string();
     assert!(err.contains("_badparse.scss"), "got:\n{err}");
-    assert!(err.contains("_mid.scss 1:1"), "intermediate @use frame:\n{err}");
+    assert!(
+        err.contains("_mid.scss 1:1"),
+        "intermediate @use frame:\n{err}"
+    );
     assert!(
         !err.contains("_mid.scss 1:1        root stylesheet"),
         "mid is @use, not root:\n{err}"
@@ -3730,7 +3883,11 @@ fn parity_clamp_calculation() {
     // A three-argument `clamp()` evaluates its operands as calculations: an
     // operation/`var()` argument keeps the call preserved, all-number arguments
     // clamp, and a complex-unit operand is rejected.
-    assert!(compile("a {b: clamp(1px*1px, 2%*2%, 3px*3px)}\n", &Options::default()).is_err());
+    assert!(compile(
+        "a {b: clamp(1px*1px, 2%*2%, 3px*3px)}\n",
+        &Options::default()
+    )
+    .is_err());
     assert!(compile("a {b: clamp(7 % 3, 2, 3)}\n", &Options::default()).is_err());
     assert!(compile("a {b: clamp(1s, 2px, 3px)}\n", &Options::default()).is_err());
     assert_parity(concat!(
@@ -3768,7 +3925,9 @@ fn parity_extend_graph_fixpoint() {
     // transitively — including targets inside pseudo arguments (the
     // extension-graph fixpoint). `:is(midstream)` extends `upstream`, and
     // `midstream` (inside that `:is`) is then extended by `downstream`.
-    assert_parity(":is(midstream) {@extend upstream}\ndownstream {@extend midstream}\nupstream {a: b}\n");
+    assert_parity(
+        ":is(midstream) {@extend upstream}\ndownstream {@extend midstream}\nupstream {a: b}\n",
+    );
     // The result of `:not(.c)` being extended is itself extendable: `:not(.b)`
     // (produced by extending `.c`) is a target extended by `.a`.
     assert_parity(".a {@extend :not(.b)}\n.b {@extend .c}\n:not(.c) {x: y}\n");
@@ -3812,11 +3971,11 @@ fn parity_variable_scoping_semi_global() {
     // a global from inside a rule.
     assert_parity("$x: root;\ndiv { $x: local; v: $x; }\nafter { x: $x; }\n");
     assert_parity("div {\n  $x: 10;\n  span { $x: 20; }\n  v: $x;\n}\n");
-    assert_parity(
-        "$x: root;\ndiv {\n  @for $i from 1 through 1 { $x: looped; }\n  v: $x;\n}\nafter { x: $x; }\n",
-    );
+    assert_parity("$x: root;\ndiv {\n  @for $i from 1 through 1 { $x: looped; }\n  v: $x;\n}\nafter { x: $x; }\n");
     assert_parity("$x: 0;\n@for $i from 1 through 3 { $x: $x + 1; }\nafter { x: $x; }\n");
-    assert_parity("div {\n  $y: 1;\n  @for $i from 1 through 3 { $y: $y + 5; y: $y; }\n  after: $y;\n}\n");
+    assert_parity(
+        "div {\n  $y: 1;\n  @for $i from 1 through 3 { $y: $y + 5; y: $y; }\n  after: $y;\n}\n",
+    );
 }
 
 #[test]
@@ -4023,7 +4182,8 @@ fn assert_module_parity(files: &[(&str, &str)]) {
     }
     let input = std::fs::read_to_string(dir.join("input.scss")).expect("read input");
     let importer = FsImporter::new(vec![dir.clone()]);
-    let ours = compile(&input, &Options::default().with_importer(&importer)).expect("our compile failed");
+    let ours =
+        compile(&input, &Options::default().with_importer(&importer)).expect("our compile failed");
 
     let bin = std::env::var("SASS_BIN").unwrap_or_else(|_| "npx".to_string());
     let mut cmd = if bin == "npx" {
@@ -4236,7 +4396,9 @@ fn parity_color_modify_missing_channel_errors() {
         "@use \"sass:color\";\na {b: color.adjust(red, $alpha: none)}\n",
     ];
     for scss in cases {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -4261,7 +4423,9 @@ fn parity_color_adjust_hue_non_legacy_error() {
         return;
     }
     let scss = "a {b: adjust-hue(lch(0% 0 0deg), 10deg)}\n";
-    let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+    let ours = compile(scss, &Options::default())
+        .err()
+        .map(|e| e.to_string());
     match dart_sass_error(scss) {
         Some(theirs) => {
             let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -4280,9 +4444,15 @@ fn parity_selector_extend_multiple_extendees() {
     // selector.extend()'s extendee may be a list of compound selectors (as a
     // string or a Sass list), each applied as a separate extension target and
     // resolved to a fixpoint so a selector matching several targets collapses.
-    assert_parity("@use \"sass:selector\";\na { b: selector.extend(\"c.d\", \"c, .d\", \".e\"); }\n");
-    assert_parity("@use \"sass:selector\";\na { b: selector.extend(\"c.d.e.f\", \"c.d, .e.f\", \".g\"); }\n");
-    assert_parity("@use \"sass:selector\";\na { b: selector.extend(\"c.d\", (c, \".d\"), \".e\"); }\n");
+    assert_parity(
+        "@use \"sass:selector\";\na { b: selector.extend(\"c.d\", \"c, .d\", \".e\"); }\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na { b: selector.extend(\"c.d.e.f\", \"c.d, .e.f\", \".g\"); }\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na { b: selector.extend(\"c.d\", (c, \".d\"), \".e\"); }\n",
+    );
 }
 
 #[test]
@@ -4293,7 +4463,9 @@ fn parity_selector_arg_coercion_lists() {
     assert_parity("@use \"sass:selector\";\na { b: selector.parse((c d, e f)); }\n");
     assert_parity("@use \"sass:selector\";\na { b: selector.parse((c \"d\", e \"f\")); }\n");
     assert_parity("@use \"sass:selector\";\na { b: selector.nest((c, d e), \"f\"); }\n");
-    assert_parity("@use \"sass:selector\";\na { b: selector.is-superselector((c, d e), (c, d e)); }\n");
+    assert_parity(
+        "@use \"sass:selector\";\na { b: selector.is-superselector((c, d e), (c, d e)); }\n",
+    );
 }
 
 #[test]
@@ -4342,7 +4514,10 @@ fn parity_list_fn_arg_validation() {
             "expected error for {src}"
         );
         if enabled() {
-            assert!(dart_sass(src).is_none(), "dart-sass unexpectedly accepted {src}");
+            assert!(
+                dart_sass(src).is_none(),
+                "dart-sass unexpectedly accepted {src}"
+            );
         }
     }
     // A valid named-argument call still compiles in both implementations.
@@ -4401,9 +4576,7 @@ fn parity_color_module_hwb_comma_and_validation() {
     assert_parity("@use \"sass:color\";\na {b: color.hwb(0, 150%, 0%)}\n");
     assert_parity("a {b: hwb(0 80% 50%)}\n");
     assert_parity("a {b: hwb(120 80% 50%)}\n");
-    assert_parity(
-        "@use \"sass:color\";\na {b: color.channel(color.hwb(0, 150%, 0%), \"whiteness\", $space: hwb)}\n",
-    );
+    assert_parity("@use \"sass:color\";\na {b: color.channel(color.hwb(0, 150%, 0%), \"whiteness\", $space: hwb)}\n");
 
     if !enabled() {
         return;
@@ -4420,7 +4593,9 @@ fn parity_color_module_hwb_comma_and_validation() {
         "@use \"sass:color\";\na {b: color.hwb((0, 30%, 40%))}\n",
         "@use \"sass:color\";\na {b: color.hwb(0, 30%, 40%, 0.5, 0)}\n",
     ] {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -4446,7 +4621,9 @@ fn parity_color_convert_achromatic_to_hsl_hwb() {
     assert_parity("@use \"sass:color\";\na {b: color.to-space(color(a98-rgb 1 1 1), hsl)}\n");
     assert_parity("@use \"sass:color\";\na {b: color.to-space(color(a98-rgb 0.5 0.5 0.5), hsl)}\n");
     assert_parity("@use \"sass:color\";\na {b: color.to-space(color(a98-rgb 0.5 0.5 0.5), hwb)}\n");
-    assert_parity("@use \"sass:color\";\na {b: color.to-space(color(prophoto-rgb 0.5 0.5 0.5), hsl)}\n");
+    assert_parity(
+        "@use \"sass:color\";\na {b: color.to-space(color(prophoto-rgb 0.5 0.5 0.5), hsl)}\n",
+    );
     assert_parity("@use \"sass:color\";\na {b: color.to-space(color(rec2020 0.3 0.3 0.3), hwb)}\n");
     // Chromatic conversions and explicitly-built achromatic hsl keep their hue.
     assert_parity("@use \"sass:color\";\na {b: color.to-space(color(a98-rgb 0.8 0.2 0.4), hsl)}\n");
@@ -4459,10 +4636,16 @@ fn parity_color_convert_missing_channel_carry() {
     // CSS Color 4 carries a missing component into the analogous channel of the
     // target space; the xyz channels are analogous to rgb (Reds: r/x, Greens:
     // g/y, Blues: b/z), so a missing rgb channel survives a round-trip to xyz.
-    assert_parity("@use \"sass:color\";\na {b: color.to-space(color(a98-rgb none 0.5 0.5), xyz)}\n");
+    assert_parity(
+        "@use \"sass:color\";\na {b: color.to-space(color(a98-rgb none 0.5 0.5), xyz)}\n",
+    );
     assert_parity("@use \"sass:color\";\na {b: color.to-space(color(srgb 0.5 0.5 none), xyz)}\n");
-    assert_parity("@use \"sass:color\";\na {b: color.to-space(color(xyz none 0.2 0.3), a98-rgb)}\n");
-    assert_parity("@use \"sass:color\";\na {b: color.to-space(color(xyz 0.1 0.2 none), display-p3)}\n");
+    assert_parity(
+        "@use \"sass:color\";\na {b: color.to-space(color(xyz none 0.2 0.3), a98-rgb)}\n",
+    );
+    assert_parity(
+        "@use \"sass:color\";\na {b: color.to-space(color(xyz 0.1 0.2 none), display-p3)}\n",
+    );
     // a/b are not analogous to xyz/rgb; Lightness carries across lab/oklab.
     assert_parity("@use \"sass:color\";\na {b: color.to-space(lab(50% none 30), xyz)}\n");
     assert_parity("@use \"sass:color\";\na {b: color.to-space(lab(none 20 30), oklab)}\n");
@@ -4532,7 +4715,9 @@ fn parity_selector_unify_id_conflict() {
     // rather than an impossible `#a#b`. A same id (or an id alongside non-id
     // simples) still unifies.
     assert_parity("@use \"sass:selector\";\na {b: selector.unify(\"#a\", \"#b\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.unify(\"#s1-1 > .s1-2\", \"#s2-1 > .s2-2\")}\n");
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.unify(\"#s1-1 > .s1-2\", \"#s2-1 > .s2-2\")}\n",
+    );
     assert_parity("@use \"sass:selector\";\na {b: selector.unify(\"#a.x\", \"#a.y\")}\n");
     assert_parity("@use \"sass:selector\";\na {b: selector.unify(\"#a\", \".d\")}\n");
     assert_parity("@use \"sass:selector\";\na {b: selector.unify(\".c\", \".d\")}\n");
@@ -4543,14 +4728,20 @@ fn parity_meta_load_css() {
     // `@include meta.load-css($url)` loads a module and emits its CSS without
     // binding a namespace; `$with` configures its !default variables.
     assert_module_parity(&[
-        ("_other.scss", "$color: blue !default;\na { color: $color; }\n"),
+        (
+            "_other.scss",
+            "$color: blue !default;\na { color: $color; }\n",
+        ),
         (
             "input.scss",
             "@use \"sass:meta\";\n@include meta.load-css(\"other\");\n",
         ),
     ]);
     assert_module_parity(&[
-        ("_other.scss", "$color: blue !default;\na { color: $color; }\n"),
+        (
+            "_other.scss",
+            "$color: blue !default;\na { color: $color; }\n",
+        ),
         (
             "input.scss",
             "@use \"sass:meta\";\n@include meta.load-css(\"other\", $with: (\"color\": green));\n",
@@ -4559,7 +4750,10 @@ fn parity_meta_load_css() {
     // A module loaded for its CSS may itself @use other modules.
     assert_module_parity(&[
         ("_dep.scss", "@function two() { @return 2; }\n"),
-        ("_mid.scss", "@use \"dep\";\nb { width: dep.two() * 1px; }\n"),
+        (
+            "_mid.scss",
+            "@use \"dep\";\nb { width: dep.two() * 1px; }\n",
+        ),
         (
             "input.scss",
             "@use \"sass:meta\";\n@include meta.load-css(\"mid\");\n",
@@ -4576,9 +4770,15 @@ fn parity_selector_pseudo_is_superselector() {
     assert_parity(
         "@use \"sass:selector\";\na {b: selector.is-superselector(\":is(c d, e f, g h)\", \"c d.i, e j f\")}\n",
     );
-    assert_parity("@use \"sass:selector\";\na {b: selector.is-superselector(\":is(c e)\", \"c d e\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.is-superselector(\":is(c)\", \":is(c, d)\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.is-superselector(\":is(c, d)\", \":is(c)\")}\n");
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.is-superselector(\":is(c e)\", \"c d e\")}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.is-superselector(\":is(c)\", \":is(c, d)\")}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.is-superselector(\":is(c, d)\", \":is(c)\")}\n",
+    );
     assert_parity(
         "@use \"sass:selector\";\na {b: selector.is-superselector(\":has(c d, e f, g h)\", \":has(c d.i, e j f)\")}\n",
     );
@@ -4591,7 +4791,9 @@ fn parity_selector_pseudo_is_superselector() {
 fn parity_extend_source_extender_not_trimmed() {
     // A source extender (`:is(midstream)`) is never trimmed away by a broader
     // generated selector (the transitive `:is(midstream, downstream)`).
-    assert_parity(":is(midstream) {@extend upstream}\ndownstream {@extend midstream}\nupstream {a: b}\n");
+    assert_parity(
+        ":is(midstream) {@extend upstream}\ndownstream {@extend midstream}\nupstream {a: b}\n",
+    );
 }
 
 #[test]
@@ -4796,7 +4998,9 @@ fn parity_content_using_errors() {
         "@mixin m($a) {\n  x: $a;\n}\na {\n  @include m(1, $b: 2);\n}\n",
     ];
     for scss in cases {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -4829,7 +5033,9 @@ fn parity_color_arithmetic_removed() {
         "$v: rgb(1 2 3) + 1;\na {b: $v}\n",
     ];
     for scss in err_cases {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -4890,7 +5096,9 @@ fn parity_builtin_argument_validation() {
         "@use \"sass:color\";\na {b: color.invert(red, -0.001%)}\n",
     ];
     for scss in err_cases {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -4904,8 +5112,14 @@ fn parity_builtin_argument_validation() {
         }
     }
     // Valid calls still succeed.
-    assert_module_parity(&[("input.scss", "@use \"sass:color\";\na {b: color.red(red)}\n")]);
-    assert_module_parity(&[("input.scss", "@use \"sass:math\";\na {b: math.percentage(0.5)}\n")]);
+    assert_module_parity(&[(
+        "input.scss",
+        "@use \"sass:color\";\na {b: color.red(red)}\n",
+    )]);
+    assert_module_parity(&[(
+        "input.scss",
+        "@use \"sass:math\";\na {b: math.percentage(0.5)}\n",
+    )]);
     assert_module_parity(&[(
         "input.scss",
         "@use \"sass:color\";\na {b: color.invert(red, 50%)}\n",
@@ -4921,10 +5135,10 @@ fn parity_calc_functions_are_calculations() {
     assert_parity("a {b: min(1px, 2vw); c: max(1%, 2px); d: clamp(1%, 2px, 3px)}\n");
     assert_parity("a {b: min(1px, 2px)}\n");
     assert_parity("a {b: calc(min(1%, 2px))}\n");
+    assert_parity("@use \"sass:meta\";\na {b: meta.type-of(clamp(1%, 2px, 3px)); c: meta.calc-name(min(1%, 2px))}\n");
     assert_parity(
-        "@use \"sass:meta\";\na {b: meta.type-of(clamp(1%, 2px, 3px)); c: meta.calc-name(min(1%, 2px))}\n",
+        "@use \"sass:list\";\n@use \"sass:meta\";\na {b: meta.inspect(meta.calc-args(clamp(1%, 2px, 3px)))}\n",
     );
-    assert_parity("@use \"sass:list\";\n@use \"sass:meta\";\na {b: meta.inspect(meta.calc-args(clamp(1%, 2px, 3px)))}\n");
     assert_parity("@use \"sass:list\";\n@use \"sass:meta\";\na {b: meta.type-of(list.nth(meta.calc-args(min(max(1%, 1px), 2px)), 1))}\n");
 }
 
@@ -4935,13 +5149,15 @@ fn parity_calc_name_and_args() {
     // unquoted string and a number stays a number.
     assert_parity("@use \"sass:meta\";\na {b: meta.calc-name(calc(var(--c)))}\n");
     assert_parity("@use \"sass:meta\";\na {b: meta.inspect(meta.calc-args(calc(1% + 1px)))}\n");
+    assert_parity("@use \"sass:list\";\n@use \"sass:meta\";\na {b: list.nth(meta.calc-args(calc(var(--c))), 1)}\n");
     assert_parity(
-        "@use \"sass:list\";\n@use \"sass:meta\";\na {b: list.nth(meta.calc-args(calc(var(--c))), 1)}\n",
+        "@use \"sass:list\";\n@use \"sass:meta\";\na {b: meta.type-of(list.nth(meta.calc-args(calc(1% + 1px)), 1))}\n",
     );
-    assert_parity("@use \"sass:list\";\n@use \"sass:meta\";\na {b: meta.type-of(list.nth(meta.calc-args(calc(1% + 1px)), 1))}\n");
     // A non-calculation argument is rejected.
     let scss = "@use \"sass:meta\";\na {b: meta.calc-args(1)}\n";
-    let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+    let ours = compile(scss, &Options::default())
+        .err()
+        .map(|e| e.to_string());
     assert!(
         ours.is_some_and(|m| m.contains("is not a calculation.")),
         "expected calc-args on a number to error"
@@ -4957,15 +5173,15 @@ fn parity_argument_list_keywords() {
     assert_parity(
         "@use \"sass:meta\";\n@function f($args...) {@return meta.inspect((positional: $args, named: meta.keywords($args)))}\na {b: f(1, $x: 2, $y_z: 3); c: f(1, 2)}\n",
     );
-    assert_parity(
-        "@use \"sass:meta\";\n@function t($args...) {@return meta.type-of($args)}\na {b: t(1, 2)}\n",
-    );
+    assert_parity("@use \"sass:meta\";\n@function t($args...) {@return meta.type-of($args)}\na {b: t(1, 2)}\n");
     assert_parity(
         "@use \"sass:meta\";\n@mixin fwd($args...) {@include inner($args...)}\n@mixin inner($a, $b: 0, $c: 0) {x: $a $b $c}\na {@include fwd(9, $c: 7)}\n",
     );
     // `meta.keywords` rejects a non-argument-list value.
     let scss = "@use \"sass:meta\";\na {b: meta.keywords((a: 1))}\n";
-    let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+    let ours = compile(scss, &Options::default())
+        .err()
+        .map(|e| e.to_string());
     assert!(
         ours.is_some_and(|m| m.contains("is not an argument list.")),
         "expected meta.keywords on a map to error"
@@ -4984,10 +5200,13 @@ fn parity_selector_digit_start_errors() {
             ".3 {x: y}\n",
             "#4 {x: y}\n",
         ] {
-            let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+            let ours = compile(scss, &Options::default())
+                .err()
+                .map(|e| e.to_string());
             match dart_sass_error(scss) {
                 Some(theirs) => {
-                    let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
+                    let ours =
+                        ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
                     let msg = ours.trim_start_matches("Error: ");
                     assert!(
                         msg.starts_with(&theirs),
@@ -5056,7 +5275,9 @@ fn parity_color_space_name_case_insensitive() {
     assert_parity("a {b: color(XYZ 0.1 0.2 0.3)}\n");
     assert_parity("a {b: color(Display-P3-Linear 1 2 3)}\n");
     assert_parity("@use \"sass:color\";\na {b: color.to-space(red, DISPLAY-p3)}\n");
-    assert_parity("@use \"sass:color\";\na {b: color.invert(lch(20% 80 50deg), $space: DISPLAY-p3)}\n");
+    assert_parity(
+        "@use \"sass:color\";\na {b: color.invert(lch(20% 80 50deg), $space: DISPLAY-p3)}\n",
+    );
 }
 
 #[test]
@@ -5070,7 +5291,9 @@ fn parity_list_undecided_separator() {
     assert_parity("@use \"sass:list\";\na {b: list.join([1], (2, 3, 4))}\n");
     assert_parity("@use \"sass:list\";\na {b: list.separator(list.join((), (), comma))}\n");
     assert_parity("@use \"sass:list\";\na {b: list.append((), 1, $separator: comma)}\n");
-    assert_parity("@use \"sass:list\";\na {b: list.separator(list.join((), (), $separator: space))}\n");
+    assert_parity(
+        "@use \"sass:list\";\na {b: list.separator(list.join((), (), $separator: space))}\n",
+    );
     assert_parity("@use \"sass:list\";\na {b: list.separator([1])}\n");
     assert_parity("@use \"sass:meta\";\na {b: meta.inspect(())}\n");
     assert_parity("@use \"sass:meta\";\na {b: meta.inspect([])}\n");
@@ -5093,7 +5316,9 @@ fn parity_empty_list_declaration_errors() {
         "$x: ();\na {b: $x}\n",
         "@use \"sass:list\";\na {b: list.join((), ())}\n",
     ] {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -5118,7 +5343,9 @@ fn parity_raw_newline_in_string_errors() {
         return;
     }
     for scss in ["a {b: \"x\ny\"}\n", "a {b: \"x\ry\"}\n"] {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -5144,7 +5371,9 @@ fn parity_stray_else_errors() {
         return;
     }
     for scss in ["@else {a {b: c}}\n", "@else if true {a {b: c}}\n"] {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -5184,7 +5413,9 @@ fn parity_declaration_context_errors() {
         "@function f() {\n  @if true {\n    @function g() {@return 1}\n  }\n  @return 1\n}\n",
     ];
     for scss in err_cases {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -5221,7 +5452,9 @@ fn parity_sass_import_context_errors() {
         "@if true {\n  a {\n    @import \"_include\";\n  }\n}\n",
     ];
     for scss in err_cases {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -5254,7 +5487,9 @@ fn parity_callable_not_valid_css_value() {
         "@use \"sass:meta\";\n@mixin a() {}\n@mixin b() {}\nx {y: meta.get-mixin(a) * meta.get-mixin(b)}\n",
     ];
     for scss in err_cases {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -5308,9 +5543,7 @@ fn parity_meta_exists_global_module_conflict() {
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(dir.join("_other1.scss"), other).unwrap();
         std::fs::write(dir.join("_other2.scss"), other).unwrap();
-        let main = format!(
-            "@use \"sass:meta\";\n@use \"other1\" as *;\n@use \"other2\" as *;\na {{b: {predicate}}}\n"
-        );
+        let main = format!("@use \"sass:meta\";\n@use \"other1\" as *;\n@use \"other2\" as *;\na {{b: {predicate}}}\n");
         let importer = FsImporter::new(vec![dir.clone()]);
         let err = compile(&main, &Options::default().with_importer(&importer))
             .err()
@@ -5346,7 +5579,9 @@ fn parity_color_module_grayscale_opacity_strict() {
         "@use \"sass:color\";\na {b: color.grayscale($color: var(--c))}\n",
     ];
     for scss in err_cases {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -5356,7 +5591,9 @@ fn parity_color_module_grayscale_opacity_strict() {
                     "\n--- scss ---\n{scss}\n--- ours ---\n{ours}\n--- dart ---\n{theirs}\n"
                 );
             }
-            None => eprintln!("skipping grayscale/opacity strict parity case: dart-sass unavailable"),
+            None => {
+                eprintln!("skipping grayscale/opacity strict parity case: dart-sass unavailable")
+            }
         }
     }
     // A number passes through; a color is computed.
@@ -5382,7 +5619,9 @@ fn parity_legacy_color_functions_reject_non_legacy() {
         "a {b: adjust-hue(color(srgb 1 1 1), 10deg)}\n",
     ];
     for scss in err_cases {
-        let ours = compile(scss, &Options::default()).err().map(|e| e.to_string());
+        let ours = compile(scss, &Options::default())
+            .err()
+            .map(|e| e.to_string());
         match dart_sass_error(scss) {
             Some(theirs) => {
                 let ours = ours.unwrap_or_else(|| panic!("expected our compile to error:\n{scss}"));
@@ -5465,7 +5704,9 @@ fn parity_adjust_hsl_saturation_clamp() {
     assert_parity("@use \"sass:color\";\na {b: color.adjust(red, $saturation: 50%)}\n");
     assert_parity("@use \"sass:color\";\na {b: color.scale(plum, $saturation: -100%)}\n");
     // change does not clamp.
-    assert_parity("@use \"sass:color\";\na {b: color.change(hsl(120, 50%, 50%), $saturation: -100%)}\n");
+    assert_parity(
+        "@use \"sass:color\";\na {b: color.change(hsl(120, 50%, 50%), $saturation: -100%)}\n",
+    );
 }
 
 #[test]
@@ -5483,7 +5724,9 @@ fn parity_legacy_modify_gamut_serialization() {
     assert_parity("@use \"sass:color\";\na {b: color.change(red, $hue: 120)}\n");
     assert_parity("@use \"sass:color\";\na {b: color.adjust(red, $green: 10)}\n");
     // A constructed hsl color keeps its hsl format when modified in gamut.
-    assert_parity("@use \"sass:color\";\na {b: color.adjust(hsl(120, 100%, 50%), $lightness: 0%)}\n");
+    assert_parity(
+        "@use \"sass:color\";\na {b: color.adjust(hsl(120, 100%, 50%), $lightness: 0%)}\n",
+    );
 }
 
 #[test]
@@ -5495,7 +5738,9 @@ fn parity_modify_color_named_first_arg() {
     );
     assert_parity("@use \"sass:color\";\na {b: color.adjust($color: red, $red: 10)}\n");
     assert_parity("@use \"sass:color\";\na {b: color.change($color: red, $hue: 120)}\n");
-    assert_parity("@use \"sass:color\";\na {b: color.scale(color(display-p3 0.2 0.5 0.7), $red: 12%)}\n");
+    assert_parity(
+        "@use \"sass:color\";\na {b: color.scale(color(display-p3 0.2 0.5 0.7), $red: 12%)}\n",
+    );
 }
 
 #[test]
@@ -5517,9 +5762,7 @@ fn parity_selector_empty_namespace() {
     assert_parity("@use \"sass:selector\";\na {b: selector.unify(\"|c\", \"|c\")}\n");
     assert_parity("@use \"sass:selector\";\na {b: selector.unify(\"*|c\", \"|c\")}\n");
     assert_parity("@use \"sass:selector\";\na {b: selector.unify(\"*|c\", \"|*\")}\n");
-    assert_parity(
-        "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\"c\", \"|c\"))}\n",
-    );
+    assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\"c\", \"|c\"))}\n");
     assert_parity(
         "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\"|c\", \"|d\"))}\n",
     );
@@ -5546,9 +5789,8 @@ fn parity_selector_unify_host() {
         ("\":host-context(.c)\"", "\".d\""),
     ];
     for (a, b) in null_cases {
-        let scss = format!(
-            "@use \"sass:selector\";\n@use \"sass:meta\";\na {{b: meta.inspect(selector.unify({a}, {b}))}}\n"
-        );
+        let scss =
+            format!("@use \"sass:selector\";\n@use \"sass:meta\";\na {{b: meta.inspect(selector.unify({a}, {b}))}}\n");
         let ours = compile(&scss, &Options::default()).ok();
         match dart_sass(&scss) {
             Some(theirs) => assert_eq!(ours.as_deref(), Some(theirs.as_str()), "\nunify({a}, {b})"),
@@ -5564,13 +5806,27 @@ fn parity_selector_extend_into_pseudos() {
     // extender converges (no unbounded growth).
     assert_parity("@use \"sass:selector\";\na {b: selector.extend(\".x\", \".x\", \".x .y\")}\n");
     assert_parity("@use \"sass:selector\";\na {b: selector.extend(\":is(.c)\", \".c\", \".d\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.extend(\":is(.c)\", \".c\", \".d, .e\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.extend(\":where(.x)\", \".x\", \".x .y\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.extend(\":matches(.c)\", \".c\", \".d\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.extend(\":not(.c)\", \".c\", \".d\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.extend(\":not(.c.d)\", \".c\", \".e\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.extend(\":is(.c) .e\", \".c\", \".d\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.replace(\":is(.c)\", \".c\", \".d\")}\n");
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.extend(\":is(.c)\", \".c\", \".d, .e\")}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.extend(\":where(.x)\", \".x\", \".x .y\")}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.extend(\":matches(.c)\", \".c\", \".d\")}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.extend(\":not(.c)\", \".c\", \".d\")}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.extend(\":not(.c.d)\", \".c\", \".e\")}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.extend(\":is(.c) .e\", \".c\", \".d\")}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.replace(\":is(.c)\", \".c\", \".d\")}\n",
+    );
 }
 
 #[test]
@@ -5578,12 +5834,18 @@ fn parity_selector_nth_child_anb() {
     // `:nth-child`/`:nth-last-child` An+B arguments are canonicalized
     // (`2n + 1` → `2n+1`, `2N + 1` → `2n+1`); other nth pseudos and uppercased
     // names stay verbatim.
-    assert_parity("@use \"sass:selector\";\na {b: selector.unify(\":nth-child(2n + 1)\", \"a\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.unify(\":nth-last-child(3n - 2)\", \"a\")}\n");
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.unify(\":nth-child(2n + 1)\", \"a\")}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.unify(\":nth-last-child(3n - 2)\", \"a\")}\n",
+    );
     assert_parity(
         "@use \"sass:selector\";\na {b: selector.is-superselector(\":nth-child(2n+1)\", \":nth-child(2n + 1)\")}\n",
     );
-    assert_parity("@use \"sass:selector\";\na {b: selector.unify(\":nth-of-type(3n - 2)\", \"a\")}\n");
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.unify(\":nth-of-type(3n - 2)\", \"a\")}\n",
+    );
 }
 
 #[test]
@@ -5591,12 +5853,8 @@ fn parity_selector_extend_nth_of() {
     // `:nth-child(An+B of <selector>)` extends only its `of` selector; a nested
     // same-An+B nth pseudo in the extender merges (deduped), a different-An+B
     // one is dropped.
-    assert_parity(
-        "@use \"sass:selector\";\na {b: selector.extend(\":nth-child(2n+1 of .c)\", \".c\", \".d\")}\n",
-    );
-    assert_parity(
-        "@use \"sass:selector\";\na {b: selector.extend(\":nth-child(2n+1 of .c)\", \".c\", \".d, .e\")}\n",
-    );
+    assert_parity("@use \"sass:selector\";\na {b: selector.extend(\":nth-child(2n+1 of .c)\", \".c\", \".d\")}\n");
+    assert_parity("@use \"sass:selector\";\na {b: selector.extend(\":nth-child(2n+1 of .c)\", \".c\", \".d, .e\")}\n");
     assert_parity(
         "@use \"sass:selector\";\na {b: selector.extend(\":nth-child(2n+1 of .c)\", \".c\", \":nth-child(2n+1 of .d, .e)\")}\n",
     );
@@ -5614,10 +5872,10 @@ fn parity_selector_vendor_prefixed_pseudos() {
     // stripped (dart-sass `unvendor`) for the selector-pseudo family check, so
     // unify/extend/is-superselector treat it as its base pseudo — but the full
     // (prefixed) name must match to merge a nested one.
+    assert_parity("@use \"sass:selector\";\na {b: selector.is-superselector(\":-pfx-is(c d, e f, g h)\", \"c d\")}\n");
     assert_parity(
-        "@use \"sass:selector\";\na {b: selector.is-superselector(\":-pfx-is(c d, e f, g h)\", \"c d\")}\n",
+        "@use \"sass:selector\";\na {b: selector.extend(\":-ms-matches(.c)\", \".c\", \".d\")}\n",
     );
-    assert_parity("@use \"sass:selector\";\na {b: selector.extend(\":-ms-matches(.c)\", \".c\", \".d\")}\n");
     assert_parity(
         "@use \"sass:selector\";\na {b: selector.extend(\":-ms-matches(.c)\", \".c\", \":-ms-matches(.d, .e)\")}\n",
     );
@@ -5632,8 +5890,12 @@ fn parity_selector_is_superselector_not() {
     // dart-sass `:not(S1)` superselector rule (contravariant): `:not(c.d)` is a
     // superselector of `e` (a different type can never match `c.d`), and a
     // same-name `:not` whose argument supersedes each complex covers it.
-    assert_parity("@use \"sass:selector\";\na {b: selector.is-superselector(\":not(c.d)\", \"e\")}\n");
-    assert_parity("@use \"sass:selector\";\na {b: selector.is-superselector(\":not(#c.d)\", \"#e\")}\n");
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.is-superselector(\":not(c.d)\", \"e\")}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.is-superselector(\":not(#c.d)\", \"#e\")}\n",
+    );
     assert_parity(
         "@use \"sass:selector\";\na {b: selector.is-superselector(\":not(c d.i, e j f)\", \":not(c d, e f, g h)\")}\n",
     );
@@ -5641,7 +5903,9 @@ fn parity_selector_is_superselector_not() {
         "@use \"sass:selector\";\na {b: selector.is-superselector(\":not(c d.i):not(e j f)\", \":not(c d, e f, g h)\")}\n",
     );
     // Not a superselector when the type can still match.
-    assert_parity("@use \"sass:selector\";\na {b: selector.is-superselector(\":not(c.d)\", \"c\")}\n");
+    assert_parity(
+        "@use \"sass:selector\";\na {b: selector.is-superselector(\":not(c.d)\", \"c\")}\n",
+    );
 }
 
 #[test]
@@ -5649,9 +5913,15 @@ fn parity_selector_combinator_runs() {
     // A "bogus" combinator run — a leading run (`~ ~ c`) or a run between
     // compounds (`c > > d`) — is preserved through parse/nest/append, and two
     // different leading runs can't unify.
-    assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"c > > d\", \"e\"))}\n");
-    assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"~ ~ c\", \"d\"))}\n");
-    assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"c\", \"+ > d\"))}\n");
+    assert_parity(
+        "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"c > > d\", \"e\"))}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"~ ~ c\", \"d\"))}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"c\", \"+ > d\"))}\n",
+    );
     assert_parity(
         "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\"+ ~ > .c\", \"+ > ~ ~ .d\"))}\n",
     );
@@ -5662,11 +5932,13 @@ fn parity_selector_trailing_combinators() {
     // Trailing combinator runs (`c >`, `d + >`) and combinator-only selectors
     // (`>`) round-trip through nest; append rejects them, and a bogus
     // trailing-combinator @extend extender is dropped.
-    assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"c\", \"d + >\"))}\n");
-    assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"c\", \">\", \"d\"))}\n");
     assert_parity(
-        "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"c ~\", \"d\"))}\n",
+        "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"c\", \"d + >\"))}\n",
     );
+    assert_parity(
+        "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"c\", \">\", \"d\"))}\n",
+    );
+    assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.nest(\"c ~\", \"d\"))}\n");
     if enabled() {
         // append rejects a combinator-only / trailing-combinator selector.
         for scss in [
@@ -5686,8 +5958,12 @@ fn parity_selector_unify_legacy_pseudo_element() {
     // A legacy single-colon pseudo-element unifies with its double-colon form
     // (`:after` ≡ `::after`), keeping the base's spelling; two different
     // pseudo-elements still can't share a compound.
-    assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\":after\", \"::after\"))}\n");
-    assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\"::after\", \":after\"))}\n");
+    assert_parity(
+        "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\":after\", \"::after\"))}\n",
+    );
+    assert_parity(
+        "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\"::after\", \":after\"))}\n",
+    );
     assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\"a:after\", \"a::after\"))}\n");
     assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\"::before\", \"::after\"))}\n");
 }
@@ -5699,7 +5975,9 @@ fn parity_selector_unify_host_is_order() {
     // and `:host` + `:is(.c):is(.d)` → `:is(.c):host:is(.d)`.
     assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\":host(.c)\", \":is(.d)\"))}\n");
     assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\":host\", \":is(.c):is(.d)\"))}\n");
-    assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\":host\", \":is(.c)\"))}\n");
+    assert_parity(
+        "@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\":host\", \":is(.c)\"))}\n",
+    );
     assert_parity("@use \"sass:selector\";\n@use \"sass:meta\";\na {b: meta.inspect(selector.unify(\":host-context(.c)\", \":is(.d)\"))}\n");
 }
 
@@ -5736,7 +6014,11 @@ fn parity_strip_sourcemap_comment() {
     ] {
         let ours = compile(scss, &Options::default()).expect("compile failed");
         if let Some(theirs) = dart_sass(scss) {
-            assert_eq!(ours.trim_end(), theirs.trim_end(), "\n--- scss ---\n{scss}\n");
+            assert_eq!(
+                ours.trim_end(),
+                theirs.trim_end(),
+                "\n--- scss ---\n{scss}\n"
+            );
         }
     }
 }
@@ -5853,12 +6135,18 @@ fn weave_combinator_runs_match_dart() {
     // Conflicting trailing combinators can't merge.
     assert_eq!(go("\".c ~\", \".c\", \".d >\""), "a {\n  b: .c ~;\n}\n");
     // A multi-combinator run anywhere makes the extension useless.
-    assert_eq!(go("\".c ~ ~ .d\", \".c\", \".e\""), "a {\n  b: .c ~ ~ .d;\n}\n");
+    assert_eq!(
+        go("\".c ~ ~ .d\", \".c\", \".e\""),
+        "a {\n  b: .c ~ ~ .d;\n}\n"
+    );
     assert_eq!(go("\".c\", \".c\", \".d ~ + .e\""), "a {\n  b: .c;\n}\n");
     assert_eq!(go("\"> + .c\", \".c\", \".d\""), "a {\n  b: > + .c;\n}\n");
     // A combinator-only extender replaces the compound wholesale.
     assert_eq!(go("\".c\", \".c\", \">\""), "a {\n  b: .c, >;\n}\n");
-    assert_eq!(go("\".c .d\", \".c\", \"~\""), "a {\n  b: .c .d, ~ .d;\n}\n");
+    assert_eq!(
+        go("\".c .d\", \".c\", \"~\""),
+        "a {\n  b: .c .d, ~ .d;\n}\n"
+    );
     // `selector.unify` rejects any multi-combinator run (dart `isUseless`).
     assert_eq!(
         ours("@use \"sass:selector\";\na {b: selector.unify(\".c + ~ > .d\", \".e + ~ > .f\")}\n"),
@@ -5891,7 +6179,10 @@ fn selector_arg_pseudo_superselector_rules() {
     assert_eq!(go(":nth-child(2n of c, d)", ":nth-child(2n of c)"), yes);
     assert_eq!(go(":nth-child(2n of c, d)", "e:nth-child(2n of c)"), yes);
     assert_eq!(go(":nth-child(2n of c)", ":nth-child(3n of c)"), no);
-    assert_eq!(go(":nth-last-child(2n of c, d)", ":nth-last-child(2n of c)"), yes);
+    assert_eq!(
+        go(":nth-last-child(2n of c, d)", ":nth-last-child(2n of c)"),
+        yes
+    );
     assert_eq!(
         go(
             ":-pfx-nth-child(n+1 of c d, e f)",
@@ -5988,7 +6279,10 @@ fn plain_css_value_semantics() {
     assert_eq!(go("a {x: null}\n"), "a {\n  x: null;\n}\n");
     assert_eq!(go("a {b: true}\n"), "a {\n  b: true;\n}\n");
     // The `:x: y` IE property hack parses as a declaration.
-    assert_eq!(go(".hacks {*x: y; :x: y}\n"), ".hacks {\n  *x: y;\n  :x: y;\n}\n");
+    assert_eq!(
+        go(".hacks {*x: y; :x: y}\n"),
+        ".hacks {\n  *x: y;\n  :x: y;\n}\n"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -6047,7 +6341,11 @@ fn import_implicit_configuration() {
     let imp = FsImporter::new(vec![dir.clone()]);
     let opts = Options::default().with_importer(&imp);
     std::fs::write(dir.join("_midstream.scss"), "@forward \"upstream\";\n").unwrap();
-    std::fs::write(dir.join("_upstream.scss"), "$a: original !default;\nb {c: $a}\n").unwrap();
+    std::fs::write(
+        dir.join("_upstream.scss"),
+        "$a: original !default;\nb {c: $a}\n",
+    )
+    .unwrap();
     assert_eq!(
         compile("$a: configured;\n@import \"midstream\";\n", &opts).expect("import cfg"),
         "b {\n  c: configured;\n}"
@@ -6080,7 +6378,10 @@ fn round_calculation_semantics() {
         ours("a {b: round(1px + 0%, 1px + 0%)}\n"),
         "a {\n  b: round(1px + 0%, 1px + 0%);\n}\n"
     );
-    assert_eq!(ours("a {b: round(#{\"up\"}, 3px, 9px)}\n"), "a {\n  b: 9px;\n}\n");
+    assert_eq!(
+        ours("a {b: round(#{\"up\"}, 3px, 9px)}\n"),
+        "a {\n  b: 9px;\n}\n"
+    );
     assert_eq!(ours("a {b: round(2.5)}\n"), "a {\n  b: 3;\n}\n");
     assert!(compile("a {b: round(7 % 3, 1)}\n", &Options::default()).is_err());
 }
@@ -6093,7 +6394,10 @@ fn sign_and_minmax_calculation_semantics() {
     // the call with folded subtrees when an operand doesn't simplify.
     assert_eq!(ours("a {b: sign(0px)}\n"), "a {\n  b: 0px;\n}\n");
     assert_eq!(ours("a {b: sign(7%)}\n"), "a {\n  b: sign(7%);\n}\n");
-    assert_eq!(ours("a {b: sign(-7px / 4em) * 1em}\n"), "a {\n  b: -1px;\n}\n");
+    assert_eq!(
+        ours("a {b: sign(-7px / 4em) * 1em}\n"),
+        "a {\n  b: -1px;\n}\n"
+    );
     assert_eq!(
         ours("@use \"sass:math\";\na {b: math.div(1, sign(-0.0))}\n"),
         "a {\n  b: calc(-infinity);\n}\n"
@@ -6126,7 +6430,10 @@ fn calc_space_splice_and_minmax_compatibility() {
     // preserve path rejects a unitless operand paired with any unit.
     assert_eq!(ours("a {b: min(1c, 2)}\n"), "a {\n  b: 1c;\n}\n");
     assert_eq!(ours("a {b: max(2d, 3, 1c)}\n"), "a {\n  b: 3;\n}\n");
-    assert_eq!(ours("a {b: min(1c, 2px)}\n"), "a {\n  b: min(1c, 2px);\n}\n");
+    assert_eq!(
+        ours("a {b: min(1c, 2px)}\n"),
+        "a {\n  b: min(1c, 2px);\n}\n"
+    );
     assert!(compile("a {b: min(3, 1c, 2d)}\n", &Options::default()).is_err());
     assert!(compile("a {b: min(1px, 2em, 3)}\n", &Options::default()).is_err());
 }
@@ -6192,7 +6499,11 @@ fn import_forward_module_semantics() {
     std::fs::create_dir_all(&dir).expect("create scratch dir");
     let imp = FsImporter::new(vec![dir.clone()]);
     let opts = Options::default().with_importer(&imp);
-    std::fs::write(dir.join("_other.scss"), "$a: original !default;\nb {c: $a}\n").unwrap();
+    std::fs::write(
+        dir.join("_other.scss"),
+        "$a: original !default;\nb {c: $a}\n",
+    )
+    .unwrap();
     std::fs::write(dir.join("_other.import.scss"), "@forward \"other\";\n").unwrap();
 
     // Module CSS re-emits per import; second implicit config is ignored.
@@ -6287,7 +6598,10 @@ fn nest_parent_list_and_cartesian() {
     assert_eq!(go("\"&\""), "a {\n  b: &;\n}\n");
     assert_eq!(go("\"&\", \".x\""), "a {\n  b: & .x;\n}\n");
     assert_eq!(go("\"&.suffix\""), "a {\n  b: &.suffix;\n}\n");
-    assert_eq!(go("\"c, d\", \"e, f\""), "a {\n  b: c e, c f, d e, d f;\n}\n");
+    assert_eq!(
+        go("\"c, d\", \"e, f\""),
+        "a {\n  b: c e, c f, d e, d f;\n}\n"
+    );
     assert!(compile(
         "@use \"sass:selector\";\na {b: selector.nest(\"&c\")}\n",
         &Options::default()
@@ -6344,7 +6658,11 @@ fn module_scoped_extend() {
         "in-shared, right-e2, left-e2 {\n  x: y;\n}"
     );
     // A private placeholder can't be extended from another module.
-    std::fs::write(dir.join("_po.scss"), "%-priv {x: y}\nin-other {@extend %-priv}\n").unwrap();
+    std::fs::write(
+        dir.join("_po.scss"),
+        "%-priv {x: y}\nin-other {@extend %-priv}\n",
+    )
+    .unwrap();
     assert_eq!(
         compile("@use \"po\";\nme {@extend %-priv !optional}\n", &opts).expect("private"),
         "in-other {\n  x: y;\n}"
@@ -6393,7 +6711,10 @@ fn selector_paren_validation_and_import_supports_collapse() {
         "a:nth-child (2n) {x: y}",
         "a) {x: y}",
     ] {
-        assert!(compile(bad, &Options::default()).is_err(), "should reject: {bad}");
+        assert!(
+            compile(bad, &Options::default()).is_err(),
+            "should reject: {bad}"
+        );
     }
     for good in [
         ":not(b) {x: y}",
@@ -6442,9 +6763,8 @@ fn interpolated_function_name_is_plain_css_call() {
         ours("$l: 1, 2, 3;\n.x {a: f#{o}o($l...)}\n"),
         ".x {\n  a: foo(1, 2, 3);\n}\n"
     );
-    assert!(
-        ours_err(".x {a: f#{o}o($b: 1)}\n").contains("Plain CSS functions don't support keyword arguments.")
-    );
+    assert!(ours_err(".x {a: f#{o}o($b: 1)}\n")
+        .contains("Plain CSS functions don't support keyword arguments."));
 }
 
 #[test]
@@ -6500,7 +6820,11 @@ fn forwarded_members_bind_their_defining_module() {
         "$a: old value;\n@function get-a() {@return $a}\n",
     )
     .unwrap();
-    std::fs::write(dir.join("_midstream.scss"), "@forward \"upstream\" as d-*;\n").unwrap();
+    std::fs::write(
+        dir.join("_midstream.scss"),
+        "@forward \"upstream\" as d-*;\n",
+    )
+    .unwrap();
     let imp = FsImporter::new(vec![dir.clone()]);
     let opts = Options::default().with_importer(&imp);
     // A prefixed forwarded variable assignment writes through to the
@@ -6521,7 +6845,11 @@ fn forwarded_members_bind_their_defining_module() {
     )
     .unwrap();
     assert_eq!(
-        compile("@use \"shadow\";\nshadow.$a: new value;\nb {c: shadow.$a; s: shadow.get-shadow-a(); u: shadow.get-a()}\n", &opts).unwrap(),
+        compile(
+            "@use \"shadow\";\nshadow.$a: new value;\nb {c: shadow.$a; s: shadow.get-shadow-a(); u: shadow.get-a()}\n",
+            &opts
+        )
+        .unwrap(),
         "b {\n  c: shadow value;\n  s: shadow value;\n  u: new value;\n}"
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -6745,7 +7073,10 @@ fn relative_resolution_and_distributed_config() {
     std::fs::create_dir_all(dir.join("subdir")).unwrap();
     let w = |n: &str, b: &str| std::fs::write(dir.join(n), b).unwrap();
     // Relative URLs resolve against the containing FILE's directory.
-    w("module/_index.scss", "@forward './a/a1';\n@forward './a/a2';\n");
+    w(
+        "module/_index.scss",
+        "@forward './a/a1';\n@forward './a/a2';\n",
+    );
     w("module/a/_variables.scss", "$a: default !default;\n");
     w(
         "module/a/a1.scss",
@@ -6822,7 +7153,10 @@ fn fs_importer_unreadable_file_surfaces_error_not_miss() {
         !msg.contains("Can't find stylesheet"),
         "an unreadable file must not be reported as 'not found', got: {msg}"
     );
-    assert!(msg.contains("Cannot read"), "expected a read error, got: {msg}");
+    assert!(
+        msg.contains("Cannot read"),
+        "expected a read error, got: {msg}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -6889,9 +7223,7 @@ fn meta_builtin_module_introspection() {
         ours("@use \"sass:meta\";\na {v: meta.inspect([1,])}\n"),
         "a {\n  v: [1,];\n}\n"
     );
-    assert_parity(
-        "@use \"sass:meta\";\na {v: meta.inspect([1,]); w: meta.inspect([1, 2]); x: meta.inspect([])}\n",
-    );
+    assert_parity("@use \"sass:meta\";\na {v: meta.inspect([1,]); w: meta.inspect([1, 2]); x: meta.inspect([])}\n");
 }
 
 #[test]
@@ -6942,7 +7274,10 @@ fn interpolated_at_rule_names_and_forbidden_contexts() {
         ".x {y: {@#{\"asdf\"};}}",
     ] {
         let err = ours_err(bad);
-        assert!(err.contains("This at-rule is not allowed here."), "{bad}: {err}");
+        assert!(
+            err.contains("This at-rule is not allowed here."),
+            "{bad}: {err}"
+        );
     }
 }
 
@@ -7012,9 +7347,7 @@ fn color_to_gamut_round_trips() {
         "a {\n  b: hsl(0, 50%, 50%);\n}\n"
     );
     assert_eq!(
-        ours(
-            "@use \"sass:color\";\na {b: color.to-gamut(oklch(10% 0% 0deg), $space: srgb, $method: clip)}\n"
-        ),
+        ours("@use \"sass:color\";\na {b: color.to-gamut(oklch(10% 0% 0deg), $space: srgb, $method: clip)}\n"),
         "a {\n  b: oklch(10% 0 none);\n}\n"
     );
     // An unbounded target space returns the color untouched.
@@ -7110,9 +7443,7 @@ fn color_inspect_forms() {
         "a {\n  b: hwb(0 30% 40% / 0.5);\n}\n"
     );
     assert_eq!(
-        ours(
-            "@use \"sass:color\";\n@use \"sass:meta\";\na {b: meta.inspect(color.change(red, $red: 300))}\n"
-        ),
+        ours("@use \"sass:color\";\n@use \"sass:meta\";\na {b: meta.inspect(color.change(red, $red: 300))}\n"),
         "a {\n  b: rgb(300, 0, 0);\n}\n"
     );
     assert_parity("a {b: hwb(120 0% 0%)}\n");
@@ -7182,7 +7513,10 @@ fn number_format_dart_tostring_semantics() {
         "a {\n  b: 657390374199289.2;\n}\n"
     );
     // Half-up at the 10-digit boundary still applies.
-    assert_eq!(ours("a {b: 0.00000000015}\n"), "a {\n  b: 0.0000000002;\n}\n");
+    assert_eq!(
+        ours("a {b: 0.00000000015}\n"),
+        "a {\n  b: 0.0000000002;\n}\n"
+    );
     assert_eq!(ours("a {b: 1e-11}\n"), "a {\n  b: 0;\n}\n");
 }
 
@@ -7243,7 +7577,10 @@ fn selector_escape_terminating_space() {
         ours(".foo {a: b}\n\\.foo {c: d}\n.bar {@extend \\02e foo}\n"),
         ".foo {\n  a: b;\n}\n\n\\.foo, .bar {\n  c: d;\n}\n"
     );
-    assert_eq!(ours("selector\\9 { x: y; }\n"), "selector\\9  {\n  x: y;\n}\n");
+    assert_eq!(
+        ours("selector\\9 { x: y; }\n"),
+        "selector\\9  {\n  x: y;\n}\n"
+    );
     assert_eq!(
         ours("@media screen\\9 { x {y: z} }\n"),
         "@media screen\\9  {\n  x {\n    y: z;\n  }\n}\n"
@@ -7281,7 +7618,9 @@ fn at_root_queries() {
     // keeps the style rule (bare declarations re-wrap in the enclosing
     // selector); `(without: all)` escapes everything; quoted names work.
     assert_eq!(
-        ours("@media print {\n  a {\n    @at-root (without: media) {\n      b: c;\n    }\n  }\n}\n"),
+        ours(
+            "@media print {\n  a {\n    @at-root (without: media) {\n      b: c;\n    }\n  }\n}\n"
+        ),
         "a {\n  b: c;\n}\n"
     );
     assert_eq!(
@@ -7306,7 +7645,10 @@ fn extend_target_in_omitted_bogus_rule() {
     // still satisfies @extend target matching (dart keeps it in the extend
     // graph); the extension result is bogus too, so the output is empty.
     assert_eq!(ours(".a > + x {a: b}\n.b y {@extend x}\n"), "");
-    assert_eq!(ours(".a ~ > + .b > x {a: b}\n.c > + .d > y {@extend x}\n"), "");
+    assert_eq!(
+        ours(".a ~ > + .b > x {a: b}\n.c > + .d > y {@extend x}\n"),
+        ""
+    );
     // A genuinely missing target still errors.
     assert!(compile(".a x {a: b}\n.b {@extend z}\n", &Options::default()).is_err());
 }
@@ -7371,7 +7713,10 @@ fn selector_linebreaks_with_stray_commas() {
 fn modulo_infinite_modulus() {
     // dart moduloLikeSass: an infinite DIVISOR returns the dividend when
     // signs agree and NaN otherwise; an infinite dividend is always NaN.
-    assert_eq!(ours("a {b: 1px % calc(infinity * 1px)}\n"), "a {\n  b: 1px;\n}\n");
+    assert_eq!(
+        ours("a {b: 1px % calc(infinity * 1px)}\n"),
+        "a {\n  b: 1px;\n}\n"
+    );
     assert_eq!(
         ours("a {b: -1px % calc(-infinity * 1px)}\n"),
         "a {\n  b: -1px;\n}\n"
@@ -7380,7 +7725,10 @@ fn modulo_infinite_modulus() {
         ours("a {b: 1px % calc(-infinity * 1px)}\n"),
         "a {\n  b: calc(NaN * 1px);\n}\n"
     );
-    assert_eq!(ours("a {b: calc(infinity) % 3}\n"), "a {\n  b: calc(NaN);\n}\n");
+    assert_eq!(
+        ours("a {b: calc(infinity) % 3}\n"),
+        "a {\n  b: calc(NaN);\n}\n"
+    );
 }
 
 #[test]
@@ -7410,12 +7758,18 @@ fn url_quoted_string_normalizes() {
     // A quoted url() is a normal function call whose string argument
     // serializes canonically (double quotes preferred, single kept when the
     // content has a double quote); unquoted urls stay plain tokens.
-    assert_eq!(ours("a {b: url('x.png')}\n"), "a {\n  b: url(\"x.png\");\n}\n");
+    assert_eq!(
+        ours("a {b: url('x.png')}\n"),
+        "a {\n  b: url(\"x.png\");\n}\n"
+    );
     assert_eq!(
         ours("e {f: url('it\"s.png')}\n"),
         "e {\n  f: url('it\"s.png');\n}\n"
     );
-    assert_eq!(ours("e {f: url(plain.png)}\n"), "e {\n  f: url(plain.png);\n}\n");
+    assert_eq!(
+        ours("e {f: url(plain.png)}\n"),
+        "e {\n  f: url(plain.png);\n}\n"
+    );
 }
 
 #[test]
@@ -7563,7 +7917,10 @@ fn unit_conversion_is_case_sensitive_with_frequency() {
         ours("a { v: calc(1PX + 1px); }"),
         "a {\n  v: calc(1PX + 1px);\n}\n"
     );
-    assert_eq!(ours("a { v: calc(1kHz + 1Hz); }"), "a {\n  v: 1.001kHz;\n}\n");
+    assert_eq!(
+        ours("a { v: calc(1kHz + 1Hz); }"),
+        "a {\n  v: 1.001kHz;\n}\n"
+    );
 }
 
 #[test]
@@ -7572,7 +7929,9 @@ fn hyphens_and_underscores_interchange_in_names() {
     // function/mixin names at definition/lookup, so all four spellings
     // resolve to the same member (52_interchangeable_hyphens_underscores).
     assert_eq!(
-        ours("$my-var: 1;\n@mixin my-mix($p) { a: $p; b: $my_var; }\ndiv { @include my_mix(2); }\n"),
+        ours(
+            "$my-var: 1;\n@mixin my-mix($p) { a: $p; b: $my_var; }\ndiv { @include my_mix(2); }\n"
+        ),
         "div {\n  a: 2;\n  b: 1;\n}\n"
     );
     assert_eq!(
@@ -7591,7 +7950,11 @@ fn hyphens_and_underscores_interchange_in_names() {
         ours("@function __a() {@return 1}\nb {c: --a(); d: __a()}\n"),
         "b {\n  c: --a();\n  d: 1;\n}\n"
     );
-    assert!(compile("@mixin __a() {b: c}\nd {@include --a}\n", &Options::default()).is_err());
+    assert!(compile(
+        "@mixin __a() {b: c}\nd {@include --a}\n",
+        &Options::default()
+    )
+    .is_err());
 }
 
 #[test]
@@ -7614,7 +7977,10 @@ fn call_results_are_slash_free_and_if_supports_splat() {
         "a {\n  b: 0.5;\n}\n"
     );
     // if() accepts splat arguments (macro args evaluate the splat eagerly).
-    assert_eq!(ours("c {d: if(true, 1/2 null...)}\n"), "c {\n  d: 0.5;\n}\n");
+    assert_eq!(
+        ours("c {d: if(true, 1/2 null...)}\n"),
+        "c {\n  d: 0.5;\n}\n"
+    );
 }
 
 #[test]
@@ -7755,8 +8121,14 @@ fn trailing_comments_join_previous_line() {
     assert_eq!(ours("a {b: {c: d} /**/}\n"), "a {\n  b-c: d; /**/\n}\n");
     // A block whose ONLY child is a trailing comment stays on one line, with
     // ` }` on the same line (the comment compares against the `{` line).
-    assert_eq!(ours("a {\n  @font-face {/**/}\n}\n"), "@font-face { /**/ }\n");
-    assert_eq!(ours("a {\n  @keyframes {/**/}\n}\n"), "@keyframes { /**/ }\n");
+    assert_eq!(
+        ours("a {\n  @font-face {/**/}\n}\n"),
+        "@font-face { /**/ }\n"
+    );
+    assert_eq!(
+        ours("a {\n  @keyframes {/**/}\n}\n"),
+        "@keyframes { /**/ }\n"
+    );
     // A comment on its own source line keeps its own indented output line.
     assert_eq!(
         ours("a {\n  b: c;\n  /* own line */\n}\n"),
@@ -7879,7 +8251,10 @@ fn loud_comment_glued_to_property_name_joins_it() {
     // dart _declarationOrBuffer appends ONE rawText(loudComment) to the name
     // when `/*` directly follows the identifier (issue_1422); a whitespace-
     // separated comment is mid-trivia and drops.
-    assert_eq!(ours(".a { foo/*c*/: bar; }\n"), ".a {\n  foo/*c*/: bar;\n}\n");
+    assert_eq!(
+        ours(".a { foo/*c*/: bar; }\n"),
+        ".a {\n  foo/*c*/: bar;\n}\n"
+    );
     assert_eq!(ours(".a { foo /*c*/ : bar; }\n"), ".a {\n  foo: bar;\n}\n");
     // Only the first glued comment joins; later ones are trivia.
     assert_eq!(
@@ -7887,7 +8262,10 @@ fn loud_comment_glued_to_property_name_joins_it() {
         ".a {\n  foo/*a*/: bar;\n}\n"
     );
     // An interpolated name glues the same way.
-    assert_eq!(ours(".a { #{f}oo/*c*/: bar; }\n"), ".a {\n  foo/*c*/: bar;\n}\n");
+    assert_eq!(
+        ours(".a { #{f}oo/*c*/: bar; }\n"),
+        ".a {\n  foo/*c*/: bar;\n}\n"
+    );
 }
 
 #[test]
@@ -7914,9 +8292,7 @@ fn has_pseudo_drops_placeholder_arguments_like_dart() {
     // (issue_1797); a `:has` whose whole argument stays invisible can never
     // match and its rule drops.
     assert_eq!(
-        ours(
-            "%not { c: red; }\n.not { @extend %not; }\ndiv:has(%not) { x: y; }\nspan:has(%never) { z: w; }\n"
-        ),
+        ours("%not { c: red; }\n.not { @extend %not; }\ndiv:has(%not) { x: y; }\nspan:has(%never) { z: w; }\n"),
         ".not {\n  c: red;\n}\n\ndiv:has(.not) {\n  x: y;\n}\n"
     );
 }
@@ -8047,7 +8423,11 @@ fn at_in_selector_is_expected_selector_with_dual_span() {
     assert!(msg.contains("2:8"), "{msg}");
     // Without diagnostic source the dual-span block isn't rendered, but the
     // position is still the interpolation expression's start.
-    let err = compile(".test31#{'\\@baz'} { content: '3.1'; }\n", &Options::default()).unwrap_err();
+    let err = compile(
+        ".test31#{'\\@baz'} { content: '3.1'; }\n",
+        &Options::default(),
+    )
+    .unwrap_err();
     let msg = format!("{err}");
     assert!(msg.contains("expected selector."), "{msg}");
     assert!(msg.contains("1:10"), "{msg}");
@@ -8163,7 +8543,9 @@ fn extend_selector_pseudo_one_shot() {
     // ...and re-extending an EXTENDER's `:is()` keeps the pre-extension form
     // (dart sass/dart-sass#1297).
     assert_eq!(
-        ours(":is(midstream) {@extend upstream}\ndownstream {@extend midstream}\nupstream {a: b}\n"),
+        ours(
+            ":is(midstream) {@extend upstream}\ndownstream {@extend midstream}\nupstream {a: b}\n"
+        ),
         "upstream, :is(midstream), :is(midstream, downstream) {\n  a: b;\n}\n"
     );
     // But a pseudo whose argument is NOT a target stays on the registration-order
@@ -8316,7 +8698,11 @@ fn reemitted_comment_clones_never_reregister() {
     let opts = Options::default().with_importer(&imp);
     fs::write(dir.join("_seed.scss"), "/* seed */\n$sd: 0;\n").unwrap();
     fs::write(dir.join("_lib.scss"), "/* lib */\n$l: 1;\n").unwrap();
-    fs::write(dir.join("_mid.scss"), "/* note */\n@use \"lib\" as *;\n$m: 1;\n").unwrap();
+    fs::write(
+        dir.join("_mid.scss"),
+        "/* note */\n@use \"lib\" as *;\n$m: 1;\n",
+    )
+    .unwrap();
     fs::write(dir.join("_vis2.scss"), "/* vis2 */\n$v: 1;\n").unwrap();
     fs::write(
         dir.join("_sib.scss"),
@@ -8346,8 +8732,16 @@ fn dropped_placeholder_modules_leave_no_blank() {
     let imp = FsImporter::new(vec![dir.clone()]);
     let opts = Options::default().with_importer(&imp);
     fs::write(dir.join("_c.scss"), "/* c */\n$x: 1;\n").unwrap();
-    fs::write(dir.join("_pa.scss"), "%a1 {\n  q: 1;\n}\n\n%a2 {\n  q: 2;\n}\n").unwrap();
-    fs::write(dir.join("_pb.scss"), "%b1 {\n  q: 3;\n}\n\n%b2 {\n  q: 4;\n}\n").unwrap();
+    fs::write(
+        dir.join("_pa.scss"),
+        "%a1 {\n  q: 1;\n}\n\n%a2 {\n  q: 2;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("_pb.scss"),
+        "%b1 {\n  q: 3;\n}\n\n%b2 {\n  q: 4;\n}\n",
+    )
+    .unwrap();
     fs::write(dir.join("_ph.scss"), "@forward \"pa\";\n@forward \"pb\";\n").unwrap();
     let out = compile("@use \"c\";\n@use \"ph\";\n", &opts).expect("ph compiles");
     assert_eq!(out, "/* c */");
@@ -8392,8 +8786,16 @@ fn duplicate_extension_keeps_first_merged_store_position() {
         "@use 'ph';\n.dup {\n  .in:hover {\n    @extend %h;\n  }\n}\n",
     )
     .unwrap();
-    fs::write(dir.join("_l2.scss"), "@use 'ph';\n.l2 {\n  @extend %h;\n}\n").unwrap();
-    fs::write(dir.join("_l3.scss"), "@use 'ph';\n.l3 {\n  @extend %h;\n}\n").unwrap();
+    fs::write(
+        dir.join("_l2.scss"),
+        "@use 'ph';\n.l2 {\n  @extend %h;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("_l3.scss"),
+        "@use 'ph';\n.l3 {\n  @extend %h;\n}\n",
+    )
+    .unwrap();
     fs::write(
         dir.join("_l4.scss"),
         "@use 'ph';\n.x4,\n.dup {\n  .in:hover {\n    @extend %h;\n  }\n}\n",

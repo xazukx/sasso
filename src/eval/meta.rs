@@ -56,7 +56,8 @@ impl<'a> Evaluator<'a> {
             }
         }
         // Call results are slash-free (dart `withoutSlash()` on every call).
-        crate::builtins::call_module(&module, member, &pos_args, &named, pos).map(Value::without_slash)
+        crate::builtins::call_module(&module, member, &pos_args, &named, pos)
+            .map(Value::without_slash)
     }
 
     /// Handle a `sass:meta` member that depends on the evaluator's state
@@ -79,9 +80,15 @@ impl<'a> Evaluator<'a> {
             "get-function" => Some(self.meta_get_function(pos_args, named, pos)),
             "get-mixin" => Some(self.meta_get_mixin(pos_args, named, pos)),
             "call" => Some(self.meta_call(pos_args, named, pos)),
-            "module-variables" => Some(self.meta_module_members(pos_args, named, pos, MemberKind::Variable)),
-            "module-functions" => Some(self.meta_module_members(pos_args, named, pos, MemberKind::Function)),
-            "module-mixins" => Some(self.meta_module_members(pos_args, named, pos, MemberKind::Mixin)),
+            "module-variables" => {
+                Some(self.meta_module_members(pos_args, named, pos, MemberKind::Variable))
+            }
+            "module-functions" => {
+                Some(self.meta_module_members(pos_args, named, pos, MemberKind::Function))
+            }
+            "module-mixins" => {
+                Some(self.meta_module_members(pos_args, named, pos, MemberKind::Mixin))
+            }
             "accepts-content" => Some(self.meta_accepts_content(pos_args, named, pos)),
             "keywords" => Some(Self::meta_keywords(pos_args, named, pos)),
             _ => None,
@@ -91,7 +98,11 @@ impl<'a> Evaluator<'a> {
     /// `meta.keywords($args)`: the keyword arguments captured by a `$args...`
     /// rest parameter, as a map from each name (hyphen-normalized, unquoted) to
     /// its value. The argument must be an argument list, not an ordinary value.
-    fn meta_keywords(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+    fn meta_keywords(
+        pos_args: &[Value],
+        named: &[(String, Value)],
+        pos: Pos,
+    ) -> Result<Value, Error> {
         let v = pos_args
             .first()
             .or_else(|| named.iter().find(|(n, _)| n == "args").map(|(_, v)| v))
@@ -327,7 +338,12 @@ impl<'a> Evaluator<'a> {
     /// `meta.get-function($name, $module: ns)`: capture a function reference from
     /// the module bound to `ns` — a user `@function` by identity, or a built-in
     /// member by name.
-    fn get_function_from_module(&self, name: &str, module_name: &str, pos: Pos) -> Result<Value, Error> {
+    fn get_function_from_module(
+        &self,
+        name: &str,
+        module_name: &str,
+        pos: Pos,
+    ) -> Result<Value, Error> {
         if let Some(module) = self.used_user_modules.get(module_name) {
             if is_private_member(name) {
                 return Err(Error::at(
@@ -366,7 +382,12 @@ impl<'a> Evaluator<'a> {
         ))
     }
 
-    fn get_mixin_from_module(&self, name: &str, module_name: &str, pos: Pos) -> Result<Value, Error> {
+    fn get_mixin_from_module(
+        &self,
+        name: &str,
+        module_name: &str,
+        pos: Pos,
+    ) -> Result<Value, Error> {
         if let Some(module) = self.used_user_modules.get(module_name) {
             if is_private_member(name) {
                 return Err(Error::at(
@@ -405,7 +426,12 @@ impl<'a> Evaluator<'a> {
     /// `meta.call($function, $args...)`: invoke a function reference (or, when
     /// `$function` is a string, the named function). The trailing arguments were
     /// already splat-expanded by `eval_call_args`.
-    fn meta_call(&mut self, pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+    fn meta_call(
+        &mut self,
+        pos_args: &[Value],
+        named: &[(String, Value)],
+        pos: Pos,
+    ) -> Result<Value, Error> {
         // `$function` is the first positional argument, or the named `$function`.
         let (func_val, rest_pos): (Value, Vec<Value>) = if let Some(first) = pos_args.first() {
             (first.clone(), pos_args[1..].to_vec())
@@ -415,8 +441,11 @@ impl<'a> Evaluator<'a> {
             return Err(Error::at("Missing argument $function.", pos));
         };
         // The remaining named args (excluding `$function`) are call keywords.
-        let rest_named: Vec<(String, Value)> =
-            named.iter().filter(|(n, _)| n != "function").cloned().collect();
+        let rest_named: Vec<(String, Value)> = named
+            .iter()
+            .filter(|(n, _)| n != "function")
+            .cloned()
+            .collect();
 
         match func_val {
             // A first-class function reference.
@@ -433,7 +462,10 @@ impl<'a> Evaluator<'a> {
                 self.invoke_function_ref(&f, rest_pos, rest_named, pos)
             }
             other => Err(Error::at(
-                format!("$function: {} is not a function reference.", other.to_css(false)),
+                format!(
+                    "$function: {} is not a function reference.",
+                    other.to_css(false)
+                ),
                 pos,
             )),
         }
@@ -453,8 +485,10 @@ impl<'a> Evaluator<'a> {
         if let Some(id) = f.user {
             if let Some(callable) = self.captured_fn(id) {
                 let saved_scopes = std::mem::replace(&mut self.scopes, callable.env.clone());
-                let saved_var_spans = std::mem::replace(&mut self.var_spans, callable.env_spans.clone());
-                let saved_semi = std::mem::replace(&mut self.scope_semi_global, callable.env_semi.clone());
+                let saved_var_spans =
+                    std::mem::replace(&mut self.var_spans, callable.env_spans.clone());
+                let saved_semi =
+                    std::mem::replace(&mut self.scope_semi_global, callable.env_semi.clone());
                 let saved_fns = std::mem::replace(&mut self.functions, callable.env_fns.clone());
                 let saved_mixins = std::mem::replace(&mut self.mixins, callable.env_mixins.clone());
                 self.push_scope(false);
@@ -470,8 +504,7 @@ impl<'a> Evaluator<'a> {
                     )
                     .and_then(|()| {
                         self.in_mixin.push(false);
-                        let saved_file =
-                            std::mem::replace(&mut self.file, callable.def.file);
+                        let saved_file = std::mem::replace(&mut self.file, callable.def.file);
                         let r = self.run_fn_body(callable.def.body);
                         self.file = saved_file;
                         self.in_mixin.pop();
@@ -571,7 +604,13 @@ impl<'a> Evaluator<'a> {
 
     /// Whether the module bound to namespace `ns` defines a member `name` of the
     /// given kind (function/mixin/variable). An unknown namespace is an error.
-    fn module_member_exists(&self, ns: &str, name: &str, kind: MemberKind, pos: Pos) -> Result<bool, Error> {
+    fn module_member_exists(
+        &self,
+        ns: &str,
+        name: &str,
+        kind: MemberKind,
+        pos: Pos,
+    ) -> Result<bool, Error> {
         if let Some(m) = self.used_user_modules.get(ns) {
             return Ok(match kind {
                 MemberKind::Function => m.function(name).is_some(),
@@ -611,7 +650,10 @@ impl<'a> Evaluator<'a> {
         };
         if pos_args.len() > 1 {
             return Err(Error::at(
-                format!("Only 1 argument allowed, but {} were passed.", pos_args.len()),
+                format!(
+                    "Only 1 argument allowed, but {} were passed.",
+                    pos_args.len()
+                ),
                 pos,
             ));
         }
@@ -734,7 +776,11 @@ impl<'a> Evaluator<'a> {
             )?));
         }
         let key = normalize_arg_name(&name);
-        let scopes: &[Scope] = if global { &self.scopes[..1] } else { &self.scopes };
+        let scopes: &[Scope] = if global {
+            &self.scopes[..1]
+        } else {
+            &self.scopes
+        };
         let found = scopes
             .iter()
             .any(|s| s.borrow().keys().any(|k| normalize_arg_name(k) == key));
@@ -760,7 +806,8 @@ impl<'a> Evaluator<'a> {
         named: &[(String, Value)],
         pos: Pos,
     ) -> Result<Value, Error> {
-        let (name, module) = self.exists_name_module_args(pos_args, named, "mixin-exists", pos, true)?;
+        let (name, module) =
+            self.exists_name_module_args(pos_args, named, "mixin-exists", pos, true)?;
         if let Some(ns) = module {
             return Ok(Value::Bool(self.module_member_exists(
                 &ns,
@@ -792,7 +839,8 @@ impl<'a> Evaluator<'a> {
         named: &[(String, Value)],
         pos: Pos,
     ) -> Result<Value, Error> {
-        let (name, module) = self.exists_name_module_args(pos_args, named, "function-exists", pos, true)?;
+        let (name, module) =
+            self.exists_name_module_args(pos_args, named, "function-exists", pos, true)?;
         if let Some(ns) = module {
             return Ok(Value::Bool(self.module_member_exists(
                 &ns,
@@ -816,7 +864,9 @@ impl<'a> Evaluator<'a> {
                 pos,
             ));
         }
-        Ok(Value::Bool(count >= 1 || crate::builtins::is_builtin(&name)))
+        Ok(Value::Bool(
+            count >= 1 || crate::builtins::is_builtin(&name),
+        ))
     }
 
     /// Count how many `@use … as *` modules expose `name` as the given member
@@ -840,7 +890,10 @@ impl<'a> Evaluator<'a> {
     fn meta_content_exists(&self, pos_args: &[Value], pos: Pos) -> Result<Value, Error> {
         if !pos_args.is_empty() {
             return Err(Error::at(
-                format!("Only 0 arguments allowed, but {} were passed.", pos_args.len()),
+                format!(
+                    "Only 0 arguments allowed, but {} were passed.",
+                    pos_args.len()
+                ),
                 pos,
             ));
         }
@@ -880,7 +933,8 @@ impl<'a> Evaluator<'a> {
                     *v = std::mem::replace(v, Value::Null).without_slash();
                 }
                 return Ok(Some(
-                    crate::builtins::call_module(&fb.module, bare, &pos_args, &named, pos)?.without_slash(),
+                    crate::builtins::call_module(&fb.module, bare, &pos_args, &named, pos)?
+                        .without_slash(),
                 ));
             }
         }
@@ -898,7 +952,8 @@ impl<'a> Evaluator<'a> {
         call: Option<(Pos, usize)>,
     ) -> Result<Value, Error> {
         let (evaled, arg_spans) = self.eval_call_args_spanned(args)?;
-        let saved_member = call.map(|(pos, len)| self.enter_call(pos, len, &format!("{}()", func.def.name)));
+        let saved_member =
+            call.map(|(pos, len)| self.enter_call(pos, len, &format!("{}()", func.def.name)));
         let saved = self.enter_module(module);
         let saved_file = self.enter_module_file(module);
         let saved_scopes = std::mem::replace(&mut self.scopes, func.env.clone());

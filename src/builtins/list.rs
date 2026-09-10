@@ -73,7 +73,10 @@ fn fn_slash(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<V
         ));
     }
     if pos_args.len() < 2 {
-        return Err(Error::at("At least two elements are required.".to_string(), pos));
+        return Err(Error::at(
+            "At least two elements are required.".to_string(),
+            pos,
+        ));
     }
     Ok(Value::List(List {
         items: pos_args.to_vec().into(),
@@ -147,13 +150,19 @@ fn resolve_index(
     };
     if raw.fract() != 0.0 {
         return Err(Error::at(
-            format!("${pname}: {} is not an int.", crate::value::fmt_num(raw, false)),
+            format!(
+                "${pname}: {} is not an int.",
+                crate::value::fmt_num(raw, false)
+            ),
             pos,
         ));
     }
     let index = raw as i64;
     if index == 0 {
-        return Err(Error::at(format!("${pname}: List index may not be 0."), pos));
+        return Err(Error::at(
+            format!("${pname}: List index may not be 0."),
+            pos,
+        ));
     }
     let len_i = len as i64;
     if index.abs() > len_i {
@@ -367,7 +376,11 @@ fn fn_index(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<V
 
 /// `list-separator($list)`: the unquoted keyword `comma` or `space`. An empty
 /// list or a bare value is "undecided" and reports `space`.
-fn fn_list_separator(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_list_separator(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     validate_args(&["list"], pos_args, named, pos)?;
     let v = super::require(&["list"], pos_args, named, 0, "list-separator", pos)?;
     // A bare value or empty list is "undecided", which dart-sass reports as
@@ -386,7 +399,11 @@ fn fn_list_separator(pos_args: &[Value], named: &[(String, Value)], pos: Pos) ->
 
 /// `is-bracketed($list)`: `true` when the list was written with square
 /// brackets. A bare value or an empty/non-bracketed list reports `false`.
-fn fn_is_bracketed(pos_args: &[Value], named: &[(String, Value)], pos: Pos) -> Result<Value, Error> {
+fn fn_is_bracketed(
+    pos_args: &[Value],
+    named: &[(String, Value)],
+    pos: Pos,
+) -> Result<Value, Error> {
     validate_args(&["list"], pos_args, named, pos)?;
     let v = super::require(&["list"], pos_args, named, 0, "is-bracketed", pos)?;
     let bracketed = matches!(v, Value::List(l) if l.bracketed);
@@ -470,13 +487,20 @@ mod tests {
 
     #[test]
     fn length_counts_elements() {
-        assert_eq!(call("length", &[list(vec![], ListSep::Space)]).to_css(false), "0");
+        assert_eq!(
+            call("length", &[list(vec![], ListSep::Space)]).to_css(false),
+            "0"
+        );
         assert_eq!(call("length", &[num_unit(5.0, "px")]).to_css(false), "1");
         assert_eq!(
             call(
                 "length",
                 &[list(
-                    vec![num_unit(1.0, "px"), num_unit(2.0, "px"), num_unit(3.0, "px")],
+                    vec![
+                        num_unit(1.0, "px"),
+                        num_unit(2.0, "px"),
+                        num_unit(3.0, "px")
+                    ],
                     ListSep::Space
                 )]
             )
@@ -505,7 +529,10 @@ mod tests {
             call_err("nth", &[l.clone(), n(5.0)]).message,
             "$n: Invalid index 5 for a list with 3 elements."
         );
-        assert_eq!(call_err("nth", &[l, n(1.5)]).message, "$n: 1.5 is not an int.");
+        assert_eq!(
+            call_err("nth", &[l, n(1.5)]).message,
+            "$n: 1.5 is not an int."
+        );
     }
 
     #[test]
@@ -515,15 +542,27 @@ mod tests {
             call("set-nth", &[l.clone(), n(2.0), s("x")]).to_css(false),
             "a x c"
         );
-        assert_eq!(call("set-nth", &[l, n(-1.0), s("z")]).to_css(false), "a b z");
+        assert_eq!(
+            call("set-nth", &[l, n(-1.0), s("z")]).to_css(false),
+            "a b z"
+        );
         // Single value -> one-element list.
-        assert_eq!(call("set-nth", &[s("a"), n(1.0), s("z")]).to_css(false), "z");
+        assert_eq!(
+            call("set-nth", &[s("a"), n(1.0), s("z")]).to_css(false),
+            "z"
+        );
     }
 
     #[test]
     fn join_default_uses_list1_separator() {
-        let a = list(vec![num_unit(1.0, "px"), num_unit(2.0, "px")], ListSep::Space);
-        let b = list(vec![num_unit(3.0, "px"), num_unit(4.0, "px")], ListSep::Space);
+        let a = list(
+            vec![num_unit(1.0, "px"), num_unit(2.0, "px")],
+            ListSep::Space,
+        );
+        let b = list(
+            vec![num_unit(3.0, "px"), num_unit(4.0, "px")],
+            ListSep::Space,
+        );
         assert_eq!(call("join", &[a, b]).to_css(false), "1px 2px 3px 4px");
 
         let c = list(vec![s("a"), s("b")], ListSep::Comma);
@@ -541,7 +580,10 @@ mod tests {
 
     #[test]
     fn join_explicit_separator() {
-        let a = list(vec![num_unit(1.0, "px"), num_unit(2.0, "px")], ListSep::Space);
+        let a = list(
+            vec![num_unit(1.0, "px"), num_unit(2.0, "px")],
+            ListSep::Space,
+        );
         assert_eq!(
             call("join", &[a, num_unit(3.0, "px"), s("comma")]).to_css(false),
             "1px, 2px, 3px"
@@ -550,7 +592,10 @@ mod tests {
 
     #[test]
     fn append_default_and_explicit() {
-        let a = list(vec![num_unit(1.0, "px"), num_unit(2.0, "px")], ListSep::Space);
+        let a = list(
+            vec![num_unit(1.0, "px"), num_unit(2.0, "px")],
+            ListSep::Space,
+        );
         assert_eq!(
             call("append", &[a.clone(), num_unit(3.0, "px")]).to_css(false),
             "1px 2px 3px"
@@ -581,17 +626,28 @@ mod tests {
             vec![num_unit(1.0, "px"), num_unit(2.0, ""), num_unit(3.0, "px")],
             ListSep::Space,
         );
-        assert!(matches!(call("index", &[nums, num_unit(2.0, "px")]), Value::Null));
+        assert!(matches!(
+            call("index", &[nums, num_unit(2.0, "px")]),
+            Value::Null
+        ));
     }
 
     #[test]
     fn list_separator_reports_keyword() {
         assert_eq!(
-            call("list-separator", &[list(vec![s("a"), s("b")], ListSep::Comma)]).to_css(false),
+            call(
+                "list-separator",
+                &[list(vec![s("a"), s("b")], ListSep::Comma)]
+            )
+            .to_css(false),
             "comma"
         );
         assert_eq!(
-            call("list-separator", &[list(vec![s("a"), s("b")], ListSep::Space)]).to_css(false),
+            call(
+                "list-separator",
+                &[list(vec![s("a"), s("b")], ListSep::Space)]
+            )
+            .to_css(false),
             "space"
         );
         // A bare value (not a list) -> space.
@@ -617,13 +673,22 @@ mod tests {
             bracketed: true,
             keywords: None,
         });
-        assert!(matches!(call("is-bracketed", &[bracketed]), Value::Bool(true)));
         assert!(matches!(
-            call("is-bracketed", &[list(vec![s("a"), s("b")], ListSep::Space)]),
+            call("is-bracketed", &[bracketed]),
+            Value::Bool(true)
+        ));
+        assert!(matches!(
+            call(
+                "is-bracketed",
+                &[list(vec![s("a"), s("b")], ListSep::Space)]
+            ),
             Value::Bool(false)
         ));
         // A bare value and an empty list are not bracketed.
-        assert!(matches!(call("is-bracketed", &[s("a")]), Value::Bool(false)));
+        assert!(matches!(
+            call("is-bracketed", &[s("a")]),
+            Value::Bool(false)
+        ));
         assert!(matches!(
             call("is-bracketed", &[list(vec![], ListSep::Space)]),
             Value::Bool(false)
