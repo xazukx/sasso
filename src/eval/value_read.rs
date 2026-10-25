@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Reading the parser's value nodes.
 //!
 //! `oxc-css-parser` hands a value back as a flat run of component values with

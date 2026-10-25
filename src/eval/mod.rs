@@ -234,7 +234,7 @@ pub struct EnvModules<'a> {
 /// still in the arena, together with the file it came from — which the
 /// evaluator swaps in as the current file while the body runs, so a
 /// diagnostic raised inside a mixin points at the file that DEFINED it.
-pub(crate) struct Callable<'a> {
+pub struct Callable<'a> {
     pub name: &'a str,
     /// The declared parameters. `None` for a `@mixin` written with no `(…)`.
     pub params: Option<&'a ox::SassParameters<'a>>,
@@ -250,7 +250,7 @@ pub(crate) struct Callable<'a> {
 /// function/mixin scope chains captured at the definition site (shared
 /// frames, dart's `Environment.closure()`). The body runs against these
 /// chains, not the caller's stack.
-pub(crate) struct UserCallable<'a> {
+pub struct UserCallable<'a> {
     pub def: Rc<Callable<'a>>,
     pub env: Vec<Scope>,
     /// The variable-definition-span chain captured alongside `env`, frame for
@@ -6040,6 +6040,9 @@ fn is_keyframes_name(name: &str) -> bool {
 /// extensions) discarded. dart-sass rejects a result that is not a valid Sass
 /// identifier.
 fn default_namespace(url: &str, pos: Pos) -> Result<String, Error> {
+    // dart-sass takes the last segment of the url's PATH, so a scheme is not
+    // part of it: `@use "pkg:theme"` binds `theme`, as `sass:math` binds `math`.
+    let url = strip_url_scheme(url);
     let last = url.rsplit('/').next().unwrap_or(url);
     let last = last.strip_prefix('_').unwrap_or(last);
     // Strip every extension: the namespace is the basename up to its first dot.
@@ -6125,6 +6128,24 @@ fn member_set(
 }
 
 /// Whether `s` is a valid Sass identifier usable as a module namespace.
+/// `url` without a leading `scheme:` (RFC 3986: a letter, then letters, digits,
+/// `+`, `-` or `.`). A single-letter scheme is left alone, since on Windows that is
+/// a drive letter (`C:/styles/x`) rather than a scheme.
+fn strip_url_scheme(url: &str) -> &str {
+    let Some((scheme, rest)) = url.split_once(':') else {
+        return url;
+    };
+    let mut chars = scheme.chars();
+    let valid = scheme.len() > 1
+        && chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if valid {
+        rest
+    } else {
+        url
+    }
+}
+
 fn is_valid_namespace(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {
